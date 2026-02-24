@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "updated_at": "2026-02-23T00:00:00Z",
+  "updated_by": "test",
+  "changelog": ["v1: Test best practices"],
+
+  "deploy": {
+    "required_flags": ["--fast", "--skip-langfuse"],
+    "min_timeout": 480000,
+    "prefer_service": "static"
+  },
+
+  "verification": {
+    "require_artifact": true,
+    "artifact_dir": "claude_files/test-harness-verify",
+    "required_sections": ["Evidence", "Result"],
+    "min_evidence_chars": 50,
+    "never_sufficient": ["build succeeded"]
+  },
+
+  "commits": {
+    "max_verified_tasks_without_commit": 3
+  },
+
+  "worker_behavior": {
+    "investigate_first": true
+  },
+
+  "monitor_evolution": {
+    "can_update_fields": ["deploy", "verification", "commits", "worker_behavior"]
+  }
+}

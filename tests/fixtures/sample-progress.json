@@ -1,0 +1,56 @@
+{
+  "harness": "test-harness",
+  "mission": "Test mission for unit tests",
+  "status": "active",
+  "started_at": "2026-02-23T00:00:00Z",
+  "session_count": 3,
+  "tasks": {
+    "task-1": {
+      "status": "completed",
+      "description": "First completed task",
+      "blockedBy": [],
+      "owner": null,
+      "steps": [],
+      "completed_steps": [],
+      "metadata": {}
+    },
+    "task-2": {
+      "status": "completed",
+      "description": "Second completed task",
+      "blockedBy": ["task-1"],
+      "owner": null,
+      "steps": [],
+      "completed_steps": [],
+      "metadata": {"test_evidence": "verified"}
+    },
+    "task-3": {
+      "status": "in_progress",
+      "description": "Currently active task",
+      "blockedBy": ["task-1"],
+      "owner": "worker-1",
+      "steps": [],
+      "completed_steps": [],
+      "metadata": {}
+    },
+    "task-4": {
+      "status": "pending",
+      "description": "Pending task blocked by task-3",
+      "blockedBy": ["task-3"],
+      "owner": null,
+      "steps": [],
+      "completed_steps": [],
+      "metadata": {}
+    },
+    "task-5": {
+      "status": "pending",
+      "description": "Pending unblocked task",
+      "blockedBy": [],
+      "owner": null,
+      "steps": [],
+      "completed_steps": [],
+      "metadata": {}
+    }
+  },
+  "commits": ["abc123"],
+  "learnings": ["Learning one", "Learning two"]
+}

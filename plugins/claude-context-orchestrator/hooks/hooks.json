@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/wz/.claude-ops/plugins/claude-context-orchestrator/scripts/snippets/snippet_injector.py"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/wz/.claude-ops/plugins/claude-context-orchestrator/hooks/prompt_logger.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

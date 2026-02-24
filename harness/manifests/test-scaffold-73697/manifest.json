@@ -1,0 +1,12 @@
+{
+  "harness": "test-scaffold-73697",
+  "project_root": "/var/folders/4f/dbqb1zb917q0cl536rtn4k0m0000gn/T/tmp.E5E6rmtVYJ",
+  "status": "active",
+  "created_at": "2026-02-24T20:11:12Z",
+  "files": {
+    "progress": "claude_files/test-scaffold-73697-progress.json",
+    "harness_md": "claude_files/test-scaffold-73697-harness.md",
+    "best_practices": "claude_files/test-scaffold-73697-best-practices.json",
+    "context_injections": "claude_files/test-scaffold-73697-context-injections.json"
+  }
+}

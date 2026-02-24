@@ -1,0 +1,27 @@
+{
+  "name": "warren-claude-code-plugin-marketplace",
+  "owner": {
+    "name": "Fucheng Warren Zhu",
+    "email": "wzhu@college.harvard.edu"
+  },
+  "plugins": [
+    {
+      "name": "claude-context-orchestrator",
+      "version": "3.1.0",
+      "description": "Regex-based context injection. Type SKILL or SNIPPET keywords to load context.",
+      "source": "./claude-context-orchestrator"
+    },
+    {
+      "name": "gmail-plugin",
+      "version": "1.0.0",
+      "description": "Gmail CLI integration for composing, sending, searching, and managing emails",
+      "source": "./gmail-plugin"
+    },
+    {
+      "name": "gcal-plugin",
+      "version": "1.0.0",
+      "description": "Google Calendar CLI integration for scheduling events with natural language",
+      "source": "./gcal-plugin"
+    }
+  ]
+}

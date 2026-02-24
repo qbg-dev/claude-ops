@@ -1,0 +1,12 @@
+{
+  "harness": "bi-opt",
+  "project_root": "/Users/wz/Desktop/zPersonalProjects/Wechat",
+  "status": "done",
+  "created_at": "2026-02-23T21:45:19Z",
+  "files": {
+    "progress": "claude_files/bi-opt-progress.json",
+    "harness_md": "claude_files/bi-opt-harness.md",
+    "best_practices": "claude_files/bi-opt-best-practices.json",
+    "context_injections": "claude_files/bi-opt-context-injections.json"
+  }
+}

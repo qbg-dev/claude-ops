@@ -1,0 +1,12 @@
+{
+  "harness": "chatbot-agent",
+  "project_root": "/Users/wz/Desktop/zPersonalProjects/Wechat",
+  "status": "done",
+  "created_at": "2026-02-23T21:45:19Z",
+  "files": {
+    "progress": "claude_files/chatbot-agent-progress.json",
+    "harness_md": "claude_files/chatbot-agent-harness.md",
+    "best_practices": "claude_files/chatbot-agent-best-practices.json",
+    "context_injections": "claude_files/chatbot-agent-context-injections.json"
+  }
+}

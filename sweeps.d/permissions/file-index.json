@@ -1,0 +1,13 @@
+{
+  "description": "File index — read files for descriptions, write INDEX.md only",
+  "interval": 7200,
+  "scope": "global",
+  "model": "sonnet",
+  "tools": ["Read", "Write", "Glob", "Bash"],
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Write(**/claude_files/INDEX.md)",
+    "Bash(report-issue:*)"
+  ]
+}

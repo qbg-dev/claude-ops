@@ -1,0 +1,5 @@
+{
+  "description": "Uncommitted work alerts via wisps when files pile up",
+  "interval": 1800,
+  "scope": "per-harness"
+}

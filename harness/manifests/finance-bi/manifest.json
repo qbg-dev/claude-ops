@@ -1,0 +1,14 @@
+{
+  "harness": "finance-bi",
+  "project_root": "/Users/wz/Desktop/zPersonalProjects/Wechat",
+  "status": "active",
+  "created_at": "2026-02-24T09:17:45Z",
+  "files": {
+    "progress": "claude_files/finance-bi-progress.json",
+    "harness_md": "claude_files/finance-bi-harness.md",
+    "best_practices": "claude_files/finance-bi-best-practices.json",
+    "context_injections": "claude_files/finance-bi-context-injections.json",
+    "goal": "claude_files/finance-bi-goal.md",
+    "journal": "claude_files/finance-bi-journal.md"
+  }
+}

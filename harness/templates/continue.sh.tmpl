@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# {{HARNESS}}-continue.sh — Context reset via tmux: /clear + reseed.
+# Usage: bash .claude/scripts/{{HARNESS}}-continue.sh
+set -euo pipefail
+
+PROJECT_ROOT="{{PROJECT_ROOT}}"
+PROGRESS="$PROJECT_ROOT/claude_files/{{HARNESS}}-progress.json"
+
+if [ ! -f "$PROGRESS" ]; then
+  echo "ERROR: {{HARNESS}}-progress.json not found" >&2
+  exit 1
+fi
+
+# Bump session count
+TMP=$(mktemp)
+jq '.session_count = (.session_count // 0) + 1' "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+NEW_COUNT=$(jq -r '.session_count' "$PROGRESS")
+echo "Session count bumped to $NEW_COUNT"
+
+# Find this Claude's tmux pane
+CLAUDE_PID=$$
+PANE_ID=""
+for pane in $(tmux list-panes -a -F '#{pane_id}:#{pane_pid}' 2>/dev/null); do
+  pid="${pane#*:}"
+  pane_id="${pane%%:*}"
+  current=$pid
+  while [ "$current" -gt 1 ] 2>/dev/null; do
+    if [ "$current" = "$CLAUDE_PID" ] || [ "$current" = "$PPID" ]; then
+      PANE_ID="$pane_id"
+      break 2
+    fi
+    current=$(ps -o ppid= -p "$current" 2>/dev/null | tr -d ' ')
+    [ -z "$current" ] && break
+  done
+done
+
+if [ -z "$PANE_ID" ]; then
+  echo "Could not find tmux pane. Manual steps:"
+  echo "  1. Type /clear in Claude"
+  echo "  2. Paste: $(bash "$PROJECT_ROOT/.claude/scripts/{{HARNESS}}-seed.sh" 2>/dev/null | head -1)"
+  exit 1
+fi
+
+echo "Found tmux pane: $PANE_ID"
+
+# Generate seed prompt
+SEED=$(bash "$PROJECT_ROOT/.claude/scripts/{{HARNESS}}-seed.sh" 2>/dev/null)
+
+# Background: wait, clear, reseed
+(
+  sleep 90
+  tmux send-keys -t "$PANE_ID" "/clear" Enter
+  sleep 3
+  echo "$SEED" | while IFS= read -r line; do
+    tmux send-keys -t "$PANE_ID" "$line" Enter
+    sleep 0.1
+  done
+) &
+
+echo "Context reset scheduled in 90s on pane $PANE_ID"

@@ -1,0 +1,5 @@
+{
+  "description": "GC expired tmp files, dead registry entries, orphaned pane metadata",
+  "interval": 7200,
+  "scope": "per-harness"
+}

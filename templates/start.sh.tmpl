@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# {{HARNESS}}-start.sh — Launch or resume the {{HARNESS}} harness.
+#
+# Usage:
+#   bash .claude/scripts/{{HARNESS}}-start.sh                  # launch worker
+#   bash .claude/scripts/{{HARNESS}}-start.sh --monitor        # launch worker + monitor
+#   bash .claude/scripts/{{HARNESS}}-start.sh --task <name>    # start from specific task
+#   bash .claude/scripts/{{HARNESS}}-start.sh --status         # check status
+#   bash .claude/scripts/{{HARNESS}}-start.sh --seed-only      # print seed prompt (no tmux)
+#
+# When called without --seed-only, this script:
+#   1. Updates progress.json (status, session count, task)
+#   2. Creates a new tmux window h:{{HARNESS}}
+#   3. Launches Claude in the worker pane (command from rotation.claude_command)
+#   4. Sends the seed prompt
+#   5. Optionally launches a monitor in a split pane
+set -euo pipefail
+
+HARNESS="{{HARNESS}}"
+PROJECT_ROOT="{{PROJECT_ROOT}}"
+PROGRESS="$PROJECT_ROOT/claude_files/${HARNESS}-progress.json"
+
+# ── Parse args ──────────────────────────────────────────────────
+WITH_MONITOR=false
+SEED_ONLY=false
+STATUS_ONLY=false
+TASK=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --monitor)    WITH_MONITOR=true; shift ;;
+    --task)       TASK="$2"; shift 2 ;;
+    --seed-only)  SEED_ONLY=true; shift ;;
+    --status)     STATUS_ONLY=true; shift ;;
+    -*)           echo "Unknown flag: $1" >&2; exit 1 ;;
+    *)            TASK="$1"; shift ;;  # positional = task name (back-compat)
+  esac
+done
+
+# ── Status mode ─────────────────────────────────────────────────
+if [ "$STATUS_ONLY" = true ]; then
+  source "$HOME/.claude-ops/lib/harness-launch.sh"
+  harness_status "$HARNESS"
+  exit 0
+fi
+
+# ── Seed-only mode (for piping into existing session) ───────────
+if [ "$SEED_ONLY" = true ]; then
+  exec bash "$PROJECT_ROOT/.claude/scripts/${HARNESS}-seed.sh"
+fi
+
+# ── Update progress.json ────────────────────────────────────────
+if [ ! -f "$PROGRESS" ]; then
+  echo "ERROR: Progress file not found: $PROGRESS" >&2
+  exit 1
+fi
+
+# Set active + bump session count
+TMP=$(mktemp)
+jq '
+  .status = "active" |
+  .session_count = (.session_count // 0) + 1 |
+  .current_session.started_at = now |
+  .current_session.round_count = 0 |
+  .current_session.tasks_completed = 0
+' "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+
+# Mark task in_progress if specified
+if [ -n "$TASK" ]; then
+  if jq -e ".tasks[\"$TASK\"]" "$PROGRESS" > /dev/null 2>&1; then
+    TMP=$(mktemp)
+    jq --arg t "$TASK" '.tasks[$t].status = "in_progress"' "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+    echo "Task '$TASK' marked in_progress"
+  else
+    echo "Unknown task: $TASK" >&2
+    echo "Available: $(jq -r '.tasks | keys[]' "$PROGRESS" | tr '\n' ' ')" >&2
+    exit 1
+  fi
+fi
+
+# ── Read claude_command from progress.json rotation config ──────
+# Supports: cdo, cds, cdh, cdoc, cdsc, cdo1m, cds1m (any alias)
+CLAUDE_CMD=$(jq -r '.rotation.claude_command // "cdo"' "$PROGRESS")
+export CLAUDE_CMD
+
+# ── Launch via harness-launch.sh ────────────────────────────────
+source "$HOME/.claude-ops/lib/harness-launch.sh"
+
+LAUNCH_ARGS=("$HARNESS" "$PROJECT_ROOT")
+[ "$WITH_MONITOR" = true ] && LAUNCH_ARGS+=("--monitor")
+export HARNESS_TASK="$TASK"
+
+harness_launch "${LAUNCH_ARGS[@]}"

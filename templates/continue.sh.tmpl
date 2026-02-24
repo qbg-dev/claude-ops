@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# {{HARNESS}}-continue.sh — Context reset for the {{HARNESS}} harness.
+# Re-reads progress and generates a continuation prompt.
+set -euo pipefail
+
+HARNESS="{{HARNESS}}"
+PROJECT_ROOT="{{PROJECT_ROOT}}"
+
+# Just re-run the seed
+exec bash "$PROJECT_ROOT/.claude/scripts/${HARNESS}-seed.sh"

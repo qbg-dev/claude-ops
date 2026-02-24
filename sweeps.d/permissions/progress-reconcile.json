@@ -1,0 +1,15 @@
+{
+  "description": "Progress reconcile — read state files, write wisps to beads, write report",
+  "interval": 2700,
+  "scope": "global",
+  "model": "sonnet",
+  "tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit(**/claude_files/harness-beads.json)",
+    "Write(**/claude_files/sweep-reports/**)",
+    "Bash(report-issue:*)"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "description": "Meta-reflection — analyze patterns, evolve harness policy, communicate changes to workers",
+  "interval": 3600,
+  "scope": "global",
+  "model": "opus",
+  "tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit(**/claude_files/*-best-practices.json)",
+    "Edit(**/claude_files/*-context-injections.json)",
+    "Edit(**/claude_files/harness-beads.json)",
+    "Edit(**/claude_files/*-progress.json)",
+    "Write(**/claude_files/*-reflections.jsonl)",
+    "Write(**/.claude-ops/hooks/operators/checks.d/*.sh)",
+    "Bash(report-issue:*)"
+  ]
+}

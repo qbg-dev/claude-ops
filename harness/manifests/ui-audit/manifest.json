@@ -1,0 +1,14 @@
+{
+  "harness": "ui-audit",
+  "project_root": "/Users/wz/Desktop/zPersonalProjects/Wechat",
+  "status": "active",
+  "created_at": "2026-02-24T11:33:53Z",
+  "files": {
+    "progress": "claude_files/ui-audit-progress.json",
+    "harness_md": "claude_files/ui-audit-harness.md",
+    "goal_md": "claude_files/ui-audit-goal.md",
+    "journal_md": "claude_files/ui-audit-journal.md",
+    "best_practices": "claude_files/ui-audit-best-practices.json",
+    "context_injections": "claude_files/ui-audit-context-injections.json"
+  }
+}

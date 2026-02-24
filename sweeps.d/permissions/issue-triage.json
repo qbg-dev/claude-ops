@@ -1,0 +1,20 @@
+{
+  "description": "Issue triage — read agent issues, auto-fix infrastructure/config bugs, defer design decisions to Warren",
+  "interval": 3600,
+  "scope": "global",
+  "model": "sonnet",
+  "tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit(**/claude_files/agent-issues.jsonl)",
+    "Edit(**/.claude-ops/**)",
+    "Edit(**/claude_files/*-best-practices.json)",
+    "Edit(**/claude_files/*-context-injections.json)",
+    "Write(**/claude_files/sweep-reports/**)",
+    "Bash(notify:*)",
+    "Bash(git:status)",
+    "Bash(git:diff)"
+  ]
+}

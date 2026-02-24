@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "updated_at": null,
+  "updated_by": "human",
+  "changelog": ["v1: Initial best practices"],
+
+  "deploy": {
+    "required_flags": ["--fast", "--skip-langfuse"],
+    "min_timeout": 480000,
+    "prefer_service": "Prefer --service static for UI-only changes (~20s vs ~90s)"
+  },
+
+  "verification": {
+    "require_artifact": true,
+    "artifact_dir": "claude_files/{{HARNESS}}-verify",
+    "required_sections": ["## Evidence", "## Result"],
+    "min_evidence_chars": 50,
+    "never_sufficient": ["build succeeded", "TypeScript check passed", "deploy health check passed"]
+  },
+
+  "commits": {
+    "max_verified_tasks_without_commit": 3
+  },
+
+  "worker_behavior": {
+    "investigate_first": true,
+    "require_investigation_for": ["bug fixes", "regressions"]
+  },
+
+  "monitor_evolution": {
+    "can_update_fields": [
+      "deploy.required_flags",
+      "deploy.prefer_service",
+      "verification.min_evidence_chars",
+      "verification.required_sections",
+      "commits.max_verified_tasks_without_commit",
+      "worker_behavior"
+    ]
+  }
+}

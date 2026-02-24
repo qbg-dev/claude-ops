@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# {{HARNESS}}-seed.sh — Generates compact re-seed prompt after /clear or rotation.
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PROGRESS_FILE="$PROJECT_ROOT/claude_files/{{HARNESS}}-progress.json"
+
+source ~/.harness/lib/harness-jq.sh
+
+if [[ ! -f "$PROGRESS_FILE" ]]; then
+  echo "ERROR: {{HARNESS}}-progress.json not found" >&2
+  exit 1
+fi
+
+STATUS=$(jq -r '.status' "$PROGRESS_FILE")
+if [[ "$STATUS" != "active" ]]; then
+  echo "{{HARNESS}} harness is not active (status: $STATUS)." >&2
+  exit 0
+fi
+
+CURRENT=$(harness_current_task "$PROGRESS_FILE")
+COMPLETED=$(harness_completed_names "$PROGRESS_FILE")
+NEXT=$(harness_next_task "$PROGRESS_FILE")
+SESSION_COUNT=$(jq -r '.session_count // 0' "$PROGRESS_FILE")
+MISSION=$(harness_mission "$PROGRESS_FILE")
+
+# Recent learnings (last 5)
+LEARNINGS=$(jq -r '.learnings[-5:] | if length > 0 then "Recent learnings:\n" + (map("  - " + .) | join("\n")) else "" end' "$PROGRESS_FILE")
+
+if [[ "$CURRENT" == "ALL_DONE" ]]; then
+  cat <<DONE
+{{HARNESS}} HARNESS — ALL TASKS DONE. Time to evolve!
+Add new tasks or deactivate: jq '.status = "done"' progress.json > /tmp/p.json && mv /tmp/p.json progress.json
+Completed: [${COMPLETED}]
+Session count: $SESSION_COUNT
+DONE
+  exit 0
+fi
+
+DESCRIPTION=$(harness_task_description "$PROGRESS_FILE" "$CURRENT")
+
+cat <<SEED
+{{HARNESS}} HARNESS CONTINUE. Read claude_files/{{HARNESS}}-harness.md first.
+Progress: claude_files/{{HARNESS}}-progress.json
+Session #$((SESSION_COUNT + 1)) | Mission: ${MISSION}
+Current: ${CURRENT}
+${DESCRIPTION:+Description: ${DESCRIPTION}}
+Completed: [${COMPLETED:-none yet}]
+Next: ${NEXT}
+${LEARNINGS}
+
+After your first task cycle, run HARNESSUP to evolve this harness.
+SEED

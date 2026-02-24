@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# {{HARNESS}}-start.sh — Activates the {{HARNESS}} harness.
+# Usage: bash .claude/scripts/{{HARNESS}}-start.sh [task-name] [session-id]
+set -euo pipefail
+
+PROJECT_ROOT="{{PROJECT_ROOT}}"
+PROGRESS="$PROJECT_ROOT/claude_files/{{HARNESS}}-progress.json"
+HARNESS="$PROJECT_ROOT/claude_files/{{HARNESS}}-harness.md"
+source "$HOME/.claude-ops/lib/harness-jq.sh" 2>/dev/null || HARNESS_SESSION_REGISTRY="$HOME/.claude-ops/state/session-registry.json"
+REGISTRY="$HARNESS_SESSION_REGISTRY"
+
+if [ ! -f "$PROGRESS" ]; then
+  echo "ERROR: {{HARNESS}}-progress.json not found at $PROGRESS" >&2
+  exit 1
+fi
+
+# Set status to active and timestamp
+TMP=$(mktemp)
+jq ".status = \"active\" | .started_at = \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+
+# If a specific task was requested, set it as in_progress
+if [ -n "${1:-}" ]; then
+  TASK="$1"
+  if jq -e ".tasks[\"$TASK\"]" "$PROGRESS" > /dev/null 2>&1; then
+    TMP=$(mktemp)
+    jq --arg t "$TASK" '.tasks[$t].status = "in_progress"' "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+    echo "Starting {{HARNESS}} harness from task: $TASK"
+  else
+    echo "Unknown task: $TASK"
+    echo "Available: $(jq -r '.tasks | keys[]' "$PROGRESS" | tr '\n' ' ')"
+    exit 1
+  fi
+else
+  CURRENT=$(harness_current_task "$PROGRESS")
+  CURRENT_STATUS=$(jq -r --arg t "$CURRENT" '.tasks[$t].status // "none"' "$PROGRESS" 2>/dev/null || echo "none")
+
+  if [ "$CURRENT_STATUS" = "in_progress" ]; then
+    echo "Resuming {{HARNESS}} harness on: $CURRENT"
+  elif [ "$CURRENT" != "ALL_DONE" ]; then
+    TMP=$(mktemp)
+    jq --arg t "$CURRENT" '.tasks[$t].status = "in_progress"' "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+    echo "Starting {{HARNESS}} harness from first pending task: $CURRENT"
+  else
+    echo "All tasks completed!"
+  fi
+fi
+
+echo ""
+echo "=== {{HARNESS}} Harness Activated ==="
+echo ""
+
+# Initialize registry if missing
+[ ! -f "$REGISTRY" ] && echo '{}' > "$REGISTRY"
+
+# Register session if provided as second arg
+if [ -n "${2:-}" ]; then
+  TMP=$(mktemp)
+  jq --arg sid "$2" '.[$sid] = "{{HARNESS}}"' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+  echo "Registered session $2 -> {{HARNESS}}"
+else
+  echo "Session will auto-register on first stop-hook cycle."
+fi
+
+# Increment session count
+TMP=$(mktemp)
+jq '.session_count = (.session_count // 0) + 1' "$PROGRESS" > "$TMP" && mv "$TMP" "$PROGRESS"
+
+# Show status
+CURRENT=$(harness_current_task "$PROGRESS")
+DONE=$(harness_done_count "$PROGRESS")
+TOTAL=$(harness_total_count "$PROGRESS")
+echo "Current: $CURRENT"
+echo "Progress: $DONE/$TOTAL tasks"
+echo ""
+
+# Print harness instructions
+if [ -f "$HARNESS" ]; then
+  cat "$HARNESS"
+else
+  echo "WARNING: {{HARNESS}}-harness.md not found at $HARNESS" >&2
+fi

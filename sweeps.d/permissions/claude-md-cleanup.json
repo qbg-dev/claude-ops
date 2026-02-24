@@ -1,0 +1,21 @@
+{
+  "description": "CLAUDE.md cleanup — read docs, edit CLAUDE.md files, create ref files, git commit",
+  "interval": 3600,
+  "scope": "global",
+  "model": "sonnet",
+  "tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit(**/CLAUDE.md)",
+    "Edit(**/.claude/CLAUDE.md)",
+    "Write(**/claude_files/ref/**)",
+    "Write(**/claude_files/sweep-reports/**)",
+    "Bash(git:add)",
+    "Bash(git:commit)",
+    "Bash(git:status)",
+    "Bash(git:diff)",
+    "Bash(report-issue:*)"
+  ]
+}
