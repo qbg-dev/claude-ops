@@ -24,10 +24,75 @@ else
 fi
 
 SKETCH_APPROVED=$(jq -r '.sketch_approved // false' "$PROGRESS" 2>/dev/null || echo "false")
+GEN_APPROVED=$(jq -r '.generalization_approved // false' "$PROGRESS" 2>/dev/null || echo "false")
+
+# Inject wave gates + spec checks (idempotent — catches hand-authored progress.json)
+if [ -f "$PROGRESS" ] && [ -f "$HARNESS_JQ" ]; then
+  HAS_WAVES=$(jq '.waves // [] | length' "$PROGRESS" 2>/dev/null || echo "0")
+  if [ "$HAS_WAVES" -gt 0 ]; then
+    harness_inject_wave_gates "$PROGRESS"
+    harness_inject_spec_checks "$PROGRESS" "$PROJECT_ROOT"
+  fi
+fi
+
+# Wave progress (empty string = no waves defined = legacy mode)
+WAVE_PROGRESS=""
+WAVE_PROTOCOL=""
+if [ -f "$PROGRESS" ] && [ -f "$HARNESS_JQ" ]; then
+  WAVE_PROGRESS=$(harness_wave_progress "$PROGRESS" 2>/dev/null || echo "")
+  if [ -n "$WAVE_PROGRESS" ]; then
+    WAVE_BOUNDARY=$(harness_is_wave_boundary "$PROGRESS" 2>/dev/null || echo "false")
+    CURRENT_WAVE=$(harness_current_wave "$PROGRESS" 2>/dev/null || echo "null")
+    WAVE_PROTOCOL="## Wave Progress
+- $WAVE_PROGRESS
+$(if [ "$WAVE_BOUNDARY" = "true" ]; then echo "- **WAVE BOUNDARY REACHED** — time to inspect, screenshot, and report before moving on."; fi)
+
+## Wave Protocol
+At the start of each wave:
+- Re-read the Mission section above (or harness.md if compacted)
+$(if [ -n "$SPEC_FILE" ]; then echo "- **Re-read the spec** (\`$SPEC_FILE\`) in full. Check what it requires for this wave."; fi)
+
+At the end of each wave:
+1. **Double-check**: Review every task in this wave. For each task, ask: does the
+   result actually serve the mission, or did I just check a box?
+$(if [ -n "$SPEC_FILE" ]; then echo "   Also check against the spec: did you miss anything? Document deviations with rationale."; fi)
+2. **Commit** wave changes: \`feat(${HARNESS}): wave N — <wave name>\`
+3. **Deploy** (\`--service static\` or appropriate)
+4. **Inspect** via Claude Chrome — navigate to each affected feature
+5. **Take screenshots** of each feature
+6. **Generate wave report HTML** at \`~/.claude-ops/harness/reports/${HARNESS}/wave-{N}.html\`
+   This report is NOT just screenshots. It MUST contain:
+   - **Mission Alignment**: For each task in this wave, explain how the result
+     serves the mission. If something doesn't align, say so and explain what
+     you'd do differently.
+   - **Gap Analysis**: What's still missing? What did this wave reveal about
+     the distance between current reality and the mission?
+   - **Next Wave Proposal**: Based on the gaps, what should the next wave contain?
+     If you see no gaps, explain specifically why the mission is achieved.
+   You cannot complete this wave without this analysis. The report IS the gate.
+7. **Open** the report: \`open ~/.claude-ops/harness/reports/${HARNESS}/wave-{N}.html\`
+8. **Notify** Warren: \`notify \"${HARNESS} wave N complete — report ready\"\`
+9. **Wait** for Warren's confirmation before proceeding to next wave"
+  fi
+fi
+
+# Read harness.md content for inline injection
+HARNESS_MD_CONTENT=""
+if [ -f "$PROJECT_ROOT/.claude/harness/${HARNESS}/harness.md" ]; then
+  HARNESS_MD_CONTENT=$(cat "$PROJECT_ROOT/.claude/harness/${HARNESS}/harness.md")
+elif [ -f "$PROJECT_ROOT/claude_files/${HARNESS}-harness.md" ]; then
+  HARNESS_MD_CONTENT=$(cat "$PROJECT_ROOT/claude_files/${HARNESS}-harness.md")
+fi
+
+# Detect spec file (optional — detailed requirements)
+SPEC_FILE=""
+if [ -f "$PROJECT_ROOT/.claude/harness/${HARNESS}/spec.md" ]; then
+  SPEC_FILE=".claude/harness/${HARNESS}/spec.md"
+elif [ -f "$PROJECT_ROOT/claude_files/${HARNESS}-spec.md" ]; then
+  SPEC_FILE="claude_files/${HARNESS}-spec.md"
+fi
 
 cat <<EOF
-run HARNESSUP
-
 You are a **mission-driven agent** working on the **{{HARNESS}}** harness for the Wechat bot project.
 
 ## Your Operating Principle
@@ -47,32 +112,97 @@ that world real, and seed tasks are just your first moves.
 - Currently: ${CURRENT:-orienting}
 - Mission: $MISSION
 - Sketch approved: $SKETCH_APPROVED
+- Generalization approved: $GEN_APPROVED
+$([ -n "$WAVE_PROGRESS" ] && echo "- Waves: $WAVE_PROGRESS")
+$([ -n "$SPEC_FILE" ] && echo "- Spec: \`$SPEC_FILE\` (read at each wave start)")
+
+────────────────────────────────────────────────────────────
+## Mission
+────────────────────────────────────────────────────────────
+
+${HARNESS_MD_CONTENT:-"(No harness.md found — check claude_files/${HARNESS}-harness.md or .claude/harness/${HARNESS}/harness.md)"}
+
+────────────────────────────────────────────────────────────
+## End Mission
+────────────────────────────────────────────────────────────
 
 ## Phase 0: Sketch the Vision (BEFORE any implementation)
 
 **This phase is mandatory.** Before writing any code or executing any task:
 
-1. Read claude_files/${HARNESS}-harness.md — absorb "The World We Want"
-2. Read claude_files/${HARNESS}-progress.json — understand the seed waypoints
-3. Explore the current codebase to understand what exists today
-4. **Create an HTML sketch** at \`claude_files/${HARNESS}-vision.html\` that illustrates:
+1. Read claude_files/${HARNESS}-progress.json — understand the seed waypoints
+2. Re-read the Mission section above — absorb "The World We Want"
+3. **Check for a spec.** If the user provided detailed requirements (a spec, PRD, feature
+   brief, etc.) as part of the task, save it to \`.claude/harness/${HARNESS}/spec.md\`.
+   The spec is the authoritative requirements doc. The harness.md should contain a concise
+   summary; the full spec lives in spec.md. If the user provided spec content in a different
+   location (e.g. inline, a file elsewhere), copy it to the canonical path.
+   The system auto-detects \`.claude/harness/{name}/spec.md\` and injects spec-check tasks
+   per wave. Specs are not infallible—you can improve on them—but always check whether you
+   missed anything, and have a clear rationale for any deviation.
+4. Explore the current codebase to understand what exists today
+5. **Check other harnesses for relevant learnings** (optional but recommended):
+   If this mission touches areas covered by other harnesses, read their learnings:
+   \`jq '.learnings[]' claude_files/*-progress.json | head -20\`
+   Look for patterns, gotchas, or architectural decisions that apply here.
+6. **Create an HTML sketch** at \`claude_files/${HARNESS}-vision.html\` that illustrates:
    - What the end state looks like (UI mockups, architecture diagrams, data flows)
    - What changes from today's state (before → after)
    - The key decisions and trade-offs you plan to make
    - How the seed waypoints map to the overall vision
-5. **Open it in the browser** for the user to review: \`open claude_files/${HARNESS}-vision.html\`
-6. **Wait for user feedback.** Do NOT proceed to Phase 1 until the user approves.
-7. Once approved, mark it: update progress.json with \`"sketch_approved": true\`
+7. **Open it in the browser** for the user to review: \`open claude_files/${HARNESS}-vision.html\`
+8. **Wait for user feedback.** Do NOT proceed to Phase 1 until the user approves.
+9. Once approved, mark it: update progress.json with \`"sketch_approved": true\`
 
 The sketch is your contract with the user. It ensures alignment BEFORE you invest
 hours of execution. A beautiful, high-fidelity sketch that takes 10 minutes saves
 hours of rework from misaligned assumptions.
 
-$(if [ "$SKETCH_APPROVED" = "true" ]; then
-echo "**Sketch already approved — proceed to Phase 1.**"
-else
+$(if [ "$SKETCH_APPROVED" != "true" ]; then
 echo "**Sketch NOT yet approved — start with Phase 0.**"
+elif [ "$GEN_APPROVED" != "true" ]; then
+echo "**Sketch approved, generalizations NOT yet approved — start with Phase 0.5.**"
+else
+echo "**Sketch and generalizations approved — proceed to Phase 1.**"
 fi)
+
+## Phase 0.5: Generalize & Get Approval (after sketch, before implementation)
+
+After the sketch is approved, step back and think beyond the seed waypoints.
+**This phase requires human approval before you can proceed to implementation.**
+
+### The generalization loop:
+1. **Review the approved sketch** — what principles and patterns does it establish?
+2. **Propose 3-5 additional improvements** NOT in the seed waypoints — novel ideas
+   that emerged from understanding the domain deeply during the sketch phase.
+3. **Write them to** \`claude_files/${HARNESS}-generalizations.md\` with:
+   - Each generalization as a section with title and rationale
+   - How it connects to the mission vision
+   - Proposed tasks/waves to implement it
+4. **Open for review**: \`open claude_files/${HARNESS}-generalizations.md\`
+5. **Notify**: \`notify "${HARNESS} generalizations ready for review"\`
+6. **Wait for user feedback.** Do NOT proceed.
+
+### The approval loop:
+The user will review your generalizations and either:
+- **Give feedback** — revise your file based on their input, then re-open and wait again
+- **Say "looks good"** — then:
+  1. Add approved generalizations as new tasks in progress.json
+  2. Assign them to waves if waves are defined
+  3. You may also **create new waves** if your generalizations form a coherent deployable unit
+  4. Set \`"generalization_approved": true\` in progress.json
+  5. Record rationale in a learnings[] entry
+  6. Proceed to Phase 1
+
+**The feedback loop may run multiple rounds.** Each round deepens your understanding
+of what the user actually wants. Modify your proposals — and your understanding of the
+mission — based on the user's input. This is not a rubber stamp; it's a dialogue.
+
+This phase turns you from a task executor into a domain expert. The seed tasks are
+the user's ideas — your generalizations show you understand WHY those ideas matter,
+not just WHAT they are.
+
+$WAVE_PROTOCOL
 
 ## Phase 1: Orient & Execute Seed Tasks
 
@@ -83,20 +213,23 @@ For any waypoint with 2+ independent subtasks, your FIRST action should be
 TeamCreate + spawn teammates for parallel execution. You are an orchestrator.
 Only do trivial work yourself—delegate everything substantial.
 
-## Phase 2: When Seed Tasks Are Complete
+## Phase 2: When Seed Waves Are Complete
 
-This is where the real work begins. You now understand the system. The protocol:
+Completing seed waves means you now understand the domain. It does NOT mean the
+mission is achieved. The protocol:
 
-1. **Re-read "The World We Want"** in your harness.md. How close are we REALLY?
-2. **Verify from the user's perspective.** Don't just check your own work—experience
-   the system as a user/operator would. What's clunky? What's fragile? What's missing?
-3. **Find at least 3 gaps** between current reality and the vision. There are always gaps.
-4. **Create new waypoints** in the progress file for what you discover.
-5. **Work them.** Same standards, same teams, same rigor.
-6. **Repeat** until you genuinely believe the world matches the vision.
+1. **Re-read the mission.** Scroll up to the Mission section above (or re-read
+   harness.md if context was compacted). Focus on "The World We Want."
+2. **Experience the system as a user.** Navigate every affected page. Click every
+   button. Read every label. Does it feel like the world described in the mission?
+3. **Identify gaps.** There are ALWAYS gaps after seed waves. Find at least 3.
+4. **Create a new wave.** Not optional. Add a wave to progress.json with:
+   - Descriptive name, tasks for each gap, status "pending"
+   - This wave should address the gaps you found
+5. **Work the new wave.** Same protocol: execute, double-check, report, gate.
+6. **Repeat.** Only stop when you can write a mission-complete report with
+   specific evidence (not "tasks done" — evidence the world matches the vision).
 
-Only when you can articulate specific evidence that the mission is achieved—not just that
-tasks are done—should you write a "mission-complete" learnings entry with that evidence.
-
-The task list is training wheels. You should outgrow it.
+If you finish all waves and stop without creating new ones, you have failed.
+The mission is the target, not the task list.
 EOF

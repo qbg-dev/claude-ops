@@ -174,36 +174,45 @@ fi
 # Test 18: Inline styles check catches style={{
 TEMP_TSX=$(mktemp /tmp/test_XXXXXX.tsx)
 echo 'const Foo = () => <div style={{ color: "red" }}>hi</div>' > "$TEMP_TSX"
-RESULT=$(FILE_PATH="$TEMP_TSX" bash "$HOME/.claude-ops/hooks/operators/checks.d/01-no-inline-styles.sh" 2>/dev/null || true)
+RESULT=$(FILE_PATH="$TEMP_TSX" bash "$HOME/.claude-ops/hooks/operators/checks.d/no-inline-styles.sh" 2>/dev/null || true)
 assert "catches inline styles" "inline style" "$RESULT"
 rm -f "$TEMP_TSX"
 
 # Test 19: Inline styles check ignores clean files
 TEMP_TSX=$(mktemp /tmp/test_XXXXXX.tsx)
 echo 'const Foo = () => <div className="card">hi</div>' > "$TEMP_TSX"
-RESULT=$(FILE_PATH="$TEMP_TSX" bash "$HOME/.claude-ops/hooks/operators/checks.d/01-no-inline-styles.sh" 2>/dev/null || true)
+RESULT=$(FILE_PATH="$TEMP_TSX" bash "$HOME/.claude-ops/hooks/operators/checks.d/no-inline-styles.sh" 2>/dev/null || true)
 assert_empty "ignores clean tsx" "$RESULT"
 rm -f "$TEMP_TSX"
 
 # Test 20: Mock data check catches placeholder
 TEMP_TS=$(mktemp /tmp/test_XXXXXX.ts)
 echo 'const data = "placeholder value"' > "$TEMP_TS"
-RESULT=$(FILE_PATH="$TEMP_TS" bash "$HOME/.claude-ops/hooks/operators/checks.d/02-no-mock-data.sh" 2>/dev/null || true)
+RESULT=$(FILE_PATH="$TEMP_TS" bash "$HOME/.claude-ops/hooks/operators/checks.d/no-mock-data.sh" 2>/dev/null || true)
 assert "catches mock data" "mock/placeholder" "$RESULT"
 rm -f "$TEMP_TS"
 
 # Test 21: Ignores non-ts files
-RESULT=$(FILE_PATH="/tmp/readme.md" bash "$HOME/.claude-ops/hooks/operators/checks.d/01-no-inline-styles.sh" 2>/dev/null || true)
+RESULT=$(FILE_PATH="/tmp/readme.md" bash "$HOME/.claude-ops/hooks/operators/checks.d/no-inline-styles.sh" 2>/dev/null || true)
 assert_empty "ignores non-tsx files" "$RESULT"
 
 # ═════════════════════════════════════════════════════════════════════
 # progress-validator.sh
 # ═════════════════════════════════════════════════════════════════════
 
-# Test 22: No warnings on clean progress state
+# Test 22: No verification artifact warnings on clean progress state
+# (substep warnings are advisory and may appear if tasks have incomplete steps)
 RESULT=$(echo "{\"session_id\":\"$MOCK_SESSION\",\"tool_input\":{\"file_path\":\"$PROJECT_ROOT/claude_files/miniapp-chat-progress.json\"}}" \
   | PROJECT_ROOT="$PROJECT_ROOT" bash "$HOME/.claude-ops/hooks/operators/progress-validator.sh" 2>/dev/null || true)
-assert_empty "no warnings when no tasks completed" "$RESULT"
+TOTAL=$((TOTAL + 1))
+if echo "$RESULT" | grep -q "no artifact at"; then
+  echo -e "  ${RED}FAIL${RESET} no verification artifact warnings"
+  echo "    unexpected artifact warning: $(echo "$RESULT" | head -2)"
+  FAIL=$((FAIL + 1))
+else
+  echo -e "  ${GREEN}PASS${RESET} no verification artifact warnings"
+  PASS=$((PASS + 1))
+fi
 
 # ═════════════════════════════════════════════════════════════════════
 # rotation advisory

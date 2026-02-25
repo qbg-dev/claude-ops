@@ -3,22 +3,15 @@
 #
 # Routes each Claude session to its assigned harness based on a registry file.
 # Sessions not registered in the registry fall through to stop-check.sh (general code review).
-# Integrates Beads coordination: shows wisps, warns on claims, shows gates.
 #
 # Uses unified task graph schema (.tasks with blockedBy/owner) for ALL harnesses.
-# Shared jq functions in .claude/scripts/harness-jq.sh.
+# Shared jq functions in harness-jq.sh.
 #
 # Registry: ~/.claude-ops/state/session-registry.json (via HARNESS_SESSION_REGISTRY)
 #   { "session-abc": "tianding", "session-def": "chatbot-agent" }
-#
-# Beads: claude_files/harness-beads.json
-#   { "wisps": [...], "claims": {...}, "gates": {...} }
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-BEADS="$PROJECT_ROOT/claude_files/harness-beads.json"
-BEAD_CMD="$PROJECT_ROOT/.claude/scripts/harness-bead.sh"
-
 # Source shared task graph functions (provides HARNESS_SESSION_REGISTRY)
 source "$HOME/.claude-ops/lib/harness-jq.sh"
 REGISTRY="$HARNESS_SESSION_REGISTRY"
@@ -80,47 +73,11 @@ if [ -f "$REGISTRY" ]; then
   HARNESS=$(jq -r --arg sid "$SESSION_ID" '.[$sid] // ""' "$REGISTRY" 2>/dev/null || echo "")
 fi
 
-# --- Beads: collect wisps, claims, gates for this harness ---
-beads_section() {
-  local my_harness="$1"
-  local section=""
-  [ ! -f "$BEADS" ] && return
-
-  local NOW=$(date +%s)
-
-  # Unread wisps for this harness
-  local WISPS=$(jq -r --arg h "$my_harness" --argjson now "$NOW" \
-    '[.wisps[] | select(.read == false and .expires > $now and (.to == $h or .to == "all"))] |
-     if length > 0 then
-       "**Wisps (unread):**\n" + (map("  \(.id) [\(.from)] \(.msg)") | join("\n"))
-     else "" end' "$BEADS" 2>/dev/null || echo "")
-
-  # Active claims by OTHER harnesses (warn: don't touch these files)
-  local CLAIMS=$(jq -r --arg h "$my_harness" --argjson now "$NOW" \
-    '[.claims | to_entries[] | select(.value.expires > $now and .value.by != $h)] |
-     if length > 0 then
-       "**Claimed files (do NOT edit):**\n" + (map("  \(.key) — by \(.value.by): \(.value.reason)") | join("\n"))
-     else "" end' "$BEADS" 2>/dev/null || echo "")
-
-  # Active gates by OTHER harnesses
-  local GATES=$(jq -r --arg h "$my_harness" \
-    '[.gates | to_entries[] | select(.value.by != $h)] |
-     if length > 0 then
-       "**Gates (blocked):**\n" + (map("  \(.key) — by \(.value.by): \(.value.reason)") | join("\n"))
-     else "" end' "$BEADS" 2>/dev/null || echo "")
-
-  [ -n "$WISPS" ] && section="${section}\n${WISPS}"
-  [ -n "$CLAIMS" ] && section="${section}\n${CLAIMS}"
-  [ -n "$GATES" ] && section="${section}\n${GATES}"
-
-  echo "$section"
-}
-
 # --- Collect info about all active harnesses (for cross-harness awareness) ---
 other_harnesses_info() {
   local my_harness="$1"
   local info=""
-  for pfile in "$PROJECT_ROOT"/claude_files/*-progress.json; do
+  while IFS= read -r pfile; do
     [ -f "$pfile" ] || continue
     local pstatus=$(jq -r '.status // "inactive"' "$pfile" 2>/dev/null || echo "inactive")
     [ "$pstatus" != "active" ] && continue
@@ -129,7 +86,7 @@ other_harnesses_info() {
     [ "$pname" = "$my_harness" ] && continue
     local pcurrent=$(harness_current_task "$pfile" 2>/dev/null || echo "unknown")
     info="${info}\n  - ${pname}: working on ${pcurrent}"
-  done
+  done < <(harness_all_progress_files "$PROJECT_ROOT")
   echo "$info"
 }
 
@@ -208,15 +165,6 @@ discover_agent_panes() {
   echo "Read: \`tmux capture-pane -t {pane} -p | tail -20\`"
   echo "If you receive a message from another agent, ALWAYS reply back (sign with [from ${my_sig}])."
 }
-
-# --- GC expired beads on every stop (cheap, locked) ---
-if [ -f "$BEADS" ]; then
-  NOW=$(date +%s)
-  locked_jq_write "$BEADS" "beads" \
-    '.wisps |= [.[] | select(.expires > $now and .read == false)] |
-     .claims |= with_entries(select(.value.expires > $now))' \
-    --argjson now "$NOW"
-fi
 
 # --- GC stale tmp files (throttled: at most once per 5 min) ---
 _GC_STAMP="$HARNESS_STATE_DIR/.last_tmp_gc"
@@ -363,25 +311,40 @@ block_generic() {
   # Update tmux pane border with current status
   update_pane_status "$HNAME" "$CURRENT" "$DONE_COUNT" "$TOTAL"
 
+  # ── Resolve harness.md path and extract mission vision ──
+  local HARNESS_MD=""
+  if [ -f "$PROJECT_ROOT/.claude/harness/$CANONICAL/harness.md" ]; then
+    HARNESS_MD="$PROJECT_ROOT/.claude/harness/$CANONICAL/harness.md"
+  elif [ -f "$PROJECT_ROOT/claude_files/${CANONICAL}-harness.md" ]; then
+    HARNESS_MD="$PROJECT_ROOT/claude_files/${CANONICAL}-harness.md"
+  fi
+
+  local MISSION_VISION=""
+  if [ -n "$HARNESS_MD" ] && [ -f "$HARNESS_MD" ]; then
+    MISSION_VISION=$(sed -n '/^## The World We Want$/,/^## /{/^## The World We Want$/d;/^## /d;p;}' "$HARNESS_MD" 2>/dev/null | sed '/^[[:space:]]*$/d' | head -20)
+  fi
+
+  # ── Detect spec file (optional) ──
+  local SPEC_FILE=""
+  if [ -f "$PROJECT_ROOT/.claude/harness/$CANONICAL/spec.md" ]; then
+    SPEC_FILE=".claude/harness/$CANONICAL/spec.md"
+  elif [ -f "$PROJECT_ROOT/claude_files/${CANONICAL}-spec.md" ]; then
+    SPEC_FILE="claude_files/${CANONICAL}-spec.md"
+  fi
+
   # ── Phase 0 gate: Sketch must be approved before implementation ──
   local SKETCH_APPROVED=$(jq -r '.sketch_approved // false' "$PROGRESS" 2>/dev/null || echo "false")
   if [ "$SKETCH_APPROVED" != "true" ] && [ "$DONE_COUNT" -eq 0 ]; then
-    # No tasks completed yet and no sketch approved — enforce Phase 0
-    local SKETCH_MSG="## ${HNAME}: Phase 0 — Sketch the Vision\n\n"
+    local SKETCH_MSG="## ${HNAME}: Phase 0 — Sketch Required\n\n"
     SKETCH_MSG="${SKETCH_MSG}**Mission:** ${MISSION}\n\n"
-    SKETCH_MSG="${SKETCH_MSG}Before implementing anything, you must create a high-fidelity HTML sketch\n"
-    SKETCH_MSG="${SKETCH_MSG}illustrating the end state you're building toward.\n\n"
-    SKETCH_MSG="${SKETCH_MSG}1. Read claude_files/${CANONICAL}-harness.md — absorb \"The World We Want\"\n"
-    SKETCH_MSG="${SKETCH_MSG}2. Explore the current codebase to understand what exists today\n"
-    SKETCH_MSG="${SKETCH_MSG}3. Create \`claude_files/${CANONICAL}-vision.html\` showing:\n"
-    SKETCH_MSG="${SKETCH_MSG}   - UI mockups / architecture diagrams of the end state\n"
-    SKETCH_MSG="${SKETCH_MSG}   - Before → After comparisons\n"
-    SKETCH_MSG="${SKETCH_MSG}   - Key decisions and trade-offs\n"
-    SKETCH_MSG="${SKETCH_MSG}   - How seed waypoints map to the overall vision\n"
-    SKETCH_MSG="${SKETCH_MSG}4. Open it: \`open claude_files/${CANONICAL}-vision.html\`\n"
-    SKETCH_MSG="${SKETCH_MSG}5. Wait for user feedback — do NOT start implementation\n"
-    SKETCH_MSG="${SKETCH_MSG}6. Once approved, set \`\"sketch_approved\": true\` in progress.json\n\n"
-    SKETCH_MSG="${SKETCH_MSG}The sketch is a 10-minute investment that prevents hours of misaligned work.\n"
+    if [ -n "$MISSION_VISION" ]; then
+      SKETCH_MSG="${SKETCH_MSG}**The World We Want:**\n${MISSION_VISION}\n\n"
+    fi
+    SKETCH_MSG="${SKETCH_MSG}You must create and get approval for an HTML sketch before implementing anything.\n"
+    SKETCH_MSG="${SKETCH_MSG}Follow the Phase 0 instructions from your seed prompt. Key steps:\n"
+    SKETCH_MSG="${SKETCH_MSG}1. Create \`claude_files/${CANONICAL}-vision.html\`\n"
+    SKETCH_MSG="${SKETCH_MSG}2. Open it for review: \`open claude_files/${CANONICAL}-vision.html\`\n"
+    SKETCH_MSG="${SKETCH_MSG}3. Wait for user approval, then set \`\"sketch_approved\": true\`\n\n"
     SKETCH_MSG="${SKETCH_MSG}Escape: touch /tmp/claude_allow_stop_${SESSION_ID}"
 
     python3 -c "
@@ -389,6 +352,33 @@ import json, sys
 msg = sys.argv[1]
 print(json.dumps({'decision': 'block', 'reason': msg}))
 " "$(echo -e "$SKETCH_MSG")"
+    exit 0
+  fi
+
+  # ── Phase 0.5 gate: Generalizations must be approved before implementation ──
+  local GEN_APPROVED=$(jq -r '.generalization_approved // false' "$PROGRESS" 2>/dev/null || echo "false")
+  if [ "$SKETCH_APPROVED" = "true" ] && [ "$GEN_APPROVED" != "true" ] && [ "$DONE_COUNT" -eq 0 ]; then
+    local GEN_FILE="$PROJECT_ROOT/claude_files/${CANONICAL}-generalizations.md"
+    local GEN_MSG="## ${HNAME}: Phase 0.5 — Generalizations Required\n\n"
+    GEN_MSG="${GEN_MSG}**Mission:** ${MISSION}\n\n"
+    GEN_MSG="${GEN_MSG}Your sketch is approved. Before implementing, propose 3-5 improvements beyond\n"
+    GEN_MSG="${GEN_MSG}the seed waypoints. Follow the Phase 0.5 instructions from your seed prompt.\n"
+    if [ ! -f "$GEN_FILE" ]; then
+      GEN_MSG="${GEN_MSG}1. Write to \`claude_files/${CANONICAL}-generalizations.md\`\n"
+      GEN_MSG="${GEN_MSG}2. Open for review + notify Warren\n"
+      GEN_MSG="${GEN_MSG}3. Wait for approval, then set \`\"generalization_approved\": true\`\n"
+    else
+      GEN_MSG="${GEN_MSG}File exists: \`claude_files/${CANONICAL}-generalizations.md\`\n"
+      GEN_MSG="${GEN_MSG}Awaiting user approval. Revise if they give feedback.\n"
+      GEN_MSG="${GEN_MSG}Once approved: add tasks to progress.json, set \`\"generalization_approved\": true\`\n"
+    fi
+    GEN_MSG="${GEN_MSG}\nEscape: touch /tmp/claude_allow_stop_${SESSION_ID}"
+
+    python3 -c "
+import json, sys
+msg = sys.argv[1]
+print(json.dumps({'decision': 'block', 'reason': msg}))
+" "$(echo -e "$GEN_MSG")"
     exit 0
   fi
 
@@ -414,6 +404,9 @@ print(json.dumps({'decision': 'block', 'reason': msg}))
   [ "$NEEDS_VERIFY" -gt 0 ] && MSG="${MSG}**Awaiting verification:** ${NEEDS_VERIFY} tasks need e2e proof.\n"
   [ -n "$READINESS_WARN" ] && MSG="${MSG}\n${READINESS_WARN}\n"
   [ -n "$MISSION" ] && MSG="${MSG}**Mission:** ${MISSION}\n"
+  if [ -n "$MISSION_VISION" ]; then
+    MSG="${MSG}\n**The World We Want:**\n${MISSION_VISION}\n"
+  fi
   MSG="${MSG}**Current:** ${CURRENT}\n"
   [ -n "$DESCRIPTION" ] && MSG="${MSG}**Description:** ${DESCRIPTION}\n"
   MSG="${MSG}**Next:** ${NEXT}\n"
@@ -424,32 +417,74 @@ print(json.dumps({'decision': 'block', 'reason': msg}))
     [ -n "$WOULD_UNBLOCK" ] && MSG="${MSG}**Completing ${CURRENT} unblocks:** ${WOULD_UNBLOCK}\n"
   fi
 
+  # Wave progress (if waves defined)
+  local WAVE_INFO=$(harness_wave_progress "$PROGRESS" 2>/dev/null || echo "")
+  [ -n "$WAVE_INFO" ] && MSG="${MSG}**Wave:** ${WAVE_INFO}\n"
+
+  # ── Wave boundary + gate enforcement (consolidated) ──
+  local WAVE_BOUNDARY=$(harness_is_wave_boundary "$PROGRESS" 2>/dev/null || echo "false")
+  local ACTIONABLE_GATE=""
+  ACTIONABLE_GATE=$(jq -r '
+    . as $root |
+    [.tasks | to_entries[] | select(
+      .value.status == "pending" and
+      (.value.metadata.wave_gate == true) and
+      ((.value.blockedBy // []) as $deps |
+       if ($deps | length) == 0 then true
+       else [$deps[] as $dep | ($root.tasks[$dep].status // "missing")] | all(. == "completed")
+       end)
+    ) | .key] | first // ""
+  ' "$PROGRESS" 2>/dev/null || echo "")
+
+  if [ "$WAVE_BOUNDARY" = "true" ] || [ -n "$ACTIONABLE_GATE" ]; then
+    # Resolve wave number from whichever source is available
+    local WAVE_NUM="?" WAVE_NAME="" REPORT_PATH=""
+    if [ -n "$ACTIONABLE_GATE" ]; then
+      WAVE_NUM=$(jq -r --arg g "$ACTIONABLE_GATE" '.tasks[$g].metadata.wave_number // "?"' "$PROGRESS" 2>/dev/null || echo "?")
+      WAVE_NAME=$(jq -r --arg g "$ACTIONABLE_GATE" '.tasks[$g].metadata.wave_name // ""' "$PROGRESS" 2>/dev/null || echo "")
+    elif [ "$WAVE_BOUNDARY" = "true" ]; then
+      local WAVE_JSON=$(harness_current_wave "$PROGRESS" 2>/dev/null || echo "null")
+      WAVE_NUM=$(echo "$WAVE_JSON" | jq -r '.id // "?"' 2>/dev/null || echo "?")
+    fi
+    REPORT_PATH=$(harness_wave_report_path "$PROGRESS" "$WAVE_NUM" 2>/dev/null || echo "")
+
+    MSG="${MSG}\n**WAVE ${WAVE_NUM} COMPLETE**${WAVE_NAME:+ (${WAVE_NAME})}\n"
+    [ -n "$SPEC_FILE" ] && MSG="${MSG}**Spec check**: Re-read \`${SPEC_FILE}\` — did you miss anything? Document deviations.\n"
+    MSG="${MSG}1. Re-read the mission. Does each task result serve it?\n"
+    MSG="${MSG}2. Commit: \`feat(${HNAME}): wave ${WAVE_NUM} — <name>\`\n"
+    MSG="${MSG}3. Deploy + inspect via Chrome + take screenshots\n"
+    MSG="${MSG}4. Generate report: \`${REPORT_PATH:-~/.claude-ops/harness/reports/${HNAME}/wave-${WAVE_NUM}.html}\`\n"
+    MSG="${MSG}5. Open + notify Warren, wait for confirmation\n"
+    [ -n "$ACTIONABLE_GATE" ] && MSG="${MSG}6. Mark gate \`${ACTIONABLE_GATE}\` completed in progress.json\n"
+
+    # Hard gate: block if report missing or lacks Mission Alignment
+    if [ -n "$REPORT_PATH" ] && [ ! -f "$REPORT_PATH" ]; then
+      MSG="${MSG}\n**WAVE GATE**: No report found at ${REPORT_PATH}.\n"
+      MSG="${MSG}Report MUST include Mission Alignment + Gap Analysis. Cannot proceed without it.\n"
+    elif [ -n "$REPORT_PATH" ] && [ -f "$REPORT_PATH" ]; then
+      if ! grep -qi "mission alignment\|mission.alignment" "$REPORT_PATH" 2>/dev/null; then
+        MSG="${MSG}\n**WAVE GATE**: Report missing Mission Alignment section.\n"
+      fi
+    fi
+  fi
+
   # ── Phase 2: Seed tasks done but mission continues ──
   if [ "$CURRENT" = "ALL_DONE" ]; then
-    # Check if agent has already written a mission-complete learnings entry
     local HAS_MISSION_COMPLETE=$(jq -r '
       [(.learnings // [])[] | select(. | test("mission.complete"; "i"))] | length
     ' "$PROGRESS" 2>/dev/null || echo "0")
 
     if [ "$HAS_MISSION_COMPLETE" -eq 0 ]; then
-      MSG="${MSG}\n---\n"
-      MSG="${MSG}## Phase 2: Seed Tasks Complete — The Real Work Begins\n\n"
-      MSG="${MSG}All seed waypoints are done. This means you now understand the system.\n"
-      MSG="${MSG}**Completing tasks is the starting line, not the finish line.**\n\n"
-      MSG="${MSG}### Your next moves (mandatory):\n"
-      MSG="${MSG}1. **Re-read** claude_files/${CANONICAL}-harness.md — specifically \"The World We Want\"\n"
-      MSG="${MSG}2. **Verify from outside** — experience the system as a user/operator would\n"
-      MSG="${MSG}3. **Find at least 3 gaps** between current reality and the vision\n"
-      MSG="${MSG}4. **Create new waypoints** in the progress file for what you discover\n"
-      MSG="${MSG}5. **Work them** with the same rigor as Phase 1\n\n"
-      MSG="${MSG}Do NOT stop. Do NOT mark the harness as done. The mission is the goal, not the task list.\n"
-      MSG="${MSG}Only when you can provide **specific evidence** that the world matches the vision\n"
-      MSG="${MSG}should you write a \"mission-complete\" learnings entry.\n"
+      MSG="${MSG}\n---\n## Phase 2: Seed Tasks Complete — The Real Work Begins\n\n"
+      MSG="${MSG}All seed waypoints done. Follow Phase 2 from your seed prompt:\n"
+      MSG="${MSG}1. Re-read the mission (scroll up, or re-read harness.md if context was compacted)\n"
+      MSG="${MSG}2. Experience the system as a user\n"
+      MSG="${MSG}3. Find at least 3 gaps, create a new wave\n"
+      MSG="${MSG}4. Do NOT stop. The mission is the target, not the task list.\n"
     else
       MSG="${MSG}\n---\n"
       MSG="${MSG}**Mission verified.** You wrote a mission-complete learnings entry.\n"
-      MSG="${MSG}If you genuinely believe the world matches the vision, you may set status to \"done\".\n"
-      MSG="${MSG}Otherwise, keep going — remove the premature entry and find more gaps.\n"
+      MSG="${MSG}Set status to \"done\" if the world matches the vision, or keep going.\n"
     fi
   fi
 
@@ -507,9 +542,15 @@ print(json.dumps({'decision': 'block', 'reason': msg}))
   MSG="${MSG}\nRead claude_files/${CANONICAL}-harness.md if context lost.\n"
   MSG="${MSG}Escape: touch /tmp/claude_allow_stop_${SESSION_ID}"
 
-  # Beads coordination
-  local BEADS_INFO=$(beads_section "$HNAME")
-  [ -n "$BEADS_INFO" ] && MSG="${MSG}\n${BEADS_INFO}\n"
+  # File overlaps (beads: cross-harness awareness)
+  source "$HOME/.claude-ops/lib/beads.sh" 2>/dev/null || true
+  if bead_is_enabled && [ "$BEAD_LAYER_STOP" = "true" ]; then
+    local OVERLAPS=$(bead_cross_harness_overlaps "$HNAME" 2>/dev/null || true)
+    if [ -n "$OVERLAPS" ]; then
+      local _window_min=$(( BEAD_CONFLICT_WINDOW_SEC / 60 ))
+      MSG="${MSG}\n**File overlaps (last ${_window_min}m):**\n${OVERLAPS}\n"
+    fi
+  fi
 
   # Other harnesses
   local OTHERS=$(other_harnesses_info "$HNAME")
@@ -569,8 +610,12 @@ resolve_progress_file() {
     chatbot-agent|chatbot-swarm)
       echo "$PROJECT_ROOT/claude_files/chatbot-agent-progress.json" ;;
     *)
-      # Priority 3: convention
-      echo "$PROJECT_ROOT/claude_files/${dispatch_name}-progress.json" ;;
+      # Priority 3: convention — check new location first, then legacy
+      if [ -f "$PROJECT_ROOT/.claude/harness/${dispatch_name}/progress.json" ]; then
+        echo "$PROJECT_ROOT/.claude/harness/${dispatch_name}/progress.json"
+      else
+        echo "$PROJECT_ROOT/claude_files/${dispatch_name}-progress.json"
+      fi ;;
   esac
 }
 

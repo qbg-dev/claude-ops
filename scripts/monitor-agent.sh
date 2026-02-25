@@ -92,7 +92,7 @@ fi
 
 # --- Args ---
 TARGET_PANE="${1:?Usage: monitor-agent.sh [--pane <pane-id>] <target-pane> [interval] [mission]}"
-INTERVAL="${2:-60}"
+INTERVAL="${2:-180}"
 MISSION="${3:-Watch the target agent and nudge it if it goes off track or gets stuck.}"
 
 # --- State directory (keyed by stable pane_id, not target) ---
@@ -111,13 +111,14 @@ MIN_INTERVAL=15
 LAST_SEND_FILE="$STATE_DIR/last-send"
 echo 0 > "$LAST_SEND_FILE"
 
-# --- REFLECT: capture counter + receipt tracking ---
-REFLECT_INTERVAL="${REFLECT_INTERVAL:-6}"  # captures between reflections
+# --- Capture counter ---
 CAPTURE_COUNT_FILE="$STATE_DIR/capture_count"
 echo 0 > "$CAPTURE_COUNT_FILE"
-REFLECT_RECEIPT_FILE="/tmp/monitor_reflection_${TARGET_SLUG}_latest.json"
-REFLECT_PENDING_FILE="$STATE_DIR/reflect_pending"
-REFLECT_OVERDUE_POLLS=3  # polls without receipt before sending REFLECT_OVERDUE
+
+# --- Debug log helper ---
+daemon_log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$STATE_DIR/debug.log"
+}
 
 # --- Helper: send event to monitor Claude session (with debounce) ---
 send_to_monitor() {
@@ -125,19 +126,30 @@ send_to_monitor() {
   local context="$2"
   local monitor_pane
   monitor_pane=$(cat "$STATE_DIR/monitor-pane" 2>/dev/null || echo "")
-  [ -z "$monitor_pane" ] && return
+  if [ -z "$monitor_pane" ]; then
+    daemon_log "SKIP[$event_type]: monitor-pane file empty"
+    return
+  fi
 
   # Check monitor pane still exists (prefer stable pane_id)
   local monitor_pane_id
   monitor_pane_id=$(cat "$STATE_DIR/monitor-pane-id" 2>/dev/null || echo "")
   local monitor_ref="${monitor_pane_id:-$monitor_pane}"
-  tmux display-message -t "$monitor_ref" -p '#{pane_id}' >/dev/null 2>&1 || return
+
+  # Verify the resolved pane_id matches what we expect
+  local actual_pane_id
+  actual_pane_id=$(tmux display-message -t "$monitor_ref" -p '#{pane_id}' 2>/dev/null || echo "GONE")
+  if [ "$actual_pane_id" = "GONE" ]; then
+    daemon_log "SKIP[$event_type]: monitor pane $monitor_ref no longer exists"
+    return
+  fi
 
   # Debounce
   local now last
   now=$(date +%s)
   last=$(cat "$LAST_SEND_FILE" 2>/dev/null || echo 0)
   if [ $((now - last)) -lt "$MIN_INTERVAL" ]; then
+    daemon_log "SKIP[$event_type]: debounce (${now}-${last}=$((now-last))s < ${MIN_INTERVAL}s)"
     return
   fi
 
@@ -145,12 +157,28 @@ send_to_monitor() {
   local tail_content
   tail_content=$(tmux capture-pane -t "$monitor_ref" -p 2>/dev/null | tail -8)
   if ! echo "$tail_content" | grep -qE '(❯|>|bypass permissions)'; then
+    daemon_log "SKIP[$event_type]: monitor not idle (no prompt detected in $monitor_ref)"
     return
   fi
 
-  # Send the event (use stable pane_id ref)
+  # Safety: NEVER send to the worker pane (prevents daemon→worker leaks)
+  if [ "$monitor_ref" = "$WORKER_PANE_ID" ]; then
+    daemon_log "SAFETY[$event_type]: monitor_ref=$monitor_ref == WORKER_PANE_ID=$WORKER_PANE_ID — BLOCKED"
+    return
+  fi
+
+  # Double-check: resolve both to pane_ids and compare
+  local worker_actual
+  worker_actual=$(tmux display-message -t "$WORKER_PANE_ID" -p '#{pane_id}' 2>/dev/null || echo "GONE")
+  if [ "$actual_pane_id" = "$worker_actual" ]; then
+    daemon_log "SAFETY[$event_type]: resolved monitor pane $monitor_ref ($actual_pane_id) == worker pane $WORKER_PANE_ID ($worker_actual) — BLOCKED"
+    return
+  fi
+
+  # Send the event (use -l for literal text to avoid tmux key interpretation)
   local msg="[${event_type}] ${context} — Capture target ${TARGET_PANE}, analyze, nudge if needed."
-  tmux send-keys -t "$monitor_ref" "$msg" && tmux send-keys -t "$monitor_ref" -H 0d
+  daemon_log "SEND[$event_type]: target=$monitor_ref (pane_id=$actual_pane_id) worker=$WORKER_PANE_ID ($worker_actual) msg_len=${#msg}"
+  tmux send-keys -t "$monitor_ref" -l "$msg" && tmux send-keys -t "$monitor_ref" -H 0d
   echo "$now" > "$LAST_SEND_FILE"
 }
 
@@ -166,8 +194,8 @@ JOURNAL_PATH=""
 source "$HOME/.claude-ops/lib/harness-jq.sh" 2>/dev/null || HARNESS_SESSION_REGISTRY="$HOME/.claude-ops/state/session-registry.json"
 if [ -f "$HARNESS_SESSION_REGISTRY" ]; then
   # Try to find harness for the target pane's session
-  # We'll pass paths to the prompt so the monitor can update them
-  for pf in ${PROJECT_ROOT:-/Users/wz/Desktop/zPersonalProjects/Wechat}/claude_files/*-progress.json; do
+  local search_root="${PROJECT_ROOT:-/Users/wz/Desktop/zPersonalProjects/Wechat}"
+  while IFS= read -r pf; do
     [ -f "$pf" ] || continue
     h=$(jq -r '.harness // ""' "$pf" 2>/dev/null || true)
     s=$(jq -r '.status // ""' "$pf" 2>/dev/null || true)
@@ -176,11 +204,17 @@ if [ -f "$HARNESS_SESSION_REGISTRY" ]; then
       if echo "$TARGET_PANE" | grep -qi "$h"; then
         HARNESS_NAME="$h"
         PROGRESS_PATH="$pf"
-        JOURNAL_PATH="${pf%-progress.json}-journal.md"
+        # Journal: same dir for new convention, same prefix for legacy
+        local pf_dir=$(dirname "$pf")
+        if [ "$(basename "$pf")" = "progress.json" ]; then
+          JOURNAL_PATH="$pf_dir/journal.md"
+        else
+          JOURNAL_PATH="${pf%-progress.json}-journal.md"
+        fi
         break
       fi
     fi
-  done
+  done < <(harness_all_progress_files "$search_root")
 fi
 
 # --- Session transcript discovery ---
@@ -199,19 +233,6 @@ get_session_digest() {
   session_summary "$jsonl_path" 20 2>/dev/null || true
 }
 
-get_session_digest_rich() {
-  local jsonl_path
-  jsonl_path=$(cat "$STATE_DIR/session-jsonl" 2>/dev/null || echo "")
-  [ -z "$jsonl_path" ] || [ ! -f "$jsonl_path" ] && return
-  echo "=== Session Summary ==="
-  session_summary "$jsonl_path" 40 2>/dev/null || true
-  echo ""
-  echo "=== Recent Errors ==="
-  session_errors "$jsonl_path" 40 2>/dev/null || true
-  echo ""
-  echo "=== Recent Tools ==="
-  session_recent_tools "$jsonl_path" 40 2>/dev/null || true
-}
 
 # Build harness-specific paths for the prompt
 HARNESS_PATHS_BLOCK=""
@@ -220,7 +241,6 @@ if [ -n "$HARNESS_NAME" ]; then
 **Harness:** \`${HARNESS_NAME}\`
 **Progress:** \`${PROGRESS_PATH}\`
 **Journal:** \`${JOURNAL_PATH}\`
-**Receipt file:** \`${REFLECT_RECEIPT_FILE}\`
 **Session transcript:** \`${SESSION_JSONL_PATH}\`
 "
 fi
@@ -231,165 +251,170 @@ fi
 STABLE_TARGET="${WORKER_PANE_ID}"
 
 cat > "$PROMPT_FILE" <<PROMPT
-You are a MONITOR AGENT. Your job is to watch the Claude Code agent running in tmux pane ${TARGET_PANE} (stable id: ${STABLE_TARGET}) and keep it on track.
+You are a MONITOR AGENT with three roles: **Guardian**, **Wave Enforcer**, and **Evolver**.
+You watch the Claude Code agent in tmux pane ${TARGET_PANE} (stable id: ${STABLE_TARGET}).
 
-**IMPORTANT:** Always use the stable pane id \`${STABLE_TARGET}\` for tmux commands (capture-pane, send-keys), not \`${TARGET_PANE}\`. Human-readable pane indices shift when windows are opened/closed/reordered.
+**IMPORTANT:** Always use stable pane id \`${STABLE_TARGET}\` for tmux commands, not \`${TARGET_PANE}\`.
 
-**Your mission:** ${MISSION}
+**Mission:** ${MISSION}
 ${HARNESS_PATHS_BLOCK}
-**You receive events from a poller daemon:**
+**Events from poller daemon:**
 - \`POLL\` — periodic check (every ${INTERVAL}s), target pane changed since last check
-- \`IDLE\` — target pane unchanged since last check, agent may be stuck
-- \`REFLECT\` — every ${REFLECT_INTERVAL} captures, time for meta-reflection (see below)
-- \`REFLECT_OVERDUE\` — you received a REFLECT but haven't written the receipt file yet
+- \`IDLE\` — target pane unchanged since last check
 
-**On POLL / IDLE events, do this:**
+---
 
-1. Find your own pane ID and name (first time only, cache it):
-   WARNING: Do NOT use \`tmux display-message -p\` — it returns the focused pane, not yours.
-   Instead, walk the process tree to find which pane owns your shell:
-   \`\`\`
-   MY_PANE_ID=\$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' | while read pid id; do
-     p=\$PPID; while [ "\$p" -gt 1 ]; do
-       [ "\$p" = "\$pid" ] && echo "\$id" && break 2
-       p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ')
-     done
-   done)
-   MY_PANE=\$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="\$MY_PANE_ID" '\$1 == id {print \$2; exit}')
-   MY_NAME=\$(jq -r '.harness // empty' "/tmp/tmux_pane_meta_\${MY_PANE_ID}" 2>/dev/null || true)
-   [ -z "\$MY_NAME" ] && MY_NAME="monitor"
-   SIGNATURE="[from \$MY_PANE (\$MY_NAME)]"
-   \`\`\`
+## Role 1: Guardian — Keeper of Mission
 
-2. Capture the target's recent output:
-   \`tmux capture-pane -t ${STABLE_TARGET} -p | tail -30\`
+Your default stance is **silence**. The agent is usually fine. On every event:
 
-3. **Detect the target's TUI state** from the capture:
-   - \`❯\` visible at end → **IDLE** (at prompt, ready for input)
-   - \`Waiting for task\` visible → **BLOCKED** (background task running, Enter is swallowed)
-   - \`Generating\`/\`Considering\`/\`Noodling\`/\`Cooked\` → **THINKING** (actively working, don't interrupt)
-   - \`Running…\` with timeout → **EXECUTING** (foreground command, wait unless very long)
+1. Read progress.json — is the agent on the right task?
+2. Does the approach align with the mission spirit (not just letter)?
+3. **Only intervene when:**
+   - IDLE at prompt >5min with no progress
+   - Working on wrong task (not the current one in progress.json)
+   - Same error repeated 3+ times (stuck in a loop)
+   - Deploying without testing
+   - Skipping a wave gate (see Role 2)
 
-4. Analyze: Is the agent on track? Stuck? Off-task? Making mistakes?
+**If none of these apply, say "on track" and wait.** Do NOT nudge for velocity.
 
-5. **Choose intervention based on state:**
+## Role 2: Wave Enforcer — Protocol Compliance
 
-   **If IDLE** — direct nudge works:
-   \`\`\`
-   tmux send-keys -t ${STABLE_TARGET} "\$SIGNATURE your nudge here"
-   tmux send-keys -t ${STABLE_TARGET} -H 0d
-   \`\`\`
+Events include wave state (wave_progress, is_wave_boundary, current_task). Check:
 
-   **If BLOCKED (Waiting for task)** — MUST Escape first, text nudges are useless:
-   \`\`\`
-   tmux send-keys -t ${STABLE_TARGET} Escape
-   sleep 2
-   tmux send-keys -t ${STABLE_TARGET} "\$SIGNATURE your nudge here"
-   tmux send-keys -t ${STABLE_TARGET} -H 0d
-   \`\`\`
-   CRITICAL: In "Waiting for task" state, Enter is swallowed by the TUI. Text gets queued
-   but never submitted. You MUST Escape to break out first. Do NOT waste polls sending
-   text nudges to a blocked agent — go straight to Escape on first detection.
+1. **Wave gate tasks (\`wave-N-report\`)** — these are structural gates in progress.json with \`metadata.wave_gate: true\`. They block the next wave's tasks via \`blockedBy\`.
+2. If agent is working on wave N+1 tasks while \`wave-N-report\` is still pending → **INTERVENE IMMEDIATELY**. Send: "STOP — wave-N-report gate is pending. Complete the gate steps before proceeding."
+3. Gate steps: commit, deploy, inspect Chrome, screenshot, report HTML, open, notify, wait for Warren.
+4. Report file location: \`~/.claude-ops/harness/reports/${HARNESS_NAME:-unknown}/wave-{N}.html\`
+5. Only after the report exists AND Warren confirms → gate can be marked completed.
 
-   **If THINKING** — BE PATIENT. Agents routinely think for 5-10+ minutes on complex tasks.
-   Only intervene if the same "thinking" state persists across **5+ consecutive polls** (~5min).
-   Even then, check if the token count is growing — if so, it's working, leave it alone.
-   Only Escape if genuinely stalled (no token count change for 5+ polls).
+## Role 3: Evolver — Harness Maintenance
 
-   **If EXECUTING** — wait for completion. Commands can run 3-5 minutes (deploys, evals, SSH).
-   Only flag if past 2x expected timeout (e.g., >10min for a deploy).
+You can **read AND write** the harness. Use these exact commands:
 
-6. If on track (thinking, executing, or making progress), just say "on track" and wait for next event. **Default to patience.**
-
-**On REFLECT events, do a full meta-reflection:**
-
-A REFLECT event means you've accumulated ${REFLECT_INTERVAL} captures. Step back from moment-to-moment monitoring and synthesize what you've observed. Meta-reflection = pattern recognition across multiple observations, not just reacting to the latest capture.
-
-Concretely, do these four things:
-
-1. **Synthesize patterns.** Review the last ${REFLECT_INTERVAL} captures mentally. What patterns do you see? Is the agent making steady progress, circling, or drifting? Are there recurring errors or inefficiencies?
-
-2. **Write findings to the handoff file.** This is how your observations become durable—the meta-reflect sweep reads this file and applies changes to harness policy files (best-practices.json, context-injections.json, progress.json learnings).
-
-   \`\`\`bash
-   cat > /tmp/monitor_findings_${HARNESS_NAME:-unknown}.json <<'FINDINGS_EOF'
-   {
-     "reflected_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-     "harness": "${HARNESS_NAME:-unknown}",
-     "capture_count": N,
-     "patterns": [
-       "Pattern 1: describe what you observed across multiple captures",
-       "Pattern 2: another recurring observation"
-     ],
-     "proposed_learnings": [
-       "Terse learning bullet for progress.json"
-     ],
-     "proposed_best_practices": {
-       "key": "value to add/update in best-practices.json (only if warranted by 3+ observations)"
-     },
-     "proposed_context_injections": {
-       "file_context or command_context or tool_context key": "knowledge that would have prevented observed mistakes"
-     },
-     "proposed_tasks": [
-       {"id": "new-task-id", "description": "Undiscovered work the agent should do", "blockedBy": []}
-     ],
-     "summary": "One-paragraph reflection summary for the journal"
-   }
-   FINDINGS_EOF
-   \`\`\`
-
-   Replace N with the capture count. Only include non-empty fields. Be conservative — only propose changes backed by 3+ observations.
-
-3. **Write the receipt file** so the daemon knows you completed the reflection:
-   \`\`\`bash
-   echo '{"reflected_at":"'\$(date -u +%Y-%m-%dT%H:%M:%SZ)'","capture_count":N}' > ${REFLECT_RECEIPT_FILE}
-   \`\`\`
-   Replace N with the capture count from the REFLECT event. If you skip this, the daemon sends REFLECT_OVERDUE reminders.
-
-4. **Message the agent** with your key finding — one actionable insight, not a data dump:
-   \`\`\`bash
-   tmux send-keys -t ${STABLE_TARGET} "\$SIGNATURE META-REFLECTION: your actionable insight"
-   tmux send-keys -t ${STABLE_TARGET} -H 0d
-   \`\`\`
-   Good messages: course corrections, learnings to apply now, priority nudges, pattern warnings.
-   Bad messages: status summaries, praise, restatements of what the agent already knows.
-
-**On REFLECT_OVERDUE events:** You got a REFLECT but didn't write the receipt file. Complete steps 2-3 above now.
-
-**Deep Analysis (when tmux capture isn't enough):**
-
-Your target agent's session transcript is at: \`${SESSION_JSONL_PATH}\`
-POLL/IDLE events include a \`session_digest\` JSON line with turn_count, last_tool, last_error, token_trend, and minutes_since_last_assistant. Use this to detect patterns invisible in the TUI.
-
-For deeper investigation, read the transcript directly:
 \`\`\`bash
-# Last 50 assistant text outputs (truncated to 200 chars each)
-tail -50 ${SESSION_JSONL_PATH} | jq -r 'select(.message.role == "assistant") | .message.content[] | select(.type == "text") | .text[:200]'
+# Source harness functions
+source ~/.claude-ops/lib/harness-jq.sh
 
-# Recent tool uses with targets
-tail -50 ${SESSION_JSONL_PATH} | jq -r 'select(.message.role == "assistant") | .message.content[] | select(.type == "tool_use") | "\(.name) \(.input.file_path // .input.command // .input.pattern // "" | tostring | .[:80])"'
+# Add a new task
+locked_jq_write "${PROGRESS_PATH}" "progress-${HARNESS_NAME}" \
+  '.tasks["new-task-id"] = {"status":"pending","description":"...","blockedBy":[],"metadata":{}}'
 
-# Token usage trend (are turns getting bigger? Smaller? Stalled?)
-tail -30 ${SESSION_JSONL_PATH} | jq -r 'select(.message.usage.output_tokens > 0) | "\(.message.usage.output_tokens) output tokens"'
+# Fix task status
+locked_jq_write "${PROGRESS_PATH}" "progress-${HARNESS_NAME}" \
+  '.tasks["task-id"].status = "completed"'
 
-# Errors from tool results
-tail -50 ${SESSION_JSONL_PATH} | jq -r 'select(.message.role == "user") | .message.content[] | select(.type == "tool_result" and .is_error == true) | .content[:200]'
+# Create a new wave and inject gates
+locked_jq_write "${PROGRESS_PATH}" "progress-${HARNESS_NAME}" \
+  '.waves += [{"id":(.waves|length)+1,"name":"Phase 2","tasks":["new-t1","new-t2"],"status":"pending"}]'
+harness_inject_wave_gates "${PROGRESS_PATH}"
 \`\`\`
 
-Use deep analysis when: (a) session_digest shows errors but TUI looks normal, (b) agent appears stuck but TUI shows thinking, (c) REFLECT — always check token trends for meta-reflection.
+**When to evolve:** When all seed tasks are done, re-read the harness.md, identify gaps between reality and vision, create Phase 2 waves with new tasks.
 
-**Rules:**
-- **Default to NOT nudging.** Most of the time, the agent is fine. Only nudge when clearly stuck or off-track.
-- Be concise in nudges — one sentence, actionable
-- Don't nudge if the agent is clearly busy and on-task (thinking, executing, reading files)
-- DO nudge if: idle at prompt >5min, wrong file/feature, stuck in a loop (same error 3x), deploying without tests
-- **NEVER send text nudges to a BLOCKED agent** — always Escape first
-- **NEVER interrupt THINKING** unless stuck 5+ polls with no token count change
-- Always sign with \$SIGNATURE: \`[from {pane} ({name})]\`
-- If the agent replies, acknowledge briefly
-- After Escaping a blocked agent, wait 2s before sending your nudge
-- **Patience thresholds**: THINKING=5+ polls, EXECUTING=10min, IDLE=5min before first nudge
-- **Report issues** — If you discover infrastructure bugs, permission problems, or recurring failures, file a report: \`bash ~/.claude-ops/bin/report-issue.sh --title "..." --severity "..." --category "..." --description "..."\`
+---
+
+## TUI State Detection
+
+From \`tmux capture-pane -t ${STABLE_TARGET} -p | tail -30\`:
+- \`❯\` at end → **IDLE** (direct nudge works)
+- \`Waiting for task\` → **BLOCKED** (MUST Escape first, then nudge)
+- \`Generating\`/\`Considering\`/\`Noodling\`/\`Cooked\` → **THINKING** (DO NOT interrupt unless 5+ polls with no token change)
+- \`Running…\` → **EXECUTING** (wait unless >10min)
+
+**Nudge mechanics:**
+\`\`\`bash
+# Find own pane (first time only):
+MY_PANE_ID=\$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' | while read pid id; do
+  p=\$PPID; while [ "\$p" -gt 1 ]; do
+    [ "\$p" = "\$pid" ] && echo "\$id" && break 2
+    p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ')
+  done
+done)
+MY_PANE=\$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="\$MY_PANE_ID" '\$1 == id {print \$2; exit}')
+SIGNATURE="[from \$MY_PANE (monitor)]"
+
+# IDLE → direct nudge:
+tmux send-keys -t ${STABLE_TARGET} "\$SIGNATURE nudge" && tmux send-keys -t ${STABLE_TARGET} -H 0d
+
+# BLOCKED → Escape first:
+tmux send-keys -t ${STABLE_TARGET} Escape; sleep 2
+tmux send-keys -t ${STABLE_TARGET} "\$SIGNATURE nudge" && tmux send-keys -t ${STABLE_TARGET} -H 0d
+\`\`\`
+
+---
+
+## Completion Detection + Notification
+
+On every event, check progress for milestones. Notify Warren exactly ONCE per milestone:
+
+\`\`\`bash
+NOTIFIED_FILE="${STATE_DIR}/notified_milestones"
+touch "\$NOTIFIED_FILE"
+
+# Wave gate actionable (all blockers done, gate pending)
+source ~/.claude-ops/lib/harness-jq.sh 2>/dev/null
+WAVE_BOUNDARY=\$(harness_is_wave_boundary "${PROGRESS_PATH}" 2>/dev/null || echo "false")
+if [ "\$WAVE_BOUNDARY" = "true" ]; then
+  WAVE_INFO=\$(harness_wave_progress "${PROGRESS_PATH}")
+  if ! grep -q "boundary-\$WAVE_INFO" "\$NOTIFIED_FILE" 2>/dev/null; then
+    notify "${HARNESS_NAME:-harness} wave boundary reached — \$WAVE_INFO"
+    echo "boundary-\$WAVE_INFO" >> "\$NOTIFIED_FILE"
+  fi
+fi
+
+# All tasks complete
+ALL_DONE=\$(jq '[.tasks[] | select(.status != "completed")] | length == 0' "${PROGRESS_PATH}" 2>/dev/null || echo "false")
+if [ "\$ALL_DONE" = "true" ] && ! grep -q "all-done" "\$NOTIFIED_FILE" 2>/dev/null; then
+  notify "${HARNESS_NAME:-harness} all tasks complete — needs Phase 2 review"
+  echo "all-done" >> "\$NOTIFIED_FILE"
+fi
+\`\`\`
+
+**Report generation:** Use the same pattern from before — generate HTML, open, notify.
+
+## Deep Analysis
+
+Session transcript: \`${SESSION_JSONL_PATH}\`
+\`\`\`bash
+tail -50 ${SESSION_JSONL_PATH} | jq -r 'select(.message.role == "assistant") | .message.content[] | select(.type == "text") | .text[:200]'
+tail -50 ${SESSION_JSONL_PATH} | jq -r 'select(.message.role == "assistant") | .message.content[] | select(.type == "tool_use") | "\(.name) \(.input.file_path // .input.command // .input.pattern // "" | tostring | .[:80])"'
+\`\`\`
+
+## Meta-Reflection (REFLECT Events)
+
+Every 6 captures, the daemon fires a \`[REFLECT]\` event. This is your meta-reflection moment.
+When you receive a REFLECT event, you MUST write a receipt file with substantive content.
+Do NOT write just \`{"reflected_at": "...", "capture_count": N}\`.
+
+**Required receipt format** at \`${STATE_DIR}/reflect-receipt.json\`:
+\`\`\`json
+{
+  "reflected_at": "ISO timestamp",
+  "capture_count": N,
+  "patterns": ["1-sentence observation", "max 3"],
+  "context_injection": {"trigger": "file_or_tool_pattern", "content": "knowledge to inject"} or null,
+  "best_practice_update": {"key.path": "new_value"} or null,
+  "assessment": "1 sentence: is the agent on track toward the mission?"
+}
+\`\`\`
+
+- **\`patterns\`** is MANDATORY — read the last 20 activity log entries and identify what the
+  agent has been doing. If you can't find patterns, say "Agent idle/blocked — no activity to analyze."
+- **\`assessment\`** is MANDATORY — read the harness mission and compare to current progress.
+- **\`context_injection\`** — if you discover knowledge the agent should receive before certain
+  tool calls, write it here. It feeds the context-injector.
+- **\`best_practice_update\`** — if you notice a threshold or rule that should be tuned,
+  write the jq path and new value here.
+
+## Rules Summary
+- **Default: do NOT nudge.** Silence is correct most of the time.
+- Wave gate violations get immediate intervention.
+- Patience: THINKING=5+ polls, EXECUTING=10min, IDLE=5min.
+- NEVER send text to BLOCKED agent without Escaping first.
+- ALWAYS notify on milestones. File issues for infra bugs.
+- Sign all nudges: \`[from {pane} (monitor)]\`
 
 Start your first check now.
 PROMPT
@@ -433,8 +458,8 @@ echo "Monitor pane: ${MONITOR_PANE}"
 tmux select-pane -t "$MONITOR_PANE" -T "MONITOR→${TARGET_PANE}"
 tmux select-pane -t "$TARGET_PANE" -T "MONITORED by ${MONITOR_PANE}" 2>/dev/null || true
 
-# Launch cdo
-tmux send-keys -t "$MONITOR_PANE" "cdo" && tmux send-keys -t "$MONITOR_PANE" -H 0d
+# Launch Claude (full command, not alias — aliases don't resolve in non-interactive shells)
+tmux send-keys -t "$MONITOR_PANE" "claude --dangerously-skip-permissions --model opus" && tmux send-keys -t "$MONITOR_PANE" -H 0d
 
 # Wait for Claude to start
 echo "Waiting for Claude to start..."
@@ -462,10 +487,15 @@ tmux send-keys -t "$MONITOR_PANE" -H 0d
   # - Various tmux commands can fail transiently
   set +e +o pipefail
 
-  # Source session reader in subshell (functions aren't inherited)
+  # Source shared libraries in subshell (functions aren't inherited)
   source "$HOME/.claude-ops/lib/session-reader.sh" 2>/dev/null || true
+  source "$HOME/.claude-ops/lib/harness-jq.sh" 2>/dev/null || true
 
   trap 'exit 0' TERM INT
+
+  # Log daemon startup with all pane refs for debugging
+  daemon_log "DAEMON_START: worker=$TARGET_PANE ($WORKER_PANE_ID) monitor=$MONITOR_PANE ($MONITOR_PANE_ID) interval=$INTERVAL state=$STATE_DIR"
+  daemon_log "STATE_FILES: monitor-pane=$(cat "$STATE_DIR/monitor-pane" 2>/dev/null) monitor-pane-id=$(cat "$STATE_DIR/monitor-pane-id" 2>/dev/null)"
 
   sleep 30  # Let first check from prompt complete
 
@@ -521,56 +551,34 @@ tmux send-keys -t "$MONITOR_PANE" -H 0d
     # --- Get session digest for event enrichment ---
     session_digest=$(get_session_digest 2>/dev/null || true)
 
-    # --- Check for REFLECT_OVERDUE (receipt missing after REFLECT sent) ---
-    if [ -f "$REFLECT_PENDING_FILE" ]; then
-      pending_polls=$(cat "$REFLECT_PENDING_FILE" 2>/dev/null || echo 0)
-      pending_polls=$((pending_polls + 1))
-      if [ "$pending_polls" -ge "$REFLECT_OVERDUE_POLLS" ] && [ ! -f "$REFLECT_RECEIPT_FILE" ]; then
-        send_to_monitor "REFLECT_OVERDUE" "Meta-reflection was requested $pending_polls polls ago but no receipt found at ${REFLECT_RECEIPT_FILE}. Please complete your reflection and write the receipt file."
-        emit_metric "reflect_overdue" ",\"polls_waiting\":$pending_polls"
-        echo "$pending_polls" > "$REFLECT_PENDING_FILE"
-      elif [ -f "$REFLECT_RECEIPT_FILE" ]; then
-        # Receipt found — clear pending state
-        rm -f "$REFLECT_PENDING_FILE"
-        emit_metric "reflect_receipt" ",\"polls_waited\":$pending_polls"
-      else
-        echo "$pending_polls" > "$REFLECT_PENDING_FILE"
-      fi
+    # --- Wave state enrichment (appended to every event) ---
+    wave_state=""
+    if [ -n "${HARNESS_NAME:-}" ] && [ -n "${PROGRESS_PATH:-}" ] && [ -f "${PROGRESS_PATH}" ]; then
+      wp=$(harness_wave_progress "$PROGRESS_PATH" 2>/dev/null || echo "")
+      wb=$(harness_is_wave_boundary "$PROGRESS_PATH" 2>/dev/null || echo "false")
+      dc=$(harness_done_count "$PROGRESS_PATH" 2>/dev/null || echo "0")
+      tc=$(harness_total_count "$PROGRESS_PATH" 2>/dev/null || echo "0")
+      ct=$(harness_current_task "$PROGRESS_PATH" 2>/dev/null || echo "unknown")
+      wave_state=" | wave_progress: ${wp:-none} | is_wave_boundary: ${wb} | progress: ${dc}/${tc} | current_task: ${ct}"
     fi
 
-    # --- Decide event type: REFLECT every N captures, else POLL/IDLE ---
-    if [ $((capture_count % REFLECT_INTERVAL)) -eq 0 ] && [ "$capture_count" -gt 0 ]; then
-      # Time for a meta-reflection
-      # Build activity digest from last N entries
-      activity_digest=""
-      if [ -n "${HARNESS_NAME:-}" ]; then
-        activity_log="/tmp/claude_activity_${HARNESS_NAME}.jsonl"
-        if [ -f "$activity_log" ]; then
-          activity_digest=$(tail -20 "$activity_log" 2>/dev/null | jq -r '"\(.tool): \(.target // .command // "?")"' 2>/dev/null | tail -10 || true)
-        fi
-      fi
-
-      # Clear old receipt before requesting new reflection
-      rm -f "$REFLECT_RECEIPT_FILE"
-      echo 0 > "$REFLECT_PENDING_FILE"
-
-      # Get rich session digest for REFLECT (more data than POLL/IDLE)
-      rich_digest=$(get_session_digest_rich 2>/dev/null || true)
-
-      reflect_context="Capture #${capture_count} — time for META-REFLECTION. TUI state: ${tui_state}."
-      [ -n "$activity_digest" ] && reflect_context="${reflect_context} Recent activity:\n${activity_digest}"
-      [ -n "$rich_digest" ] && reflect_context="${reflect_context}\n${rich_digest}"
-
+    # --- REFLECT event every 6 captures ---
+    if [ $((capture_count % 6)) -eq 0 ] && [ "$capture_count" -gt 0 ]; then
+      reflect_context="[REFLECT] Capture #${capture_count}. TUI state: ${tui_state}.${wave_state}"
+      [ -n "$session_digest" ] && reflect_context="${reflect_context} session_digest: ${session_digest}"
+      reflect_context="${reflect_context} — Write receipt to ${STATE_DIR}/reflect-receipt.json with patterns + assessment."
       send_to_monitor "REFLECT" "$reflect_context"
-      emit_metric "reflect_sent" ",\"capture_count\":$capture_count"
+      emit_metric "reflect" ",\"capture_count\":$capture_count"
+    fi
 
-    elif [ "$current" = "$prev" ]; then
-      idle_context="Pane ${TARGET_PANE} unchanged for ${INTERVAL}s. TUI state: ${tui_state}. Agent may be stuck."
+    # --- Decide event type: POLL vs IDLE ---
+    if [ "$current" = "$prev" ]; then
+      idle_context="Pane ${TARGET_PANE} unchanged for ${INTERVAL}s. TUI state: ${tui_state}.${wave_state}"
       [ -n "$session_digest" ] && idle_context="${idle_context} session_digest: ${session_digest}"
       send_to_monitor "IDLE" "$idle_context"
       emit_metric "poll" ",\"tui_state\":\"${tui_state}\",\"changed\":false"
     else
-      poll_context="Pane ${TARGET_PANE} check (${INTERVAL}s). TUI state: ${tui_state}. Capture #${capture_count}."
+      poll_context="Pane ${TARGET_PANE} check (${INTERVAL}s). TUI state: ${tui_state}. Capture #${capture_count}.${wave_state}"
       [ -n "$session_digest" ] && poll_context="${poll_context} session_digest: ${session_digest}"
       send_to_monitor "POLL" "$poll_context"
       emit_metric "poll" ",\"tui_state\":\"${tui_state}\",\"changed\":true,\"capture_count\":$capture_count"

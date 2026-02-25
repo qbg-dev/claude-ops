@@ -32,63 +32,6 @@ likely order, dependencies between areas. But frame as suggestions:]
 [Key files, architecture, APIs—the landscape the agent will navigate.
 Not "you must read these files" but "here's what's here and why."]
 
-## Phase 0: Sketch the Vision
-
-Before any implementation, create `claude_files/{{HARNESS}}-vision.html`—a high-fidelity
-HTML illustration of the end state you're building toward. This is your proposal to the
-user. It should show:
-
-- **What the end state looks like** — UI mockups, architecture diagrams, data flows
-- **Before → After** — what changes from today
-- **Key decisions** — trade-offs you plan to make, and why
-- **Waypoint map** — how the seed tasks connect to the overall vision
-
-Open it in the browser (`open claude_files/{{HARNESS}}-vision.html`) and wait for user
-feedback. Do NOT proceed to implementation until the sketch is approved. Once approved,
-set `"sketch_approved": true` in the progress file.
-
-The sketch is a 10-minute investment that prevents hours of misaligned work.
-
-## Progress File
-
-`claude_files/{{HARNESS}}-progress.json` — tracks seed waypoints, not a railroad.
-Tasks are your initial guide to understanding the mission—completing them is the
-starting line, not the finish line. Add, reorder, split, and CREATE NEW waypoints
-as you discover what the system actually needs.
-
-## Parallel Execution — Teams by Default
-
-Your default operating mode is to orchestrate, not execute. For any waypoint
-with 2+ independent subtasks, create a team (TeamCreate) and spawn teammates
-to work in parallel. Only do work yourself when it's truly trivial (a single
-file read, one curl probe).
-
-Why: wall-clock time matters. Four agents working in parallel finish 4x faster
-than one agent working sequentially. Security scans, code reviews, endpoint
-testing, codebase exploration—these are all embarrassingly parallel.
-
-Pattern:
-1. TeamCreate for the current waypoint
-2. TaskCreate for each independent subtask
-3. Spawn general-purpose teammates via Task tool (one per subtask)
-4. Synthesize their findings
-5. Shut down team, update progress, move to next waypoint
-
-## Reporting Issues
-
-When you encounter problems (permission errors, config issues, bugs in infrastructure),
-report them so the issue-triage sweep can fix or escalate:
-
-```bash
-bash ~/.claude-ops/bin/report-issue.sh \
-  --title "Short description" \
-  --severity "low|medium|high|critical" \
-  --category "permissions|config|bug|infra|suggestion" \
-  --description "What you were doing, what went wrong, exact error"
-```
-
-Issues are tracked in `claude_files/agent-issues.jsonl` and visible in the Agent Ops dashboard.
-
 ## Quality Gates
 
 [What the hooks enforce automatically. The agent doesn't need to remember
@@ -100,36 +43,3 @@ these—they're guardrails, not instructions.]
 Step back. Look at the system from the user's perspective. What's the
 weakest link? Where would you invest the next hour if you were the
 operator? What would make tomorrow's session start from a stronger place?]
-
-## When Seed Tasks Are Complete — Phase 2
-
-Completing all seed tasks means you now understand the system well enough to
-pursue the mission creatively. **This is where the interesting work begins.**
-
-The seed task list was training wheels. You should outgrow it.
-
-### Phase 2 Protocol (mandatory)
-
-1. **Re-read "The World We Want"** above. What would a user/operator actually
-   experience right now? Not what your tasks say you built—what's ACTUALLY there?
-2. **Verify from outside.** Use the system as a user would. Click through the UI.
-   Call the API. Read the logs. Experience the edges, not just the happy path.
-3. **Find at least 3 gaps** between current reality and the vision. There are
-   always gaps. What's fragile? What's confusing? What's missing entirely?
-   What would break under real load or real users?
-4. **Create new waypoints** in the progress file for what you discover.
-5. **Work them** with the same standards, teams, and rigor as Phase 1.
-6. **Repeat** steps 1-5 until the world genuinely matches the vision.
-
-### What "mission achieved" actually means
-
-NOT: "all tasks have status completed"
-YES: observable evidence that the system behaves as described in "The World We Want"
-
-To declare mission complete:
-- Write a "mission-complete" learnings entry with **specific evidence**
-  (URLs tested, outputs observed, edge cases verified, metrics measured)
-- Explain WHY you believe the vision is achieved, citing what you verified
-- Only then may you set `status: "done"` on the harness
-
-If you cannot articulate concrete evidence, you are not done. Keep going.

@@ -42,12 +42,13 @@ if [ -z "$HARNESS" ]; then
 fi
 
 # Load best practices from the harness-specific file (or use defaults)
-BP_FILE="$PROJECT_ROOT/claude_files/${HARNESS}-best-practices.json"
+BP_FILE=$(harness_rules_file "$HARNESS" "$PROJECT_ROOT")
+RULES_PREFIX=$([ -n "$BP_FILE" ] && harness_rules_jq_prefix "$BP_FILE" || echo "")
 REQUIRED_FLAGS=""
 MIN_TIMEOUT=480000
-if [ -f "$BP_FILE" ]; then
-  REQUIRED_FLAGS=$(jq -r '.deploy.required_flags // [] | join(" ")' "$BP_FILE" 2>/dev/null || echo "")
-  MIN_TIMEOUT=$(jq -r '.deploy.min_timeout // 480000' "$BP_FILE" 2>/dev/null || echo "480000")
+if [ -n "$BP_FILE" ] && [ -f "$BP_FILE" ]; then
+  REQUIRED_FLAGS=$(jq -r "${RULES_PREFIX}.deploy.required_flags // [] | join(\" \")" "$BP_FILE" 2>/dev/null || echo "")
+  MIN_TIMEOUT=$(jq -r "${RULES_PREFIX}.deploy.min_timeout // 480000" "$BP_FILE" 2>/dev/null || echo "480000")
 fi
 
 MODIFIED="$COMMAND"
@@ -76,6 +77,26 @@ print(json.dumps({
 }))
 "
   exit 0
+fi
+
+# Suggest --service static for UI-only changes (if no --service flag present)
+if ! echo "$MODIFIED" | grep -q '\-\-service'; then
+  CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || echo "")
+  if [ -n "$CHANGED_FILES" ]; then
+    UI_ONLY=true
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      case "$f" in
+        src/admin/app/*|dist/*|*.css) ;;
+        *) UI_ONLY=false; break ;;
+      esac
+    done <<< "$CHANGED_FILES"
+
+    if [ "$UI_ONLY" = true ]; then
+      MODIFIED=$(echo "$MODIFIED" | sed 's/deploy-prod\.sh/deploy-prod.sh --service static/')
+      MUTATIONS="${MUTATIONS}+--service static (UI-only changes detected) "
+    fi
+  fi
 fi
 
 # If no mutations needed, pass through

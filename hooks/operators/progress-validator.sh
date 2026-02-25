@@ -21,6 +21,10 @@ if isinstance(ti, str):
 print(ti.get('file_path', ''))
 " 2>/dev/null || echo "")
 
+# Export SESSION_ID so checks.d scripts can resolve harness name
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
+export SESSION_ID
+
 # ── Run checks.d/ modules on any written file ────────────────────────
 if [ -n "$FILE_PATH" ] && [ -d "$CHECKS_DIR" ]; then
   export FILE_PATH
@@ -42,17 +46,20 @@ HARNESS_NAME=$(basename "$FILE_PATH" | sed 's/-progress\.json$//')
 PROGRESS="$FILE_PATH"
 [ ! -f "$PROGRESS" ] && exit 0
 
-# Load best practices from the harness-specific file
-BP_FILE="$PROJECT_ROOT/claude_files/${HARNESS_NAME}-best-practices.json"
+# Resolve rules file (policy.json → best-practices.json, new → legacy)
+source "$HOME/.claude-ops/lib/harness-jq.sh" 2>/dev/null || true
+BP_FILE=$(harness_rules_file "$HARNESS_NAME" "$PROJECT_ROOT" 2>/dev/null || echo "")
+RULES_PREFIX=$([ -n "$BP_FILE" ] && harness_rules_jq_prefix "$BP_FILE" 2>/dev/null || echo "")
 
-# Check for completed tasks without artifacts
+# Check for completed tasks without artifacts + substep completeness + wave report validation
 python3 -c "
-import json, os
+import json, os, glob
 
 progress_path = '$PROGRESS'
 bp_path = '$BP_FILE'
 harness_name = '$HARNESS_NAME'
 project_root = '$PROJECT_ROOT'
+rules_prefix = '$RULES_PREFIX'
 
 with open(progress_path) as f:
     data = json.load(f)
@@ -61,21 +68,58 @@ bp_dir = f'claude_files/{harness_name}-verify'
 try:
     with open(bp_path) as f:
         bp = json.load(f)
-    bp_dir = bp.get('verification', {}).get('artifact_dir', bp_dir)
+    rules = bp.get('rules', bp) if rules_prefix == '.rules' else bp
+    bp_dir = rules.get('verification', {}).get('artifact_dir', bp_dir)
 except: pass
 
 warnings = []
+
 for tid, task in data.get('tasks', {}).items():
     if task.get('status') == 'completed':
         meta = task.get('metadata', {})
+        # Check verification artifacts
         if meta.get('needs_e2e_verification') and not meta.get('test_evidence'):
             artifact = os.path.join(project_root, bp_dir, f'{tid}.md')
             if not os.path.exists(artifact):
                 warnings.append(f'  {tid}: completed but no artifact at {bp_dir}/{tid}.md')
+
+        # Check substep completeness (Part 2.1)
+        steps = task.get('steps', [])
+        completed_steps = task.get('completed_steps', [])
+        if steps and len(completed_steps) < len(steps):
+            missing = [s for s in steps if s not in completed_steps]
+            warnings.append(
+                f'  {tid}: {len(completed_steps)}/{len(steps)} steps completed. '
+                f'Missing: {missing}'
+            )
+
+# Check wave report validation (Part 1.5)
+waves = data.get('waves', [])
+hname = data.get('harness', harness_name)
+report_dir = os.path.expanduser(f'~/.claude-ops/harness/reports/{hname}')
+for wave in waves:
+    if wave.get('status') == 'completed':
+        wave_id = wave.get('id', '?')
+        report_path = os.path.join(report_dir, f'wave-{wave_id}.html')
+        if not os.path.exists(report_path):
+            warnings.append(
+                f'  wave-{wave_id}: marked completed but no report at {report_path}'
+            )
+        else:
+            with open(report_path) as rf:
+                content = rf.read().lower()
+            if 'mission alignment' not in content and 'mission-alignment' not in content:
+                warnings.append(
+                    f'  wave-{wave_id}: report exists but missing Mission Alignment section'
+                )
+            if 'gap analysis' not in content and 'gap-analysis' not in content:
+                warnings.append(
+                    f'  wave-{wave_id}: report exists but missing Gap Analysis section'
+                )
+
 if warnings:
-    print('VERIFICATION GAP:')
+    print('PROGRESS VALIDATION:')
     print('\n'.join(warnings))
-    print('Write artifact FIRST, then set test_evidence, then mark completed.')
 " 2>/dev/null || true
 
 exit 0

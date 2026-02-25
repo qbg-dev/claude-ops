@@ -44,7 +44,7 @@ jq '.tasks["task-1"].metadata.needs_e2e_verification = true | .tasks["task-1"].m
 cp "$TMP_PROGRESS" "$TMPDIR/claude_files/test-harness-progress.json"
 RESULT=$(echo "{\"session_id\":\"test\",\"tool_input\":{\"file_path\":\"$TMPDIR/claude_files/test-harness-progress.json\"}}" \
   | PROJECT_ROOT="$TMPDIR" bash "$HOOK" 2>/dev/null || true)
-assert "warns on missing verification artifact" "VERIFICATION GAP" "$RESULT"
+assert "warns on missing verification artifact" "PROGRESS VALIDATION" "$RESULT"
 rm -f "$TMP_PROGRESS"
 
 # Test 5: Derives harness name from any progress filename pattern
