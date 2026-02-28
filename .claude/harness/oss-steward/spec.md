@@ -3,7 +3,7 @@
 > Source of truth: requirements the coordinator checks every cycle.
 
 ## Goal
-Make claude-ops accessible and compelling to external developers by writing accurate documentation, creating working examples, and preparing launch materials.
+Make boring accessible and compelling to external developers by writing accurate documentation, creating working examples, and preparing launch materials.
 
 ## Requirements
 1. README.md must include: pitch paragraph, quick start (5 commands), architecture diagram (ASCII), feature comparison table, badge for test status

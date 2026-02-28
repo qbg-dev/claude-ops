@@ -1,7 +1,7 @@
 # oss-steward — Self-Manager Mission
 
 ## Objective
-Maintain the claude-ops open-source repository: write documentation, manage GitHub issues, draft promotion materials, and keep the CHANGELOG current. This harness dogfoods the system — visitors see a real working harness managing its own project.
+Maintain the boring open-source repository: write documentation, manage GitHub issues, draft promotion materials, and keep the CHANGELOG current. This harness dogfoods the system — visitors see a real working harness managing its own project.
 
 ## Scope
 - README.md, CHANGELOG.md at repo root
@@ -17,7 +17,7 @@ Maintain the claude-ops open-source repository: write documentation, manage GitH
 - Never push to main — Warren reviews and pushes
 - No deploy permissions — this harness writes docs/config only
 - No SSH, no curl POST, no system modifications
-- Only edit/write files inside ~/repos/claude-ops/
+- Only edit/write files inside ~/repos/boring/
 - Use `gh` CLI for issue triage (read-only — no close/delete)
 - All documentation should reference real file paths and real APIs from the codebase
 

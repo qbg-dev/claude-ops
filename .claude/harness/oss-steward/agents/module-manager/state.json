@@ -1,7 +1,7 @@
 {
   "status": "active",
-  "cycles_completed": 0,
-  "last_cycle_at": null,
+  "cycles_completed": 1,
+  "last_cycle_at": "2026-02-28T22:56:15Z",
   "session_count": 0,
   "sleep_duration": 900,
   "phase": "phase-now"

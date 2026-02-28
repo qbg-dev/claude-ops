@@ -1,69 +1,69 @@
 {
   "tasks": {
     "T-1": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write README.md — pitch, quick start, architecture diagram, feature list, comparison table vs other tools",
       "blockedBy": []
     },
     "T-2": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write install.sh — clone repo, create symlink, add bin/ to PATH, register hooks, verify installation",
       "blockedBy": []
     },
     "T-3": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write docs/getting-started.md — install, scaffold first harness, launch first agent, verify it works",
-      "blockedBy": ["T-2"]
+      "blockedBy": []
     },
     "T-4": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write docs/architecture.md — 5-component diagram, data flow, file ownership map",
       "blockedBy": []
     },
     "T-5": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write docs/event-bus.md — bus_publish API, side-effects, schema.json reference",
       "blockedBy": []
     },
     "T-6": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write docs/hooks.md — PreToolUse, PostToolUse, Stop pipeline, custom hook authoring",
       "blockedBy": []
     },
     "T-7": {
-      "status": "pending",
+      "status": "completed",
       "description": "Write CHANGELOG.md from git history — follow Keep a Changelog format",
       "blockedBy": []
     },
     "T-8": {
-      "status": "pending",
+      "status": "completed",
       "description": "Create examples/minimal-harness/ — single self-manager agent, bounded lifecycle, simple task graph",
-      "blockedBy": ["T-2"]
+      "blockedBy": []
     },
     "T-9": {
-      "status": "pending",
+      "status": "completed",
       "description": "Create examples/multi-agent/ — coordinator + 2 workers, demonstrates delegation pattern",
-      "blockedBy": ["T-2"]
+      "blockedBy": []
     },
     "T-10": {
-      "status": "pending",
+      "status": "completed",
       "description": "Set up GitHub Actions CI — run tests/run-all.sh on push, report pass/fail",
-      "blockedBy": ["T-2"]
+      "blockedBy": []
     },
     "T-11": {
-      "status": "pending",
-      "description": "Draft Show HN post — 'Show HN: claude-ops — autonomous multi-agent orchestration for Claude Code'",
-      "blockedBy": ["T-1"]
+      "status": "completed",
+      "description": "Draft Show HN post — 'Show HN: boring — autonomous multi-agent orchestration for Claude Code'",
+      "blockedBy": []
     },
     "T-12": {
-      "status": "pending",
+      "status": "completed",
       "description": "Draft r/ClaudeAI post — demo-focused, screenshots/GIFs of agent coordination",
-      "blockedBy": ["T-1"]
+      "blockedBy": []
     },
     "T-13": {
       "status": "pending",
       "description": "Triage GitHub issues weekly (recurring) — label, assign priority, close stale",
-      "blockedBy": ["T-1"],
+      "blockedBy": [],
       "metadata": {
         "recurring": true
       }
