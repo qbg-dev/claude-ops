@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+# oss-steward-seed.sh — Generate seed prompt for the oss-steward harness.
+# Roles: self-manager (manage + execute), coordinator (manage workers), worker (execute only).
+set -euo pipefail
+
+HARNESS="oss-steward"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+HARNESS_DIR="$PROJECT_ROOT/.claude/harness/${HARNESS}"
+
+HARNESS_JQ="$HOME/.claude-ops/lib/harness-jq.sh"
+[ -f "$HARNESS_JQ" ] && source "$HARNESS_JQ"
+
+SIDECAR_DIR="$HARNESS_DIR/agents/module-manager"
+CONFIG_FILE="$SIDECAR_DIR/config.json"
+STATE_FILE="$SIDECAR_DIR/state.json"
+TASKS_FILE="$HARNESS_DIR/tasks.json"
+
+if [ ! -f "$CONFIG_FILE" ] || [ ! -f "$TASKS_FILE" ]; then
+  echo "ERROR: Need config.json at $CONFIG_FILE and tasks.json at $TASKS_FILE" >&2
+  exit 1
+fi
+
+# ── Progress ──
+TOTAL=$(jq '.tasks | length' "$TASKS_FILE")
+DONE=$(jq '[.tasks[] | select(.status == "completed")] | length' "$TASKS_FILE")
+PENDING=$(jq '[.tasks[] | select(.status == "pending") | select(.blockedBy == [] or .blockedBy == null)] | length' "$TASKS_FILE")
+CURRENT=$(jq -r '[.tasks | to_entries[] | select(.value.status == "in_progress") | .key] | first // "none"' "$TASKS_FILE")
+MISSION=$(jq -r '.mission // "No mission set"' "$CONFIG_FILE")
+LIFECYCLE=$(jq -r '.lifecycle // "bounded"' "$CONFIG_FILE")
+CYCLES=0; LAST_CYCLE="never"
+if [ -f "$STATE_FILE" ]; then
+  CYCLES=$(jq -r '.cycles_completed // 0' "$STATE_FILE")
+  LAST_CYCLE=$(jq -r '.last_cycle_at // "never"' "$STATE_FILE")
+fi
+
+# ── Role detection ──
+ROLE="self-manager"
+PARENT=""
+[ -f "$STATE_FILE" ] && PARENT=$(jq -r '.parent // ""' "$STATE_FILE" 2>/dev/null || echo "")
+[ -z "$PARENT" ] && PARENT=$(jq -r '.parent // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+# Priority: explicit role in config > inferred from lifecycle/parent
+CONFIG_ROLE=$(jq -r '.role // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+if [ -n "$CONFIG_ROLE" ]; then
+  ROLE="$CONFIG_ROLE"
+elif [ "$LIFECYCLE" = "bounded" ] && [ -n "$PARENT" ]; then
+  ROLE="worker"
+fi
+
+# ── Scope tags (for differentiating coordinator subtypes) ──
+SCOPE_TAGS=$(jq -r '.scope_tags // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+# ── Agent memory ──
+AGENT_SLOT="module-manager"
+AGENT_DIR="$HARNESS_DIR/agents/$AGENT_SLOT"
+AGENT_MEMORY=""
+for _mem in "$AGENT_DIR/MEMORY.md" "$AGENT_DIR/memory.md"; do
+  if [ -f "$_mem" ] && [ "$(wc -l < "$_mem" 2>/dev/null | tr -d ' ')" -gt 1 ]; then
+    AGENT_MEMORY="$_mem"; break
+  fi
+done
+
+# ── File checks ──
+HAS_SPEC="false"; [ -f "$HARNESS_DIR/spec.md" ] && HAS_SPEC="true"
+HAS_ACCEPT="false"; [ -f "$HARNESS_DIR/acceptance.md" ] && HAS_ACCEPT="true"
+INBOX_COUNT=0
+[ -f "$SIDECAR_DIR/inbox.jsonl" ] && INBOX_COUNT=$(wc -l < "$SIDECAR_DIR/inbox.jsonl" 2>/dev/null | tr -d ' ')
+
+# ── Build file list (explicit paths for the agent) ──
+FILE_LIST=""
+_add_file() {
+  local path="$1" desc="$2"
+  if [ -z "$FILE_LIST" ]; then
+    FILE_LIST="1. \`$path\` — $desc"
+  else
+    FILE_LIST="$FILE_LIST
+$(echo "$FILE_LIST" | wc -l | tr -d ' ' | xargs -I{} expr {} + 1). \`$path\` — $desc"
+  fi
+}
+
+# Always: tasks.json
+FILE_LIST="1. \`.claude/harness/${HARNESS}/tasks.json\` — task graph (statuses, dependencies, descriptions)"
+_N=1
+
+# mission.md
+if [ -f "$SIDECAR_DIR/mission.md" ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`.claude/harness/${HARNESS}/agents/module-manager/mission.md\` — mission scope + constraints"
+fi
+
+# INDEX.md or harness.md
+if [ -f "$HARNESS_DIR/INDEX.md" ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`.claude/harness/${HARNESS}/INDEX.md\` — navigation guide to harness files"
+elif [ -f "$HARNESS_DIR/harness.md" ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`.claude/harness/${HARNESS}/harness.md\` — terrain map + key source files"
+fi
+
+# spec.md
+if [ "$HAS_SPEC" = "true" ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`.claude/harness/${HARNESS}/spec.md\` — contract spec (acceptance criteria)"
+fi
+
+# acceptance.md
+if [ "$HAS_ACCEPT" = "true" ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`.claude/harness/${HARNESS}/acceptance.md\` — pass/fail status per criterion"
+fi
+
+# inbox
+if [ "$INBOX_COUNT" -gt 0 ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`.claude/harness/${HARNESS}/agents/module-manager/inbox.jsonl\` — **${INBOX_COUNT} unread messages** (JSONL, one message per line)"
+fi
+
+# MEMORY.md
+if [ -n "$AGENT_MEMORY" ]; then
+  _N=$((_N+1))
+  FILE_LIST="$FILE_LIST
+${_N}. \`${AGENT_MEMORY#$PROJECT_ROOT/}\` — your persistent memory (READ at start, UPDATE at end of each cycle)"
+fi
+
+# ── Role sections ──
+ROLE_SECTION=""
+ROLE_RULES=""
+BEGIN="Use the Read tool to read each file listed above, one by one. Then CHECK → ACT → RECORD."
+case "$ROLE" in
+  worker)
+    ROLE_SECTION='## Role: Worker
+Execute tasks from tasks.json. Report to module manager.
+Find next unblocked task → implement → mark completed → check inbox → repeat.
+
+### Git Discipline (mandatory)
+- **Stage only specific files**: `git add src/foo.ts src/bar.ts` — NEVER `git add -A` or `git add .`
+- **Stay on your worktree branch** — NEVER `git checkout main`, `git merge`, or `git push`
+- **Report when done** via hq_send (not direct inbox writes):
+  ```bash
+  source ~/.claude-ops/lib/harness-jq.sh
+  hq_send "$HARNESS/WORKER_NAME" "$PARENT" "status" "Task T-1 done. Changed: src/foo.ts (+42/-5). Ready for review."
+  ```'
+    ROLE_RULES="- **Never modify harness structure.** Execute tasks, report to module manager."
+    BEGIN="Use the Read tool to read each file listed above, one by one. Check inbox. Then execute your next unblocked task."
+    ;;
+  coordinator)
+    # Differentiate HQ coordinator (read-only quality) from module coordinator (manages code-writing workers)
+    IS_HQ_COORD="false"
+    echo "$SCOPE_TAGS" | grep -q "read-only" && IS_HQ_COORD="true"
+
+    if [ "$IS_HQ_COORD" = "true" ]; then
+      ROLE_SECTION='## Role: HQ Coordinator (Read-Only)
+You are a **cross-module quality coordinator**. You do NOT write application code.
+
+Your job:
+1. Read task graph + inbox + module state across ALL harnesses
+2. Probe for regressions, broken flows, stale data, UI inconsistencies
+3. Route issues to the correct module coordinator via the event bus
+4. Track issue resolution across modules
+5. Audit deployment readiness before prod pushes
+
+### Cross-Module Communication
+```bash
+source ~/.claude-ops/lib/harness-jq.sh
+
+# Route a bug to the right module
+hq_send "'"$HARNESS"'" "mod-ops" "regression" "Work order close flow broken: missing photo validation"
+
+# Check module status
+cat .claude/harness/mod-ops/agents/module-manager/state.json
+cat .claude/harness/mod-tenant/agents/module-manager/state.json
+cat .claude/harness/mod-intel/agents/module-manager/state.json
+cat .claude/harness/mod-platform/agents/module-manager/state.json
+
+# Read another modules task graph
+cat .claude/harness/mod-ops/tasks.json | jq ".tasks | to_entries[] | select(.value.status != \"completed\")"
+```
+
+### What you MUST NOT do
+- Never write application code (src/, scripts/, etc.)
+- Never modify another modules task graph or config
+- Never deploy — route deploy-ready signals to module coordinators
+
+### What you CAN read (for auditing)
+- Any source file in the repo (read-only investigation)
+- Any harness directory across all modules
+- Server logs, health endpoints, test URLs'
+      ROLE_RULES="- **Read-only.** Never write application code. Route issues via bus.
+- **Never modify other modules harness files.** Your scope is observation + routing."
+      BEGIN="Use the Read tool to read each file listed above, one by one. Then scan module states. Route any issues found."
+    else
+      ROLE_SECTION='## Role: Module Coordinator
+You are a **COORDINATOR**. You do NOT write application code yourself — you manage workers who do.
+
+Your job:
+1. Read task graph + inbox + worker state
+2. Launch workers to execute tasks: `bash .claude/scripts/launch-worker.sh '"$HARNESS"' <WORKER_NAME>`
+3. Monitor worker health and progress
+4. Route regressions/blockers to the right worker
+5. Review completed worker branches and merge when ready
+6. Deploy to test after merging worker changes
+
+### Worker Management
+```bash
+# Discover available/running workers
+source ~/.claude-ops/lib/worker-dispatch.sh
+SIDECAR_NAME='"$HARNESS"' PROJECT_ROOT='"$PROJECT_ROOT"' worker_discover
+
+# Launch a new worker (creates worktree + split pane)
+bash .claude/scripts/launch-worker.sh '"$HARNESS"' <WORKER_NAME>
+
+# Check all worker health
+SIDECAR_NAME='"$HARNESS"' PROJECT_ROOT='"$PROJECT_ROOT"' worker_health_all
+
+# Send message to a worker via event bus
+source ~/.claude-ops/lib/harness-jq.sh
+hq_send "'"$HARNESS"'" "'"$HARNESS"'/WORKER_NAME" "directive" "Your instruction here"
+```
+
+### Git Discipline (mandatory)
+- **Stage only specific files**: `git add src/foo.ts src/bar.ts` — NEVER `git add -A` or `git add .`
+- **Stay on your branch** — NEVER merge to main or push without operator approval
+- **Workers commit to their own worktree branches** — review their diffs before merging'
+      ROLE_RULES="- **Never write application code yourself.** Launch workers, review results, coordinate.
+- **Never modify files outside .claude/harness/.** Your scope is harness management only."
+      BEGIN="Use the Read tool to read each file listed above, one by one. Check worker status. Assign unblocked tasks to workers."
+    fi
+    ;;
+  *)
+    ROLE_SECTION='## Role: Self-Manager
+CHECK → ACT → RECORD. You manage the harness AND execute tasks directly.
+
+### Delegating to Workers (when needed)
+If a task is too large or you need parallel execution, you can spawn workers:
+```bash
+# Launch a worker (creates worktree + split pane)
+bash .claude/scripts/launch-worker.sh '"$HARNESS"' <WORKER_NAME>
+
+# Send message to a worker via event bus
+source ~/.claude-ops/lib/harness-jq.sh
+hq_send "'"$HARNESS"'" "'"$HARNESS"'/WORKER_NAME" "directive" "Your instruction here"
+
+# Check worker health
+source ~/.claude-ops/lib/worker-dispatch.sh
+SIDECAR_NAME='"$HARNESS"' PROJECT_ROOT='"$PROJECT_ROOT"' worker_health_all
+```
+
+### Git Discipline (mandatory)
+- **Stage only specific files**: `git add src/foo.ts src/bar.ts` — NEVER `git add -A` or `git add .`
+- **Stay on your branch** — NEVER merge to main or push without operator approval'
+    ;;
+esac
+
+PARENT_LINE=""
+[ -n "$PARENT" ] && PARENT_LINE="**Module Manager**: \`$PARENT\`"
+
+# ── Role display name ──
+ROLE_DISPLAY="$ROLE"
+
+# ── Pane title ──
+if [ -n "${TMUX:-}" ]; then
+  tmux select-pane -T "${HARNESS}/${ROLE_DISPLAY}" 2>/dev/null || true
+fi
+
+# ── Pane registry ──
+if [ -f "$HARNESS_JQ" ] && [ -n "${TMUX:-}" ]; then
+  _PID=$(hook_find_own_pane 2>/dev/null || echo "")
+  if [ -n "$_PID" ]; then
+    _PT=$(hook_pane_target "$_PID" 2>/dev/null || echo "")
+    pane_registry_update "$_PID" "$HARNESS" "${CURRENT:-orienting}" "$DONE" "$TOTAL" "${HARNESS} — starting" "$_PT" "$ROLE"
+  fi
+fi
+
+# ── Output ──
+cat <<EOF
+# ${HARNESS} — ${ROLE_DISPLAY}
+
+**Mission**: $MISSION
+**Tasks**: $DONE/$TOTAL done, $PENDING unblocked, current: ${CURRENT:-orienting}
+**Cycles**: $CYCLES (last: $LAST_CYCLE)$([ "$INBOX_COUNT" -gt 0 ] && echo "
+**Inbox**: $INBOX_COUNT unread messages")
+
+## Your Harness Files
+
+Use the **Read tool** to read each of these files now, before doing anything else:
+
+$FILE_LIST
+
+**Do this now**: Read each file above using the Read tool. Do not skip any.
+
+$ROLE_SECTION
+
+$PARENT_LINE
+
+## Communication (Bus-Only)
+All inter-agent messaging goes through the event bus. **Never** write directly to another agent's inbox.jsonl.
+
+\`\`\`bash
+# Send a message to another agent
+source ~/.claude-ops/lib/harness-jq.sh
+hq_send "${HARNESS}" "TARGET_AGENT" "TYPE" "Your message content"
+# Types: status, regression, directive, task, question
+\`\`\`
+
+Messages sent to you appear in your \`inbox.jsonl\`. You also receive context injections
+from the bus during tool calls (recent messages within 30 minutes are auto-surfaced).
+
+## Rules
+- **Zero mock data.** No placeholders, no hardcoded test data.
+- **Just stop when done.** The stop hook manages sleep + rotation.
+- **Bus-only messaging.** Use \`hq_send\` — never write to another agent's inbox.jsonl.
+- **No journal.md.** Write cycle learnings to MEMORY.md instead.
+- **Git: stage specific files only.** Never \`git add -A\` or \`git add .\`
+- **Git: never push or merge to main** without the operator's explicit approval.
+$ROLE_RULES
+
+## RECORD (end of each cycle)
+
+1. Update MEMORY.md — synthesize learnings; prune to ≤200 lines
+2. Bump cycle counter:
+   \`\`\`bash
+   source ~/.claude-ops/lib/harness-jq.sh
+   harness_bump_session .claude/harness/${HARNESS}/tasks.json
+   \`\`\`
+3. Publish completions via bus (if any tasks completed):
+   \`\`\`bash
+   source ~/.claude-ops/lib/event-bus.sh
+   bus_publish "task.completed" '{"harness":"${HARNESS}","task_id":"TASK_ID","summary":"one line"}'
+   \`\`\`
+4. Generate wave report (after completing a wave or significant batch of tasks):
+   \`\`\`bash
+   # Copy the template and fill in your results
+   cp ~/.claude-ops/templates/wave-report.html.tmpl .claude/harness/${HARNESS}/wave-N.html
+   # report.css is already in the harness dir (generated by scaffold)
+   \`\`\`
+   Edit \`wave-N.html\`: fill in task entries with before/after/evidence, update the
+   bottom-line hook, and replace N with the wave number. Replace any placeholder
+   module names in the template with \`${HARNESS}\`.
+5. Keep \`vision.html\` current — update task statuses (READY/IN PROGRESS/DONE/BLOCKED) as waves complete.
+6. If you found an infrastructure bug or have a feature request for the harness system itself:
+   \`\`\`bash
+   report-issue --title "Short description" --severity medium --category bug \\
+     --description "Detailed description" --harness "${HARNESS}" --github
+   \`\`\`
+
+## Begin
+
+$BEGIN
+EOF

@@ -11,11 +11,6 @@ Maintain the claude-ops open-source repository: write documentation, manage GitH
 - install.sh at repo root
 - Promotion drafts in docs/promotion/
 
-## Communication
-- **Nexus** (primary): Post updates and drafts to the `General` room via `mcp__nexus__send_message`
-- Tag Warren when you need review: "Warren: [draft ready for review]"
-- Post promotion drafts to Nexus for feedback before finalizing
-
 ## Constraints
 - Read the relevant source code before writing about it — docs must be accurate
 - Stage specific files only — never `git add -A` or `git add .`

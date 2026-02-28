@@ -4,9 +4,10 @@
 # Reads disallowedTools from the calling agent's permissions.json and blocks
 # matching tool calls. Pattern format:
 #   "ToolName"              — blocks all uses of ToolName
-#   "Bash(git push*)"      — blocks Bash commands matching glob
-#   "Edit(src/**)"          — blocks Edit on files matching glob
-#   "Write(data/**)"        — blocks Write on files matching glob
+#   "Bash(git push*)"      — blocks Bash commands matching glob (also catches env/command/bash -c wrappers)
+#   "Edit(src/**)"          — blocks Edit on files matching glob (resolves symlinks)
+#   "Write(data/**)"        — blocks Write on files matching glob (resolves symlinks)
+#   "Read(/secret/**)"      — blocks Read on files matching glob (resolves symlinks)
 #
 # This replaces --disallowedTools CLI flag with a centralized hook.
 set -uo pipefail
@@ -47,11 +48,30 @@ DISALLOWED=$(jq -r '.disallowedTools // [] | .[]' "$PERMS" 2>/dev/null || true)
 
 # Extract tool-specific arguments for matching
 COMMAND=""
-[ "$TOOL_NAME" = "Bash" ] && COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // ""' 2>/dev/null || echo "")
+if [ "$TOOL_NAME" = "Bash" ]; then
+  COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // ""' 2>/dev/null || echo "")
+  # Normalize: strip common prefix wrappers that bypass start-of-string matching
+  # env, command, bash -c, /usr/bin/env — all used to evade "git push*" style rules
+  _NORM="$COMMAND"
+  _NORM="${_NORM#env }"
+  _NORM="${_NORM#/usr/bin/env }"
+  _NORM="${_NORM#command }"
+  # bash -c "..." / bash -c '...' — extract the inner command
+  if [[ "$_NORM" == bash\ -c\ * ]]; then
+    _INNER="${_NORM#bash -c }"
+    _INNER="${_INNER#\"}" ; _INNER="${_INNER%\"}"
+    _INNER="${_INNER#\'}" ; _INNER="${_INNER%\'}"
+    _NORM="$_INNER"
+  fi
+  # Also match against normalized form (checked alongside raw COMMAND below)
+  COMMAND_NORM="$_NORM"
+fi
 FILE_PATH=""
 case "$TOOL_NAME" in
-  Edit|Write) FILE_PATH=$(echo "$TOOL_INPUT" | jq -r '.file_path // ""' 2>/dev/null || echo "") ;;
+  Edit|Write|Read) FILE_PATH=$(echo "$TOOL_INPUT" | jq -r '.file_path // ""' 2>/dev/null || echo "") ;;
 esac
+# Resolve symlinks to prevent symlink-based path bypass
+[ -n "$FILE_PATH" ] && FILE_PATH=$(realpath "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
 
 while IFS= read -r pattern; do
   [ -z "$pattern" ] && continue
@@ -79,12 +99,18 @@ while IFS= read -r pattern; do
     Bash)
       # Convert glob to regex: escape dots, * → .*, ? → .
       REGEX=$(echo "$PATTERN_ARG" | sed 's/[.[\^$+{}|]/\\&/g; s/\*/.*/g; s/?/./g')
-      if echo "$COMMAND" | grep -qE "^${REGEX}"; then
+      # Check both raw command AND normalized (prefix-stripped) form
+      if echo "$COMMAND" | grep -qE "^${REGEX}" || echo "$COMMAND_NORM" | grep -qE "^${REGEX}"; then
         hook_block "Command blocked by policy for agent ${CANONICAL:-$HARNESS}: $(echo "$COMMAND" | head -c 100)"
         exit 0
       fi
+      # Also check if the pattern appears as a substring (catches piped/chained commands)
+      if echo "$COMMAND" | grep -qE "(;|&&|\|\||\| )\s*${REGEX}"; then
+        hook_block "Chained command blocked by policy for agent ${CANONICAL:-$HARNESS}: $(echo "$COMMAND" | head -c 100)"
+        exit 0
+      fi
       ;;
-    Edit|Write)
+    Edit|Write|Read)
       # Convert glob to regex: ** = any path, * = single segment
       REGEX=$(echo "$PATTERN_ARG" | sed 's/[.[\^$+{}|]/\\&/g; s/\*\*/.*/g; s/\*/[^\/]*/g')
       if echo "$FILE_PATH" | grep -qE "(^|/)${REGEX}"; then
