@@ -1,0 +1,14 @@
+{
+  "name": "oss-steward",
+  "mission": "Maintain OSS repo docs, triage GitHub issues, draft promotion materials, keep CHANGELOG current",
+  "model": "sonnet",
+  "lifecycle": "long-running",
+  "sleep_duration": 900,
+  "rotation": {
+    "max_rounds": 20,
+    "claude_command": "cds",
+    "mode": "new_session"
+  },
+  "scope_tags": [],
+  "created_at": "2026-02-28T22:24:07Z"
+}

@@ -6,9 +6,17 @@ harness/data/
 wave-report-server/registry.json
 wave-report-server/issues/
 
-# Project-specific runtime (.claude/ in project repos, not this repo)
+# Project-specific runtime
 .claude/bus/
-.claude/harness/
+.claude/scripts/
+
+# Harness runtime files (inbox/outbox are ephemeral)
+.claude/harness/*/agents/*/inbox.jsonl
+.claude/harness/*/agents/*/outbox.jsonl
+.claude/harness/*/agents/*/memory/
+.claude/harness/*/vision.html
+.claude/harness/*/report.css
+.claude/harness/*/wave-*.html
 
 # Event bus runtime data
 bus/stream.jsonl

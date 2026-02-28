@@ -1,0 +1,14 @@
+{
+  "model": "sonnet",
+  "permission_mode": "bypassPermissions",
+  "disallowedTools": [
+    "Bash(./scripts/deploy-prod*)",
+    "Bash(./scripts/deploy.sh*)",
+    "Bash(git push*)",
+    "Bash(git reset --hard*)",
+    "Bash(git clean*)",
+    "Bash(rm -rf*)",
+    "Bash(sudo *)",
+    "Bash(sshpass*)"
+  ]
+}

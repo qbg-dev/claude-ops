@@ -1,0 +1,8 @@
+{
+  "status": "active",
+  "cycles_completed": 0,
+  "last_cycle_at": null,
+  "session_count": 0,
+  "sleep_duration": 900,
+  "phase": "phase-now"
+}

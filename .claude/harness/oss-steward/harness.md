@@ -1,0 +1,45 @@
+# oss-steward Harness
+
+## The World We Want
+
+[Describe the desired end state richly. What does it feel like when this
+works? What experience do users/operators have? What problems disappear?
+What becomes reliable? Paint the picture—this is the agent's north star.]
+
+## Why This Matters
+
+[Context: what prompted this work. What's broken or missing today.
+What happens if we don't do this. The emotional and practical stakes.]
+
+## Constraints & Rationale
+
+[Not rules—principles with reasons. The agent should be able to derive
+the right action in novel situations from understanding the WHY.]
+
+- **Constraint** — because [rationale]. [What this means in practice.]
+
+## Suggested Paths
+
+[How you'd approach this if you were doing it yourself. Entry points,
+likely order, dependencies between areas. But frame as suggestions:]
+
+- You'll probably want to start with X because Y depends on it
+- Z can be done in parallel with X if you prefer
+- W is the riskiest part—consider doing it early to derisk
+
+## Terrain Map
+
+[Key files, architecture, APIs—the landscape the agent will navigate.
+Not "you must read these files" but "here's what's here and why."]
+
+## Quality Gates
+
+[What the hooks enforce automatically. The agent doesn't need to remember
+these—they're guardrails, not instructions.]
+
+## When You're Not Sure What to Do Next
+
+[Guidance for idle moments. Not "never stop" but something like:
+Step back. Look at the system from the user's perspective. What's the
+weakest link? Where would you invest the next hour if you were the
+operator? What would make tomorrow's session start from a stronger place?]

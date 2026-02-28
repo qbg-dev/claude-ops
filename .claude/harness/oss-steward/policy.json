@@ -1,0 +1,10 @@
+{
+  "rules": [],
+  "inject": {
+    "file_context": [],
+    "command_context": [],
+    "tool_context": [],
+    "always_inject": []
+  },
+  "learnings": []
+}
