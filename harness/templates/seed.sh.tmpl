@@ -169,8 +169,8 @@ cat .claude/harness/mod-platform/agents/module-manager/state.json
 # Read another modules task graph
 cat .claude/harness/mod-ops/tasks.json | jq ".tasks | to_entries[] | select(.value.status != \"completed\")"
 
-# Check for unmerged worker branches
-git branch -a | grep "worker\|mod-" | grep -v main
+# Check for unmerged worker branches every cycle
+git branch -a | grep -E "worker|mod-" | grep -v "main\|remotes/origin/main"
 # Then for each branch: git log --oneline main..<branch>
 ```
 
