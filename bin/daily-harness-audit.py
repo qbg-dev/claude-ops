@@ -357,7 +357,7 @@ Be concrete: name the exact file to change, the rule to add, or the snippet to c
     try:
         # Remove CLAUDECODE env var to avoid nested-session check
         clean_env = {k: v for k, v in os.environ.items() if "CLAUDE" not in k.upper()}
-        clean_env["PATH"] = os.environ.get("PATH", "/Users/wz/.local/bin:/usr/local/bin:/usr/bin:/bin")
+        clean_env["PATH"] = os.environ.get("PATH", f"{Path.home() / '.local' / 'bin'}:/usr/local/bin:/usr/bin:/bin")
         clean_env["HOME"] = os.environ.get("HOME", str(Path.home()))
         result = subprocess.run(
             ["claude", "-p", prompt, "--model", "haiku"],

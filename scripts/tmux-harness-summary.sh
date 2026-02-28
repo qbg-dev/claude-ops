@@ -9,7 +9,7 @@
 #   redteam R3 10/17 bi-opt 5/8 (multiple harnesses)
 set -euo pipefail
 
-PROJECT_ROOT="${1:-/Users/wz/Desktop/zPersonalProjects/Wechat}"
+PROJECT_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}"
 OUT="$HARNESS_STATE_DIR/tmux_harness_summary"
 

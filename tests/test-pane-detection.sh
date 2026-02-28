@@ -196,7 +196,7 @@ assert_file_contains "CLAUDE.md shows pane_pid pattern" \
 # PART 4: Project scripts (Wechat-specific)
 # ═════════════════════════════════════════════════════════════════════
 
-WECHAT="/Users/wz/Desktop/zPersonalProjects/Wechat"
+WECHAT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 # Test 19: redteam-r61-continue.sh uses _find_own_pane
 if [ -f "$WECHAT/.claude/scripts/redteam-r61-continue.sh" ]; then

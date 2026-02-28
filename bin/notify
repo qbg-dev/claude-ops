@@ -18,7 +18,7 @@ if [ -z "$_PROJECT_ROOT" ] && command -v git >/dev/null 2>&1; then
   _PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 fi
 # Fallback to common project paths
-[ -z "$_PROJECT_ROOT" ] && _PROJECT_ROOT="/Users/wz/Desktop/zPersonalProjects/Wechat"
+[ -z "$_PROJECT_ROOT" ] && _PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 BUS_STREAM="$_PROJECT_ROOT/.claude/bus/stream.jsonl"
 if [ -f "$BUS_STREAM" ] || [ -d "$(dirname "$BUS_STREAM")" ]; then

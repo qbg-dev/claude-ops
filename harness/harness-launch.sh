@@ -6,7 +6,7 @@ set -euo pipefail
 
 HARNESS="${1:?Usage: harness-launch.sh <harness-name> [<seed-script>]}"
 SEED_SCRIPT="${2:-}"
-PROJECT_ROOT="${PROJECT_ROOT:-/Users/wz/Desktop/zPersonalProjects/Wechat}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 TMUX_SESSION="${TMUX_SESSION:-h}"
 
 _log() { echo "[$(date -u +%FT%TZ)] harness-launch: $*" >> "${HOME}/.claude-ops/state/watchdog.log" 2>/dev/null || true; }

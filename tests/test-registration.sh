@@ -14,7 +14,7 @@ set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
 
-PROJECT_ROOT="/Users/wz/Desktop/zPersonalProjects/Wechat"
+PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 cd "$PROJECT_ROOT"
 
 # ── Isolated test state ─────────────────────────────────────────

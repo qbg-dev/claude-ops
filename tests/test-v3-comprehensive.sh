@@ -26,7 +26,7 @@ source "$(dirname "$0")/helpers.sh"
 source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 FIXTURES="$(dirname "$0")/fixtures"
-PROJECT_ROOT="${PROJECT_ROOT:-/Users/wz/Desktop/zPersonalProjects/Wechat}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 # ════════════════════════════════════════════════════════════════
 # 1. state.json lifecycle

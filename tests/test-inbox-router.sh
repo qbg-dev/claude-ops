@@ -1227,7 +1227,7 @@ test_coordinator_seed_has_inbox() {
   local seed="$PROJECT_ROOT/.claude/scripts/mod-coordinator-seed.sh"
   if [ ! -f "$seed" ]; then
     # Use the real project path
-    seed="/Users/wz/Desktop/zPersonalProjects/Wechat/.claude/scripts/mod-coordinator-seed.sh"
+    seed="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.claude/scripts/mod-coordinator-seed.sh"
   fi
   if [ -f "$seed" ]; then
     local content

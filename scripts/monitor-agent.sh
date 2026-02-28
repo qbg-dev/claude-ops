@@ -206,7 +206,7 @@ JOURNAL_PATH=""
 source "$HOME/.claude-ops/lib/harness-jq.sh" 2>/dev/null || HARNESS_SESSION_REGISTRY="$HOME/.claude-ops/state/session-registry.json"
 if [ -f "$HARNESS_SESSION_REGISTRY" ]; then
   # Try to find harness for the target pane's session
-  search_root="${PROJECT_ROOT:-/Users/wz/Desktop/zPersonalProjects/Wechat}"
+  search_root="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
   while IFS= read -r pf; do
     [ -f "$pf" ] || continue
     h=$(jq -r '.harness // ""' "$pf" 2>/dev/null || true)

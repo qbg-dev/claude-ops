@@ -17,7 +17,7 @@
 #
 # Environment (set before sourcing):
 #   SIDECAR_NAME   — e.g. "mod-customer"
-#   PROJECT_ROOT   — e.g. "/Users/wz/Desktop/zPersonalProjects/Wechat"
+#   PROJECT_ROOT   — e.g. "/path/to/your/project"
 #   SIDECAR_PANE   — auto-detected if not set
 
 # ── Source dependencies ────────────────────────────────────────

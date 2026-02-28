@@ -21,7 +21,7 @@
 set -euo pipefail
 
 VERBOSE="${1:-}"
-PROJECT_ROOT="${PROJECT_ROOT:-/Users/wz/Desktop/zPersonalProjects/Wechat}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 # ── Test framework ────────────────────────────────────────────────
 PASS=0; FAIL=0; SKIP=0
