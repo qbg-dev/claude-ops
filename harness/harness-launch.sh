@@ -23,11 +23,11 @@ fi
 # Read model from config.json (authoritative), fallback to permissions.json (legacy)
 CONFIG="$PROJECT_ROOT/.claude/harness/$HARNESS/agents/module-manager/config.json"
 PERMS="$PROJECT_ROOT/.claude/harness/$HARNESS/agents/module-manager/permissions.json"
-MODEL="sonnet"
+MODEL="opus"
 if [ -f "$CONFIG" ]; then
-  MODEL=$(jq -r '.model // "sonnet"' "$CONFIG" 2>/dev/null || echo "sonnet")
+  MODEL=$(jq -r '.model // "opus"' "$CONFIG" 2>/dev/null || echo "opus")
 elif [ -f "$PERMS" ]; then
-  MODEL=$(jq -r '.model // "sonnet"' "$PERMS" 2>/dev/null || echo "sonnet")
+  MODEL=$(jq -r '.model // "opus"' "$PERMS" 2>/dev/null || echo "opus")
 fi
 
 # Create a new tmux window named after the harness (-d = don't switch focus)

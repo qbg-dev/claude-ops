@@ -29,33 +29,48 @@ bash ~/.boring/scripts/harness-watchdog.sh --status
 
 ## Architecture
 
+boring is a **multi-agent layer**. Every Claude session running under boring is registered in `pane-registry.json`—a live map of who is running, in which tmux pane, with which harness. Coordinators and workers can be composed at arbitrary depth; in practice the pattern is one **central coordinator** per repo with one **module-manager** per workstream, each owning its own task graph:
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                          boring                             │
-│                                                             │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │   Harness    │    │  Event Bus   │    │     Hooks    │  │
-│  │              │    │              │    │              │  │
-│  │ tasks.json   │◄──►│ stream.jsonl │◄───│ PreToolUse   │  │
-│  │ task graph   │    │ pub/sub      │    │ PostToolUse  │  │
-│  │ lifecycle    │    │ side-effects │    │ Stop         │  │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘  │
-│         │                  │                   │           │
-│  ┌──────▼───────┐    ┌──────▼───────────────────▼───────┐  │
-│  │   Watchdog   │    │         Multi-Agent Layer        │  │
-│  │              │    │                                  │  │
-│  │ crash detect │    │  coordinator ──► worker-1        │  │
-│  │ auto-respawn │    │       │        ► worker-2        │  │
-│  │ stuck nudge  │    │  pane-registry, inbox/outbox     │  │
-│  └──────────────┘    └──────────────────────────────────┘  │
-│                                                             │
-│  All state: {project}/.claude/  +  ~/.boring/state/         │
-└─────────────────────────────────────────────────────────────┘
+central-coordinator
+├── module-manager/auth    tasks: [jwt, sessions, ...]
+├── module-manager/api     tasks: [routes, validation, ...]
+└── module-manager/infra   tasks: [deploy, monitoring, ...]
 ```
 
-The **Stop hook** is the core mechanism: when Claude tries to stop, the hook checks the task graph. If tasks remain, it blocks the stop and shows the current state—the agent reads this and keeps working. When all tasks are done, it lets the session end. For long-running agents, it writes a sentinel and the watchdog respawns after a configurable sleep window.
+The **watchdog** monitors all registered coordinators, respawns them after graceful sleeps or crashes, and nudges agents that go quiet.
 
-The **PreToolUse hook** injects context at the moment of action—inbox messages from other agents, policy rules, phase state—so agents always have what they need without bloating the conversation.
+**Hooks** instrument every tool call and session boundary—doing three things at once: logging events to the bus, injecting context, and enforcing permissions.
+
+- **PreToolUse** — injects inbox messages, policy rules, and phase state as context before each tool call
+- **PostToolUse** — publishes every tool call and file edit to the event bus
+- **Stop** — blocks the session while tasks remain; writes a graceful-stop sentinel for long-running agents; the watchdog reads this sentinel to respawn
+- **Permissions** — each agent carries a `permissions.json` listing disallowed tools; the hook enforces it at call time
+
+**The event bus** (`bus/stream.jsonl`) is an append-only JSONL log. Every tool call, message, and lifecycle event lands here. Side-effects in `bus/schema.json` wire event types to behaviors: `cell-message` delivers to the recipient's inbox and records in the sender's outbox; `notification` fires a terminal alert; `worker.regression` notifies the coordinator.
+
+**Each agent has four things and nothing more:**
+
+```
+agents/module-manager/
+├── MEMORY.md           # persistent knowledge across sessions
+├── mission.md          # scope, constraints, escalation path
+├── inbox.jsonl         # messages received from other agents
+├── outbox.jsonl        # messages sent to other agents
+├── config.json         # model, rotation command
+└── permissions.json    # disallowed tools for this agent
+```
+
+Memory. Parent context. Tasks. Communication. A **harness** wraps the agent with its task graph and shared context:
+
+```
+.claude/harness/{name}/
+├── tasks.json          # task graph — pending / in_progress / completed
+├── harness.md          # terrain map: key files, conventions, scope
+├── acceptance.md       # pass/fail criteria
+└── agents/
+    └── module-manager/ # the agent owning this harness
+```
 
 ## Human Steering
 
@@ -85,7 +100,7 @@ boring is designed for collaborative workflows where you stay in control:
 ├── scripts/              # CLI scripts (scaffold.sh, watchdog, monitor, ...)
 ├── sweeps.d/             # Cron-style maintenance sweeps
 ├── templates/            # Scaffold templates (.tmpl files)
-├── tests/                # Test suite (163 tests, 10 suites)
+├── tests/                # Test suite
 └── wave-report-server/   # HTML report server for harness progress
 ```
 
@@ -149,13 +164,6 @@ Add hooks to your Claude Code `settings.json` (`~/.claude/settings.json`):
 ```bash
 bash ~/.boring/tests/run-all.sh
 ```
-
-## Documentation
-
-- [Getting Started](docs/getting-started.md) — install, scaffold first harness, launch first agent
-- [Architecture](docs/architecture.md) — 5-component deep dive, data flow, file ownership
-- [Event Bus](docs/event-bus.md) — `bus_publish` API, side-effects, schema reference
-- [Hooks](docs/hooks.md) — hook pipeline, context injection, policy enforcement
 
 ## License
 

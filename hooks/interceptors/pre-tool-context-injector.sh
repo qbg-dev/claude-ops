@@ -6,9 +6,8 @@
 # relevant context as additionalContext based on file paths, commands, or tool types.
 #
 # Also injects:
-#   - Inbox messages (unprocessed or recent from harness inbox.jsonl)
+#   - Inbox messages (recent from harness inbox.jsonl, up to 20)
 #   - Acceptance summary (compact pass/fail status from acceptance.md)
-#   - File-edit warnings (aggregated from other harnesses' outbox.jsonl, replaces Beads)
 #
 # This is "RAG for tool calls" — the monitor maintains the knowledge base,
 # this hook queries it at the moment of action.
@@ -22,9 +21,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd
 CONTEXT_INJECTOR_MAX_MATCHES="${CONTEXT_INJECTOR_MAX_MATCHES:-3}"
 INBOX_ENABLED="${INBOX_ENABLED:-true}"
 INBOX_SCAN_WINDOW_SEC="${INBOX_SCAN_WINDOW_SEC:-1800}"
-INBOX_MAX_INJECT_MESSAGES="${INBOX_MAX_INJECT_MESSAGES:-5}"
+INBOX_MAX_INJECT_MESSAGES="${INBOX_MAX_INJECT_MESSAGES:-20}"
 INBOX_ACCEPTANCE_INJECT="${INBOX_ACCEPTANCE_INJECT:-true}"
-INBOX_FILE_EDIT_TRACKING="${INBOX_FILE_EDIT_TRACKING:-true}"
 
 # Use shared pane resolution library (replaces inline harness-jq.sh source)
 source "$HOME/.boring/lib/pane-resolve.sh"
@@ -88,21 +86,17 @@ fi
 INBOX_CONTEXT=""
 if [ "$INBOX_ENABLED" = "true" ]; then
   HARNESS_DIR="$PROJECT_ROOT/.claude/harness/$HARNESS"
-  HARNESS_BASE="$PROJECT_ROOT/.claude/harness"
 
   # -- Inbox scan via standalone script --
   if [ -z "$INBOX_CONTEXT" ]; then
     _ACCEPTANCE_FLAG=""
     [ "$INBOX_ACCEPTANCE_INJECT" = "true" ] && _ACCEPTANCE_FLAG="--acceptance" || _ACCEPTANCE_FLAG="--no-acceptance"
-    _FILE_EDIT_FLAG=""
-    [ "$INBOX_FILE_EDIT_TRACKING" = "true" ] && _FILE_EDIT_FLAG="--file-edits" || _FILE_EDIT_FLAG="--no-file-edits"
 
-    export HARNESS HARNESS_DIR HARNESS_BASE
+    export HARNESS HARNESS_DIR
     LEGACY_CONTEXT=$(python3 "$HOME/.boring/lib/py/inbox_scan.py" \
       --window "$INBOX_SCAN_WINDOW_SEC" \
       --max "$INBOX_MAX_INJECT_MESSAGES" \
       $_ACCEPTANCE_FLAG \
-      $_FILE_EDIT_FLAG \
       2>/dev/null || true)
     INBOX_CONTEXT="$LEGACY_CONTEXT"
   fi

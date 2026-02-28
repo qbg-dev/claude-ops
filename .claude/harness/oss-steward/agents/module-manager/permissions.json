@@ -2,7 +2,9 @@
   "model": "sonnet",
   "permission_mode": "bypassPermissions",
   "disallowedTools": [
-    "Bash(git push*)",
+    "Bash(git push --force*)",
+    "Bash(git push -f *)",
+    "Bash(git push * --no-verify*)",
     "Bash(git reset --hard*)",
     "Bash(git clean*)",
     "Bash(git checkout main -- *)",

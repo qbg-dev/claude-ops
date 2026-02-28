@@ -36,6 +36,14 @@ Warren requested a single-file reference for bootstrapping agents. Created AGENT
 - Scope: read-only on lib/hooks/scripts/tests/docs; write only MEMORY.md + tasks.json + acceptance.md
 - API layer (bus_publish, harness_current_task, hook_pass, etc.) must never be changed
 
+### Outbox redesign (2026-02-28)
+- Outbox now records **sent messages**, not file edits — same pattern as inbox (materialized by event-bus side-effects)
+- `cell-message` and `announcement` events now trigger `append_outbox` side-effect
+- `file-edit` and `agent.policy-appended` no longer trigger `append_outbox`
+- `append_outbox.sh` reads `.from` field and appends full event payload to sender's `outbox.jsonl`
+- `inbox_scan.py`: removed `scan_file_edits()` entirely; `--max` default raised from 5 to 20; overflow hint says "and N more — read inbox.jsonl directly"
+- `pre-tool-context-injector.sh`: removed `INBOX_FILE_EDIT_TRACKING` env var and `--file-edits` arg; `INBOX_MAX_INJECT_MESSAGES` default raised to 20
+
 ### CI structure
 - `.github/workflows/ci.yml` runs on push + PR to main
 - Steps: install deps, copy repo to ~/.boring, run tests/run-all.sh, run both examples

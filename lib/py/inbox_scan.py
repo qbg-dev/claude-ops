@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Time-window inbox scan, acceptance emoji counting, cross-harness file-edit aggregation.
+"""Time-window inbox scan and acceptance emoji counting.
 
-Reads harness inbox.jsonl for recent messages, acceptance.md for pass/fail summary,
-and other harnesses' outbox.jsonl for file-edit tracking. Extracted from
-pre-tool-context-injector.sh lines 228-407.
+Reads harness inbox.jsonl for recent messages and acceptance.md for pass/fail summary.
+Extracted from pre-tool-context-injector.sh lines 228-407.
 """
 import argparse
 import json
@@ -23,7 +22,7 @@ def parse_ts(ts_str):
 
 
 def scan_inbox(harness_dir, scan_window, max_messages, now):
-    """Scan inbox.jsonl for recent non-file-edit messages, grouped by sender."""
+    """Scan inbox.jsonl for recent messages, grouped by sender."""
     inbox_path = os.path.join(harness_dir, "inbox.jsonl")
     if not os.path.exists(inbox_path):
         return []
@@ -37,8 +36,6 @@ def scan_inbox(harness_dir, scan_window, max_messages, now):
                     continue
                 try:
                     msg = json.loads(line)
-                    if msg.get("type") == "file-edit":
-                        continue
                     ts = msg.get("ts", "")
                     if ts:
                         epoch = parse_ts(ts)
@@ -78,7 +75,7 @@ def scan_inbox(harness_dir, scan_window, max_messages, now):
     remaining = len(recent_msgs) - total
     header = f"[Inbox] {len(recent_msgs)} recent message(s)"
     if remaining > 0:
-        header += f" (+{remaining} not shown)"
+        header += f" — and {remaining} more, read inbox.jsonl directly"
     return [header] + lines
 
 
@@ -131,89 +128,16 @@ def scan_acceptance(harness_dir):
     return lines
 
 
-def scan_file_edits(harness_base, harness, scan_window, max_messages, now):
-    """Scan other harnesses' outbox.jsonl for recent file-edit messages."""
-    edits = {}
-    try:
-        for d in os.listdir(harness_base):
-            if d == harness:
-                continue
-            dpath = os.path.join(harness_base, d)
-            if not os.path.isdir(dpath):
-                continue
-            outbox = os.path.join(dpath, "outbox.jsonl")
-            if not os.path.exists(outbox):
-                continue
-            try:
-                with open(outbox) as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            msg = json.loads(line)
-                            if msg.get("type") != "file-edit":
-                                continue
-                            ts = msg.get("ts", "")
-                            if not ts:
-                                continue
-                            epoch = parse_ts(ts)
-                            if epoch is None or (now - epoch) > scan_window:
-                                continue
-                            fpath = msg.get("file", "")
-                            if not fpath:
-                                continue
-                            from_h = msg.get("from", d)
-                            key = (os.path.basename(fpath), from_h)
-                            if key not in edits:
-                                edits[key] = {"count": 0, "latest": ts, "full_path": fpath}
-                            edits[key]["count"] += 1
-                            if ts > edits[key]["latest"]:
-                                edits[key]["latest"] = ts
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            pass
-            except OSError:
-                pass
-    except OSError:
-        pass
-
-    if not edits:
-        return []
-
-    sorted_edits = sorted(edits.items(), key=lambda x: x[1]["latest"], reverse=True)
-    edit_lines = []
-    for (basename, from_harness), info in sorted_edits[:max_messages]:
-        try:
-            epoch = parse_ts(info["latest"])
-            if epoch is not None:
-                age_min = int((now - epoch) / 60)
-                age_str = f"{age_min}m ago"
-            else:
-                age_str = "recently"
-        except Exception:
-            age_str = "recently"
-        count_str = f"{info['count']} edit{'s' if info['count'] > 1 else ''}"
-        edit_lines.append(f"- {basename} -- {from_harness} ({count_str}, latest {age_str})")
-
-    if not edit_lines:
-        return []
-
-    return [f"[File edits] {len(edits)} file(s) edited by other harnesses (last {scan_window // 60}m):"] + edit_lines
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Inbox scan + acceptance + file-edit aggregation")
+    parser = argparse.ArgumentParser(description="Inbox scan + acceptance summary")
     parser.add_argument("--window", type=int, default=1800, help="Scan window in seconds")
-    parser.add_argument("--max", type=int, default=5, help="Max messages/edits to show")
+    parser.add_argument("--max", type=int, default=20, help="Max messages to show")
     parser.add_argument("--acceptance", action="store_true", default=True, dest="acceptance")
     parser.add_argument("--no-acceptance", action="store_false", dest="acceptance")
-    parser.add_argument("--file-edits", action="store_true", default=True, dest="file_edits")
-    parser.add_argument("--no-file-edits", action="store_false", dest="file_edits")
     args = parser.parse_args()
 
     harness = os.environ.get("HARNESS", "")
     harness_dir = os.environ.get("HARNESS_DIR", "")
-    harness_base = os.environ.get("HARNESS_BASE", "")
 
     if not harness or not harness_dir:
         sys.exit(0)
@@ -227,10 +151,6 @@ def main():
     # 2. Acceptance summary
     if args.acceptance:
         all_lines.extend(scan_acceptance(harness_dir))
-
-    # 3. File-edit aggregation
-    if args.file_edits and harness_base:
-        all_lines.extend(scan_file_edits(harness_base, harness, args.window, args.max, now))
 
     if all_lines:
         print("\n".join(all_lines))

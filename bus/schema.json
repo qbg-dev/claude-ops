@@ -2,12 +2,12 @@
   "version": 3,
   "event_types": {
     "cell-message": {
-      "side_effects": ["notify_assignee", "notify_tmux_if_urgent", "inject_directive_if_flagged"],
-      "description": "Direct message between agents. Writes to recipient inbox, tmux notify if urgent."
+      "side_effects": ["notify_assignee", "notify_tmux_if_urgent", "inject_directive_if_flagged", "append_outbox"],
+      "description": "Direct message between agents. Writes to recipient inbox, appends to sender outbox."
     },
     "announcement": {
-      "side_effects": ["notify_assignee", "inject_directive_if_flagged", "notify_tmux_if_urgent"],
-      "description": "Broadcast-style message to agent or group."
+      "side_effects": ["notify_assignee", "inject_directive_if_flagged", "notify_tmux_if_urgent", "append_outbox"],
+      "description": "Broadcast-style message to agent or group. Appends to sender outbox."
     },
     "worker.started": {
       "side_effects": ["notify_assignee"],
@@ -46,7 +46,7 @@
       "description": "User prompt event. worker-prompt-notify fires when harness is a worker (canonical contains /)."
     },
     "file-edit": {
-      "side_effects": ["append_outbox"],
+      "side_effects": [],
       "description": "File was edited by an agent."
     },
     "tool-call": {
@@ -106,7 +106,7 @@
       "description": "Observability event for agent MEMORY.md edits."
     },
     "agent.policy-appended": {
-      "side_effects": ["append_outbox"],
+      "side_effects": [],
       "description": "Audit trail for policy.json context injections."
     },
     "agent.issue-filed": {
