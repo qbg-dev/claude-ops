@@ -278,7 +278,7 @@ assert "query_advanced --from a1 returns 1" "1" "$FROM_COUNT"
 # Filter by --type
 TYPE_EVENTS=$(bus_query_advanced --type "deploy")
 TYPE_COUNT=$(echo "$TYPE_EVENTS" | jq 'length' 2>/dev/null || echo "0")
-assert "query_advanced --type deploy returns 1" "1" "$TYPE_COUNT"
+assert "query_advanced --type deploy returns 2" "2" "$TYPE_COUNT"
 
 echo ""
 

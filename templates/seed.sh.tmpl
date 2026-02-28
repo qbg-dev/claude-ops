@@ -332,7 +332,8 @@ $ROLE_RULES
    source ~/.boring/lib/event-bus.sh
    bus_publish "task.completed" '{"harness":"${HARNESS}","task_id":"TASK_ID","summary":"one line"}'
    \`\`\`
-4. Generate wave report (after completing a wave or significant batch of tasks):
+4. Wave protocol — complete a wave before starting the next one. After all tasks in the
+   current wave are done, generate a wave report and move on. Generate wave report (after completing a wave or significant batch of tasks):
    \`\`\`bash
    # Copy the template and fill in your results
    cp ~/.boring/templates/wave-report.html.tmpl .claude/harness/${HARNESS}/wave-N.html

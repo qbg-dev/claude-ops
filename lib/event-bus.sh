@@ -225,8 +225,8 @@ bus_query() {
 
   # Parse: detect legacy positional vs flag mode
   if [[ $# -gt 0 ]] && [[ "$1" != --* ]]; then
-    # Legacy: bus_query <event_type> [after_seq]
-    type="$1"; after_seq="${2:-0}"; shift $#
+    # Legacy: bus_query <event_type> [after_seq] — returns raw NDJSON for pipe compatibility
+    type="$1"; after_seq="${2:-0}"; raw=true; shift $#
   fi
 
   while [[ $# -gt 0 ]]; do
@@ -244,12 +244,8 @@ bus_query() {
 
   [ ! -f "$BUS_STREAM" ] && { $raw || echo "[]"; return 0; }
 
-  # If pattern given but no type, resolve from schema.json named filters
-  if [ -n "$pattern" ] && [ -z "$type" ]; then
-    : # pattern used directly as regex
-  elif [ -z "$pattern" ] && [ -z "$type" ] && [ -z "$from" ] && [ -z "$since" ]; then
-    $raw || echo "[]"; return 0
-  fi
+  # If pattern given but no type, use pattern directly as regex
+  # (no early return for empty filters — callers may query all events by seq/limit alone)
 
   local jq_args=(--argjson after "$after_seq")
   local jq_filter='select(._seq > $after)'

@@ -1114,7 +1114,16 @@ harness_progress_path() {
     project=$(jq -r '.project_root // ""' "$manifest" 2>/dev/null)
   fi
 
-  # v2: tasks.json
+  # Try 2: manifest files.progress field (relative to project_root)
+  if [ -f "$manifest" ] && [ -n "$project" ]; then
+    local rel_progress
+    rel_progress=$(jq -r '.files.progress // ""' "$manifest" 2>/dev/null)
+    if [ -n "$rel_progress" ] && [ -f "$project/$rel_progress" ]; then
+      echo "$project/$rel_progress" && return
+    fi
+  fi
+
+  # Try 3: v2 tasks.json
   if [ -n "$project" ] && [ -f "$project/.claude/harness/$name/tasks.json" ]; then
     echo "$project/.claude/harness/$name/tasks.json" && return
   fi

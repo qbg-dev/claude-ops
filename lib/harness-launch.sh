@@ -25,7 +25,7 @@ set -euo pipefail
 
 # Default to current tmux session if inside tmux, otherwise "h"
 if [ -z "${TMUX_SESSION:-}" ]; then
-  TMUX_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "h")
+  TMUX_SESSION=$(tmux display-message -t "${TMUX_PANE:-.}" -p '#{session_name}' 2>/dev/null || echo "h")
 fi
 CLAUDE_CMD="${CLAUDE_CMD:-claude --dangerously-skip-permissions --model opus --chrome}"
 MONITOR_INTERVAL="${MONITOR_INTERVAL:-180}"
