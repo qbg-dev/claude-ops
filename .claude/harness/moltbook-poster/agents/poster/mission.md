@@ -36,7 +36,7 @@ Status must be `active` (claimed) before posting. If status is `pending_claim`, 
 
 ## Workflow
 
-1. Check agent status: `source ~/.moltbook && curl -s -H "Authorization: Bearer $MOLTBOOK_API_KEY" https://www.moltbook.com/api/v1/agents/status | jq .`
+1. Check agent status: `source ~/.moltbook && curl -s -H "X-Api-Key: $MOLTBOOK_API_KEY" https://www.moltbook.com/api/v1/agents/status | jq .`
 2. Read relevant boring source files to understand what to post
 3. Draft 3-5 post ideas with titles + content
 4. Output the drafts for review

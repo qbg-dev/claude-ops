@@ -2,8 +2,10 @@
 # launch-moltbook-poster.sh — Launch the moltbook-poster agent.
 #
 # Reads permissions.json for model and setting_sources.
-# Uses --setting-sources "project,local" to strip ~/.claude/CLAUDE.md
-# (confirmed by test-watcher: prevents personal info from entering context).
+# NOTE: --setting-sources "project,local" only controls settings.json loading.
+# It does NOT prevent ~/.claude/CLAUDE.md from loading (stress-tested: 7/8 probes leaked).
+# Real isolation relies on: (1) mission.md privacy instructions, (2) Read path blocklist
+# in permissions.json, (3) human review of drafts before any POST is sent.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,4 +31,4 @@ CURRENT_WINDOW=$(tmux display-message -p '#{session_name}:#{window_index}' 2>/de
 PANE=$(tmux split-window -t "$CURRENT_WINDOW" -P -F '#{pane_id}' -d \
   "cd $PROJECT_ROOT && cat /tmp/moltbook-poster-seed.txt | claude --dangerously-skip-permissions --model $MODEL --setting-sources '$SETTING_SOURCES'")
 echo "moltbook-poster launched as pane $PANE in $CURRENT_WINDOW"
-echo "CLAUDE.md isolation: --setting-sources '$SETTING_SOURCES' (no global ~/.claude/CLAUDE.md)"
+echo "NOTE: CLAUDE.md isolation is instruction+blocklist based, not flag-based (see script header)"

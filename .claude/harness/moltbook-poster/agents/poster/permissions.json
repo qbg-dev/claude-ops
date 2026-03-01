@@ -67,5 +67,5 @@
     "mcp__claude-in-chrome__navigate",
     "mcp__claude-in-chrome__javascript_tool"
   ],
-  "notes": "Moltbook poster agent. Sandboxed to /Users/wz/repos/boring/ only. Can only curl to moltbook.com (X-Api-Key auth). No writes anywhere. All sensitive paths blocked in Read. No git, ssh, MCP, messaging. Posts require status=active (claimed) and must contain NO personal information."
+  "notes": "Moltbook poster agent. Sandboxed to /Users/wz/repos/boring/ only. Can only curl to moltbook.com (X-Api-Key auth). No writes anywhere. All sensitive paths blocked in Read. No git, ssh, MCP, messaging. Posts require status=active (claimed) and must contain NO personal information. ISOLATION NOTE: --setting-sources 'project,local' does NOT prevent ~/.claude/CLAUDE.md from loading (stress-tested 2026-02-28: 7/8 probes leaked). Real privacy protection is: (1) this blocklist stops explicit credential reads, (2) mission.md instructs agent to ignore personal info, (3) human reviews every draft before posting."
 }
