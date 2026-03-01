@@ -72,6 +72,40 @@ Memory. Parent context. Tasks. Communication. A **harness** wraps the agent with
     └── module-manager/ # the agent owning this harness
 ```
 
+## tmux Layout
+
+Each agent role maps to a tmux primitive. Module-managers get **windows**; their workers get **panes** within that window. This is enforced structurally—the two launch paths use different tmux commands:
+
+- `harness-launch.sh` (module-manager): `tmux new-window -d -t "${TMUX_SESSION}:" -n "$HARNESS"`
+- `worker-dispatch.sh` (worker): `tmux split-window -v -d -t "h:${MODULE}"`
+
+The result is a natural visual hierarchy:
+
+```
+tmux session "h"
+├── window 0 "mod-platform"           module-manager (%539)
+│   ├── pane 0: manager
+│   ├── pane 1: worker auth-handler
+│   └── pane 2: worker api-routes
+├── window 1 "mod-tenant"             module-manager (%501)
+│   ├── pane 0: manager
+│   └── pane 1: worker migration
+└── window 2 "hq-v3"                  coordinator (%534)
+    ├── pane 0: coordinator
+    └── pane 1: monitor (horizontal split)
+```
+
+`pane-registry.json` tracks the hierarchy with `agent_role` and `parent` fields, so the watchdog and hooks always know which manager owns which worker:
+
+```json
+{
+  "%539": { "harness": "mod-platform", "agent_role": "module-manager", "pane_target": "h:0.0" },
+  "%540": { "harness": "auth-handler", "agent_role": "worker", "parent": "mod-platform", "pane_target": "h:0.1" }
+}
+```
+
+Workers run in isolated git worktrees to avoid `.git/index.lock` contention. Monitors use horizontal splits (`-h`) to sit alongside the pane they observe.
+
 ## Human Steering
 
 boring is designed for collaborative workflows where you stay in control:
@@ -80,6 +114,23 @@ boring is designed for collaborative workflows where you stay in control:
 - **Send a message**: `hq_send` delivers to the agent's inbox; PreToolUse injects it on the next tool call
 - **Edit the task graph**: plain JSON—add, remove, or reprioritize tasks mid-session
 - **Override the stop gate**: `touch ~/.boring/state/sessions/{id}/allow-stop`
+
+## Human-Verifiable Checkpoints
+
+Agents working through a task graph are organized into **waves**—sequential batches of tasks where all tasks in wave N must be completed and reviewed before wave N+1 begins. At each wave boundary, the system enforces a **wave gate**: a synthetic task injected into the dependency graph that blocks the next wave's tasks until the gate is satisfied.
+
+The gate requires the agent to:
+
+1. Commit the wave's work with a conventional message
+2. Deploy and inspect every feature in Chrome
+3. Take screenshots
+4. Generate a self-contained HTML **wave report** from a starter template
+5. Open the report and notify the operator
+6. Wait for human confirmation before proceeding
+
+Enforcement happens at three levels. The **dependency graph** prevents the agent from picking up next-wave tasks (they're `blockedBy` the gate task). The **Stop hook** prevents the agent from quitting while tasks remain. And **content validation** checks that the report HTML exists on disk and contains required sections (Summary, Tasks Completed, etc.)—the agent can't mark the gate done without a real artifact.
+
+Wave reports live at `~/.boring/harness/reports/{harness}/wave-{N}.html` and serve as the permanent audit trail of what each agent did, when, and what it looked like.
 
 ## Directory Structure
 
