@@ -1,0 +1,24 @@
+{
+  "status": "pending",
+  "cycles_completed": 0,
+  "last_cycle_at": null,
+  "last_cycle_duration_ms": 0,
+  "findings": {
+    "critical": 0,
+    "warning": 0,
+    "info": 0
+  },
+  "categories": {
+    "security": { "critical": 0, "warning": 0, "info": 0 },
+    "bot_quality": { "critical": 0, "warning": 0, "info": 0 },
+    "conversation_flow": { "critical": 0, "warning": 0, "info": 0 },
+    "tool_execution": { "critical": 0, "warning": 0, "info": 0 },
+    "business_logic": { "critical": 0, "warning": 0, "info": 0 },
+    "volume_patterns": { "critical": 0, "warning": 0, "info": 0 }
+  },
+  "stats": {
+    "conversations_analyzed": 0,
+    "messages_scanned": 0,
+    "ssh_failures": 0
+  }
+}

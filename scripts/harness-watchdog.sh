@@ -153,6 +153,13 @@ check_agent() {
     # Handles BOTH cases: pane dead (normal) AND pane alive at ❯ prompt after stop hook.
     # Claude TUI stays open at the prompt even after a graceful stop — don't treat that as "stuck".
     local sleep_dur; sleep_dur=$(harness_sleep_duration "$canonical" 2>/dev/null || echo "0")
+
+    # "none" means perpetual:false — this worker should not be respawned
+    if [ "$sleep_dur" = "none" ]; then
+      _log "SKIP: $canonical — perpetual:false, not respawning"
+      return
+    fi
+
     local stopped_at=0
     [ -n "$session_state_dir" ] && stopped_at=$(stat -f %m "$session_state_dir/graceful-stop" 2>/dev/null \
       || stat -c %Y "$session_state_dir/graceful-stop" 2>/dev/null || echo 0)
@@ -210,6 +217,28 @@ check_agent() {
 # ── Respawn an agent ──────────────────────────────────────────────
 _respawn_agent() {
   local canonical="$1" pane_id="$2" pane_target="$3" reason="$4"
+
+  # ── Flat worker path: worker/{name} → launch-flat-worker.sh ──
+  if [[ "$canonical" == worker/* ]]; then
+    local worker_name="${canonical#worker/}"
+    # Try project-local first, fall back to upstream generic
+    local worker_launch="$PROJECT_ROOT/.claude/scripts/launch-flat-worker.sh"
+    if [ ! -f "$worker_launch" ]; then
+      worker_launch="$HOME/.boring/scripts/launch-flat-worker.sh"
+    fi
+    if [ ! -f "$worker_launch" ]; then
+      _log "RESPAWN-SKIP: $canonical — launch-flat-worker.sh not found (checked project + upstream)"
+      return
+    fi
+    # Remove stale pane registry entry
+    pane_registry_remove "$pane_id" 2>/dev/null || true
+    bash "$worker_launch" "$worker_name" &
+    _log "RESPAWN: $canonical (reason=$reason) — launched via launch-flat-worker.sh"
+    _publish_agent_event "agent.respawned" "$canonical" "Respawned after $reason"
+    return
+  fi
+
+  # ── Legacy harness path ──
   local harness_name; harness_name=$(echo "$canonical" | cut -d/ -f1)
   local seed_script="$PROJECT_ROOT/.claude/scripts/${harness_name}-seed.sh"
 

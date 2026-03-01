@@ -12,6 +12,7 @@
 # This replaces --disallowedTools CLI flag with a centralized hook.
 set -uo pipefail
 trap 'echo "{}"; exit 0' ERR
+exec 2>/dev/null  # suppress stderr — Claude Code treats any stderr as hook error
 
 source "$HOME/.boring/lib/pane-resolve.sh"
 
@@ -23,22 +24,35 @@ TOOL_INPUT="$_HOOK_TOOL_INPUT"
 
 # Resolve which agent is calling
 resolve_pane_and_harness "$SESSION_ID"
-[ -z "$HARNESS" ] && { echo '{}'; exit 0; }
 
-# Determine permissions.json path from pane registry
+# Resolve PROJECT_ROOT — must follow worktrees back to main repo
+# Do this BEFORE any reference to $PROJECT_ROOT (set -u would kill us)
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+if [ -f "$PROJECT_ROOT/.git" ]; then
+  # Worktree: .git is a file pointing to main repo
+  _MAIN_GIT_DIR=$(sed 's/gitdir: //' "$PROJECT_ROOT/.git" | sed 's|/\.git/worktrees/.*||')
+  PROJECT_ROOT="$_MAIN_GIT_DIR"
+fi
+
+[ -z "$HARNESS" ] && { echo '{}'; exit 0; }
 PANE_REG="${HARNESS_STATE_DIR:-$HOME/.boring/state}/pane-registry.json"
 
-# Derive parent + worker name from harness path.
-# Workers are registered as "mod-ops/wo-fullchain" (parent/name), MMs as "mod-ops".
-# The .parent field is never written by pane_registry_update, so derive from slash.
-if [[ "$HARNESS" == */* ]]; then
-  # Worker: "parent/worker-name" → permissions at parent/agents/worker/worker-name/permissions.json
+# Derive permissions.json path from harness field in pane registry.
+# Three patterns:
+#   "worker/{name}"       → flat worker: .claude/workers/{name}/permissions.json
+#   "mod-ops/wo-fullchain" → old harness worker: .claude/harness/{parent}/agents/worker/{name}/permissions.json
+#   "mod-ops"              → old harness MM: .claude/harness/{name}/agents/module-manager/permissions.json
+if [[ "$HARNESS" == worker/* ]]; then
+  # Flat worker: "worker/{name}" → .claude/workers/{name}/permissions.json
+  _WORKER="${HARNESS#worker/}"
+  PERMS="$PROJECT_ROOT/.claude/workers/$_WORKER/permissions.json"
+elif [[ "$HARNESS" == */* ]]; then
+  # Old harness worker: "parent/worker-name"
   _PARENT="${HARNESS%/*}"
   _WORKER="${HARNESS##*/}"
   PERMS="$PROJECT_ROOT/.claude/harness/$_PARENT/agents/worker/$_WORKER/permissions.json"
 else
-  # Module manager: permissions at harness/agents/module-manager/permissions.json
+  # Old harness module manager
   PERMS="$PROJECT_ROOT/.claude/harness/$HARNESS/agents/module-manager/permissions.json"
 fi
 

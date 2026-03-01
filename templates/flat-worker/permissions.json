@@ -1,0 +1,12 @@
+{
+  "model": "sonnet",
+  "permission_mode": "bypassPermissions",
+  "disallowedTools": [
+    "Bash(git checkout main*)",
+    "Bash(git merge*)",
+    "Bash(git push*)",
+    "Bash(git reset --hard*)",
+    "Bash(git clean*)",
+    "Bash(rm -rf*)"
+  ]
+}

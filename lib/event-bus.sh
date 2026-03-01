@@ -18,9 +18,56 @@
 set -euo pipefail
 
 # ── Bus directory resolution ─────────────────────────────────────────
+# Always resolve to the MAIN repo's bus, even from worktrees.
+# In a git worktree, .git is a file: "gitdir: /path/to/main/.git/worktrees/<name>"
+# We follow that back to the main repo so all agents share one bus.
+_bus_resolve_main_repo() {
+  local toplevel
+  toplevel=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  [ -z "$toplevel" ] && return
+  local dotgit="$toplevel/.git"
+  if [ -f "$dotgit" ]; then
+    # Worktree: .git is a file pointing to main repo's .git/worktrees/<name>
+    local gitdir
+    gitdir=$(sed -n 's/^gitdir: //p' "$dotgit" 2>/dev/null)
+    if [ -n "$gitdir" ]; then
+      # Resolve relative paths
+      [[ "$gitdir" != /* ]] && gitdir="$toplevel/$gitdir"
+      # Strip /worktrees/<name> and /.git to get main repo root
+      local main_git="${gitdir%/worktrees/*}"
+      local main_repo="${main_git%/.git}"
+      [ -d "$main_repo" ] && echo "$main_repo" && return
+    fi
+  fi
+  # Not a worktree (or resolution failed) — use toplevel as-is
+  echo "$toplevel"
+}
+
+_bus_follow_worktree() {
+  # Given a directory, if it's a worktree, return the main repo root instead.
+  local dir="$1"
+  local dotgit="$dir/.git"
+  if [ -f "$dotgit" ]; then
+    local gitdir
+    gitdir=$(sed -n 's/^gitdir: //p' "$dotgit" 2>/dev/null)
+    if [ -n "$gitdir" ]; then
+      [[ "$gitdir" != /* ]] && gitdir="$dir/$gitdir"
+      local main_git="${gitdir%/worktrees/*}"
+      local main_repo="${main_git%/.git}"
+      [ -d "$main_repo" ] && echo "$main_repo" && return
+    fi
+  fi
+  echo "$dir"
+}
+
 _bus_resolve_dir() {
   if [ -n "${BUS_DIR:-}" ]; then echo "$BUS_DIR"; return; fi
-  local pr="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || echo "")}"
+  local pr
+  if [ -n "${PROJECT_ROOT:-}" ]; then
+    pr=$(_bus_follow_worktree "$PROJECT_ROOT")
+  else
+    pr=$(_bus_resolve_main_repo)
+  fi
   if [ -n "$pr" ]; then
     mkdir -p "$pr/.claude/bus" 2>/dev/null || true
     echo "$pr/.claude/bus"

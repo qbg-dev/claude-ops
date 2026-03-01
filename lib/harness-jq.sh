@@ -114,6 +114,15 @@ pane_registry_remove() {
   locked_jq_write "$PANE_REGISTRY" "pane-registry" 'del(.[$pid])' --arg pid "$pane_id"
 }
 
+# Register a child pane with its parent, inheriting harness/permissions.
+pane_registry_set_parent() {
+  local child_pane="$1" parent_pane="$2" harness="$3" pane_target="${4:-}"
+  [ ! -f "$PANE_REGISTRY" ] && echo '{}' > "$PANE_REGISTRY"
+  locked_jq_write "$PANE_REGISTRY" "pane-registry" \
+    '.[$cid] = ((.[$cid] // {}) * {harness:$h, parent_pane:$pid, pane_target:$pt, task:"child", updated_at:(now|todate)})' \
+    --arg cid "$child_pane" --arg pid "$parent_pane" --arg h "$harness" --arg pt "$pane_target"
+}
+
 # ═══════════════════════════════════════════════════════════════
 # AGENT WORKSPACE — Per-agent persistent identity and memory
 # ═══════════════════════════════════════════════════════════════
@@ -539,9 +548,25 @@ harness_sleep_duration() {
   local canonical="$1"
   local project_root="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
   local val
+  local perpetual_val
 
-  if [[ "$canonical" == */* ]]; then
-    # Worker path: "module/worker-name"
+  if [[ "$canonical" == worker/* ]]; then
+    # Flat worker: "worker/{name}" → .claude/workers/{name}/state.json
+    local worker="${canonical#worker/}"
+    local state="$project_root/.claude/workers/$worker/state.json"
+    if [ -f "$state" ]; then
+      # Check perpetual field: if explicitly false, signal watchdog to skip respawn
+      # NOTE: cannot use jq // operator — it treats boolean false as falsy
+      perpetual_val=$(jq -r 'if .perpetual == null then "unset" elif .perpetual == false then "false" else "true" end' "$state" 2>/dev/null)
+      if [ "$perpetual_val" = "false" ]; then
+        echo "none"
+        return
+      fi
+      val=$(jq -r '.sleep_duration // empty' "$state" 2>/dev/null)
+      [ -n "$val" ] && echo "$val" && return
+    fi
+  elif [[ "$canonical" == */* ]]; then
+    # Old harness worker: "module/worker-name"
     local module="${canonical%%/*}"
     local worker="${canonical##*/}"
     local state="$project_root/.claude/harness/$module/agents/worker/$worker/state.json"
@@ -567,6 +592,31 @@ harness_sleep_duration() {
   fi
 
   echo "900"  # default: 15 min
+}
+
+# List all worker directories across both old harness and flat worker systems.
+# Outputs lines of: "canonical   /path/to/worker/dir"
+# Usage: list_all_workers [project_root]
+list_all_workers() {
+  local _root="${1:-${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}"
+
+  # Old harness workers: .claude/harness/{module}/agents/worker/{name}/
+  # Strip prefix to extract module cleanly, avoiding dirname depth errors
+  for _dir in "$_root"/.claude/harness/*/agents/worker/*/; do
+    [ -d "$_dir" ] || continue
+    local _stripped="${_dir#${_root}/.claude/harness/}"  # "hq-v3/agents/worker/chatbot-tools/"
+    local _module="${_stripped%%/*}"                      # "hq-v3"
+    local _wname; _wname=$(basename "$_dir")              # "chatbot-tools"
+    echo "$_module/$_wname   $_dir"
+  done
+
+  # Flat workers: .claude/workers/{name}/
+  for _dir in "$_root"/.claude/workers/*/; do
+    [ -d "$_dir" ] || continue
+    [ -f "$_dir/mission.md" ] || continue  # must be a real worker dir
+    local _wname; _wname=$(basename "$_dir")
+    echo "worker/$_wname   $_dir"
+  done
 }
 
 # Get long-running harness cycle count

@@ -159,7 +159,11 @@ Workers claim tasks by setting `owner` and publishing `task.started`. When done,
 |------|---------|
 | `lib/worker-dispatch.sh` | Worker health checks, dispatch helpers |
 | `lib/harness-launch.sh` | Launch harness agents in tmux panes |
-| `scripts/launch-worker.sh` | Create worktree + spawn worker pane |
+| `scripts/launch-worker.sh` | Create worktree + spawn harness worker pane (old system) |
+| `scripts/launch-flat-worker.sh` | Launch flat worker agent in own tmux window (new system) |
+| `scripts/check-flat-workers.sh` | Auto-discover and report flat worker fleet status |
+| `scripts/worker-post-commit-hook.sh` | Post-commit hook for worker worktrees (auto-notification) |
+| `templates/flat-worker/` | Template files for scaffolding new flat workers |
 | `~/.boring/state/pane-registry.json` | Maps panes to harnesses (coordinator looks up workers here) |
 
 ### Messaging
@@ -206,3 +210,8 @@ User seeds agent via Claude Code TUI
 | `~/.boring/state/harness-runtime/` | Per-harness runtime flags | Until deregistered |
 | `~/.boring/state/pane-registry.json` | Pane ↔ harness map | Pruned when panes die |
 | `~/.boring/harness/manifests/` | Harness registry entries | Until deregistered |
+| `~/.boring/templates/conv-monitor/` | Conv-monitor worker template | All projects |
+| `~/.boring/templates/flat-worker/.commit-template.md` | Worker commit format template | All projects |
+| `~/.boring/scripts/worker-commit.sh` | Structured commit helper | All projects |
+| `~/.boring/scripts/scaffold-conv-monitor.sh` | Conv-monitor scaffolding | All projects |
+| `{project}/.claude/workers/{name}/` | Flat worker files | Worker lifetime |

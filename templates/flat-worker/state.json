@@ -1,0 +1,9 @@
+{
+  "status": "pending",
+  "cycles_completed": 0,
+  "last_cycle_at": null,
+  "issues_found": 0,
+  "issues_fixed": 0,
+  "perpetual": true,
+  "sleep_duration": 3600
+}
