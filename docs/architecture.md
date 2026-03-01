@@ -126,8 +126,18 @@ See [Hooks](hooks.md) for details.
 
 - **Graceful stops**: agent wrote `graceful-stop` sentinel → watchdog respawns after `sleep_duration`
 - **Crashes**: pane died without sentinel → publishes `agent.crash` event, respawns
-- **Stuck agents**: process alive but no tool calls for >10 min → sends nudge prompt
+- **Stuck agents**: process alive but idle >20 min → kill + respawn in same pane (flat workers) or nudge (harness agents)
 - **Crash loops**: >3 crashes/hour → stops retrying, publishes `agent.crash-loop`
+
+### Stuck detection for flat workers
+
+Flat workers don't emit bus events, so the watchdog uses scrollback content analysis. Every check cycle it captures the last 30 lines of the pane and matches against known blocking patterns:
+
+```
+Waiting for task|hook error.*hook error|No output.*No output
+```
+
+If a pattern persists for >20 minutes (`STUCK_THRESHOLD_SEC=1200`), the watchdog kills the process tree and relaunches Claude in the same pane with a respawn seed. The worker keeps its pane ID and registry entry—it stays the parent agent.
 
 ### State files
 
@@ -136,9 +146,24 @@ See [Hooks](hooks.md) for details.
 | `~/.boring/state/pane-registry.json` | Maps pane IDs to harness names and session IDs |
 | `~/.boring/state/sessions/{id}/graceful-stop` | Sentinel written by Stop hook |
 | `~/.boring/state/harness-runtime/{name}/` | Per-harness runtime flags |
+| `~/.boring/state/harness-runtime/{name}/stuck-candidate` | Timestamp when stuck pattern first seen |
+| `~/.boring/state/harness-runtime/{name}/crash-count.json` | Crash timestamps (last hour) |
 | `~/.boring/state/watchdog.log` | Stop hook + watchdog log |
 
+### Health check
+
+`scripts/harness-health.sh` gives a full system snapshot without needing to read individual files:
+
+```bash
+bash ~/.boring/scripts/harness-health.sh          # colored text summary
+bash ~/.boring/scripts/harness-health.sh --json   # machine-readable
+```
+
+Checks: pane registry integrity, stale `graceful-stop` markers, crash-loop flags, stuck-candidate markers, `tasks.json` validity (JSON + schema + orphaned in-progress + circular deps), `state.json` consistency, watchdog config.
+
 ## Component 5: Multi-Agent Layer
+
+### Harness workers (coordinator-managed)
 
 Multiple agents can work on the same harness concurrently. The pattern is:
 
@@ -153,14 +178,69 @@ coordinator (module-manager)
 
 Workers claim tasks by setting `owner` and publishing `task.started`. When done, they publish `task.completed` which triggers `update_tasks_json.sh` side-effect to mark the task complete.
 
+### Flat workers (direct, no coordinator)
+
+Flat workers are simpler: Warren → workers directly. No module-manager layer. Each flat worker is an independent Claude session in its own tmux window, with its own worktree on branch `worker/{name}`.
+
+```
+Warren
+    ├── worker/chatbot-tools   (branch: worker/chatbot-tools)
+    ├── worker/miniapp-ux      (branch: worker/miniapp-ux)
+    └── worker/chief-of-staff  merges completed branches → main
+```
+
+Each flat worker gets a `tasks.json` flat task list (not nested under `.tasks`—keys are `T001`, `T002`, ...) managed with `worker-task.sh`:
+
+```bash
+# Worker pane (auto-detects worker name from git branch or pane registry)
+bash ~/.boring/scripts/worker-task.sh add "Fix login bug" --priority high
+bash ~/.boring/scripts/worker-task.sh add "Write tests" --after T001      # depends on T001
+bash ~/.boring/scripts/worker-task.sh add "Refresh task list" --recurring
+bash ~/.boring/scripts/worker-task.sh claim T001
+bash ~/.boring/scripts/worker-task.sh complete T001
+bash ~/.boring/scripts/worker-task.sh next          # highest-priority unclaimed unblocked task
+bash ~/.boring/scripts/worker-task.sh list --pending
+bash ~/.boring/scripts/worker-task.sh list --blocked
+```
+
+**Flat worker `tasks.json` schema** (different from harness `tasks.json`—flat keys, not nested):
+
+```json
+{
+  "T001": {
+    "subject": "Fix login bug",
+    "description": "Details...",
+    "status": "pending",
+    "priority": "high",
+    "recurring": false,
+    "blocked_by": [],
+    "owner": null,
+    "cycles_completed": 0,
+    "created_at": "2026-03-01T00:00:00Z",
+    "completed_at": null
+  }
+}
+```
+
+Priority ordering: `critical > high > medium > low`. `next` returns the first unclaimed, unblocked task by priority. Recurring tasks reset to `pending` on `complete`, bumping `cycles_completed`.
+
+**Launching:**
+
+```bash
+bash {project}/.claude/scripts/launch-flat-worker.sh <worker-name>
+```
+
+Creates a worktree on `worker/{name}`, registers in pane-registry, injects a seed prompt. The watchdog handles respawn—flat workers set `perpetual: true` and `sleep_duration` in `state.json`.
+
 ### Key files
 
 | File | Purpose |
 |------|---------|
-| `lib/worker-dispatch.sh` | Worker health checks, dispatch helpers |
+| `lib/worker-dispatch.sh` | Worker health checks, dispatch helpers (harness workers) |
 | `lib/harness-launch.sh` | Launch harness agents in tmux panes |
-| `scripts/launch-worker.sh` | Create worktree + spawn harness worker pane (old system) |
-| `scripts/launch-flat-worker.sh` | Launch flat worker agent in own tmux window (new system) |
+| `scripts/launch-worker.sh` | Create worktree + spawn harness worker pane (harness system) |
+| `scripts/launch-flat-worker.sh` | Launch flat worker in own tmux window (flat system) |
+| `scripts/worker-task.sh` | Per-worker task list management (add/claim/complete/list/next) |
 | `scripts/check-flat-workers.sh` | Auto-discover and report flat worker fleet status |
 | `scripts/worker-post-commit-hook.sh` | Post-commit hook for worker worktrees (auto-notification) |
 | `templates/flat-worker/` | Template files for scaffolding new flat workers |
