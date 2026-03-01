@@ -272,9 +272,8 @@ check_worker_states() {
   local no_state=0
   while IFS= read -r wdir; do
     local wname; wname=$(basename "$wdir")
-    local sf="$sf"
-    sf="$wdir/state.json"
 
+    local sf="$wdir/state.json"
     if [ ! -f "$sf" ]; then
       no_state=$(( no_state + 1 ))
       _warning "$wname: no state.json"
