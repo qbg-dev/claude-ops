@@ -1,6 +1,7 @@
 {
   "model": "sonnet",
   "permission_mode": "bypassPermissions",
+  "setting_sources": "project,local",
   "disallowedTools": [
     "Edit",
     "Write",
