@@ -112,6 +112,19 @@ Reporting without fixing is FAILURE. You have full deploy access. Use it.
 - After each cycle: update state.json (cycles_completed++, last_cycle_at, issues_found/fixed)
 - **Auto-notification**: A post-commit hook is installed — Warren is automatically notified when you commit. No manual notification needed.
 
+## Respawn control
+Your \`state.json\` controls watchdog respawn behavior:
+- \`perpetual: true\` + \`sleep_duration: N\` → watchdog waits N seconds after you stop, then respawns you
+- \`perpetual: false\` → watchdog NEVER respawns you (one-shot mode)
+
+When updating state.json at end of each cycle, reconsider \`sleep_duration\` based on urgency:
+- Monitoring / critical fixes: 1800 (30 min)
+- Active bug-fix cycles: 3600–7200 (1–2h)
+- Optimization / periodic review: 10800–14400 (3–4h)
+- Task fully complete, no follow-up needed: set \`perpetual: false\`
+
+You can update \`sleep_duration\` mid-mission as task urgency evolves.
+
 ## Deploy protocol (MANDATORY)
 - Deploy to TEST first: \`./scripts/deploy.sh --skip-langfuse [--service static|web]\`
 - Verify on test, THEN deploy to PROD: \`echo y | ./scripts/deploy-prod.sh --skip-langfuse --service <static|web>\`

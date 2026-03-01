@@ -27,7 +27,7 @@ set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────────
 CHECK_INTERVAL="${WATCHDOG_CHECK_INTERVAL:-30}"
-STUCK_THRESHOLD_SEC="${WATCHDOG_STUCK_THRESHOLD:-600}"   # 10 min no tool calls = stuck
+STUCK_THRESHOLD_SEC="${WATCHDOG_STUCK_THRESHOLD:-1200}"  # 20 min no activity = stuck
 MAX_CRASHES_PER_HR="${WATCHDOG_MAX_CRASHES:-3}"
 LOG_FILE="${WATCHDOG_LOG:-${HOME}/.boring/state/watchdog.log}"
 
@@ -106,6 +106,99 @@ _last_tool_call_sec() {
   iso_to_epoch "$last_ts"
 }
 
+# ── Scrollback-based stuck detection (flat workers fallback) ──────
+# When bus events aren't available (flat workers), check tmux pane
+# content for known blocking patterns. Uses a marker file to track
+# how long the pattern has persisted.
+_check_scrollback_stuck() {
+  local pane_id="$1" canonical="$2" now_ts="$3"
+  local runtime; runtime=$(harness_runtime "$canonical")
+  local marker="$runtime/stuck-candidate"
+
+  # Capture visible pane content (non-empty lines, last 30)
+  local content
+  content=$(tmux capture-pane -t "$pane_id" -p 2>/dev/null | grep -v '^$' | tail -30)
+
+  # Known blocking patterns in Claude Code TUI
+  if echo "$content" | grep -qE 'Waiting for task|hook error.*hook error|No output.*No output'; then
+    if [ ! -f "$marker" ]; then
+      echo "$now_ts" > "$marker"
+      echo 0  # just started, not stuck yet
+      return
+    fi
+    local since; since=$(cat "$marker" 2>/dev/null || echo "$now_ts")
+    echo $(( now_ts - since ))
+    return
+  fi
+
+  # Not matching stuck pattern — clear marker
+  rm -f "$marker" 2>/dev/null || true
+  echo 0
+}
+
+# ── Kill + respawn a stuck flat worker in the same pane ───────────
+# Kills the Claude process, then relaunches with a respawn seed.
+# The worker keeps its pane ID and registry entry (still the parent).
+_unstick_worker() {
+  local pane_id="$1" canonical="$2" idle_sec="$3"
+  local worker_name="${canonical#worker/}"
+  local worker_dir="$PROJECT_ROOT/.claude/workers/$worker_name"
+  local perms="$worker_dir/permissions.json"
+
+  # 1. Kill Claude process tree in pane
+  local pane_pid
+  pane_pid=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null \
+    | awk -v id="$pane_id" '$1==id{print $2}')
+  if [ -n "$pane_pid" ]; then
+    pkill -TERM -P "$pane_pid" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -P "$pane_pid" 2>/dev/null || true
+    sleep 1
+  fi
+
+  # 2. Read model from permissions
+  local model
+  model=$(jq -r '.model // "sonnet"' "$perms" 2>/dev/null || echo "sonnet")
+
+  # 3. Generate respawn seed
+  local seed_file="/tmp/worker-${worker_name}-respawn.txt"
+  cat > "$seed_file" << RSEED
+You are worker **$worker_name** (respawned by watchdog after ${idle_sec}s stuck on a hanging task).
+
+Read these files NOW:
+1. $worker_dir/tasks.json — your current task list
+2. $worker_dir/MEMORY.md — accumulated knowledge
+3. $worker_dir/state.json — current state
+
+Then continue your work. Key rules:
+- Use explicit timeouts for network ops: \`timeout 60 <cmd>\` or \`--connect-timeout 10\`
+- If a background task doesn't complete in 2 minutes, cancel and try a different approach
+- Claim your next unclaimed task: \`bash ~/.claude-ops/scripts/worker-task.sh next\`
+RSEED
+
+  # 4. Launch Claude in the same pane
+  local claude_cmd="claude --model $model --dangerously-skip-permissions"
+  claude_cmd="$claude_cmd --add-dir $PROJECT_ROOT/.claude/workers/$worker_name"
+  tmux send-keys -t "$pane_id" "$claude_cmd" 2>/dev/null || true
+  tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+
+  # 5. Wait for TUI prompt (max 60s)
+  local wait=0
+  until tmux capture-pane -t "$pane_id" -p 2>/dev/null | grep -qE '❯|> $'; do
+    sleep 2; wait=$((wait + 2))
+    [ "$wait" -ge 60 ] && break
+  done
+  sleep 2
+
+  # 6. Inject seed
+  tmux load-buffer "$seed_file" 2>/dev/null || true
+  tmux paste-buffer -t "$pane_id" 2>/dev/null || true
+  sleep 2
+  tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+
+  _log "UNSTICK: $canonical — killed and respawned in pane $pane_id"
+}
+
 # ── Check a single agent ──────────────────────────────────────────
 check_agent() {
   local pane_id="$1"
@@ -117,6 +210,19 @@ check_agent() {
 
   local pane_target; pane_target=$(echo "$entry" | jq -r '.pane_target // empty')
   local now_ts; now_ts=$(date -u +%s)
+
+  # ── Skip crash recovery for child panes — ephemeral, parent handles cleanup ──
+  local parent_pane; parent_pane=$(echo "$entry" | jq -r '.parent_pane // empty')
+  if [ -n "$parent_pane" ]; then
+    local parent_alive=false
+    tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -q "^${parent_pane}$" && parent_alive=true
+    if $parent_alive; then
+      return  # Parent alive → child may be intentionally done; no action
+    fi
+    # Parent dead → clean up stale child entry
+    pane_registry_remove "$pane_id" 2>/dev/null || true
+    return
+  fi
 
   # ── Crash-loop guard: skip if already flagged ──
   local runtime; runtime=$(harness_runtime "$canonical")
@@ -180,16 +286,30 @@ check_agent() {
     # Agent is mid-turn (hasn't hit stop hook yet). Nudge if too idle.
     local last_tool_ts; last_tool_ts=$(_last_tool_call_sec "$canonical")
     local idle_sec=0
-    [ "$last_tool_ts" -gt 0 ] && idle_sec=$(( now_ts - last_tool_ts ))
+
+    if [ "$last_tool_ts" -gt 0 ]; then
+      # Bus data available — use tool-call timestamp
+      idle_sec=$(( now_ts - last_tool_ts ))
+    else
+      # No bus data (flat workers) — fall back to scrollback content analysis
+      idle_sec=$(_check_scrollback_stuck "$pane_id" "$canonical" "$now_ts")
+    fi
 
     if [ "$idle_sec" -gt "$STUCK_THRESHOLD_SEC" ]; then
-      _log "STUCK: $canonical (pane $pane_id) — ${idle_sec}s since last tool call"
-      _publish_agent_event "agent.stuck" "$canonical" "Alive but ${idle_sec}s since last tool call"
-      # Nudge via bus (never tmux send-keys — all communication through the bus)
-      if type hq_send &>/dev/null; then
+      _log "STUCK: $canonical (pane $pane_id) — ${idle_sec}s since last activity"
+      _publish_agent_event "agent.stuck" "$canonical" "Alive but ${idle_sec}s since last activity"
+
+      if [[ "$canonical" == worker/* ]] || ! type hq_send &>/dev/null; then
+        # Flat workers: kill and respawn in same pane (keeps parent identity)
+        _unstick_worker "$pane_id" "$canonical" "$idle_sec"
+        notify "⚠️ $canonical was stuck ${idle_sec}s — killed and respawned" "Watchdog" 2>/dev/null || true
+        # Clear stuck marker so we don't re-fire next cycle
+        local runtime; runtime=$(harness_runtime "$canonical")
+        rm -f "$runtime/stuck-candidate" 2>/dev/null || true
+      else
         hq_send "watchdog" "$canonical" "nudge" "You have been idle for ${idle_sec}s. Continue your current task." "urgent" 2>/dev/null || true
       fi
-      _publish_agent_event "agent.nudged" "$canonical" "Sent bus nudge after ${idle_sec}s idle"
+      _publish_agent_event "agent.nudged" "$canonical" "Unstuck after ${idle_sec}s idle"
     fi
     # else: agent is awake and working — no action needed
 
