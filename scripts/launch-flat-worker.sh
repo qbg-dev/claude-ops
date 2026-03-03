@@ -104,47 +104,16 @@ Read these files NOW in this order:
 
 Then begin your mission loop immediately.
 
-## CRITICAL: FIX EVERYTHING
-**Never just report issues — FIX THEM.** If you find a bug, broken endpoint, missing data, or any issue:
-1. Investigate root cause immediately
-2. Write the fix
-3. Deploy to test -> verify -> deploy to prod
-4. Document what you fixed in MEMORY.md
-Reporting without fixing is FAILURE. You have full deploy access. Use it.
+## Tools
+Use \`mcp__worker-fleet__*\` MCP tools for messaging, tasks, inbox, commits, state, and deploy signals. These are native tool calls — no bash wrappers needed.
 
-## Git discipline
-- Stage only the specific files you changed: \`git add src/foo.ts src/bar.ts\`
-- NEVER \`git add -A\` or \`git add .\` — catches unrelated/config/temp files
-- Commit to branch **$BRANCH** only. Never \`git checkout main\` or merge.
-- After each cycle: update state.json (cycles_completed++, last_cycle_at, issues_found/fixed)
-- **Auto-notification**: A post-commit hook is installed — Warren is automatically notified when you commit. No manual notification needed.
-
-## Respawn control
-Your \`state.json\` controls watchdog respawn behavior:
-- \`perpetual: true\` + \`sleep_duration: N\` → watchdog waits N seconds after you stop, then respawns you
-- \`perpetual: false\` → watchdog NEVER respawns you (one-shot mode)
-
-When updating state.json at end of each cycle, reconsider \`sleep_duration\` based on urgency:
-- Monitoring / critical fixes: 1800 (30 min)
-- Active bug-fix cycles: 3600–7200 (1–2h)
-- Optimization / periodic review: 10800–14400 (3–4h)
-- Task fully complete, no follow-up needed: set \`perpetual: false\`
-
-You can update \`sleep_duration\` mid-mission as task urgency evolves.
-
-## Deploy protocol (MANDATORY)
-- Deploy to TEST first: \`./scripts/deploy.sh --skip-langfuse [--service static|web]\`
-- Verify on test, THEN deploy to PROD: \`echo y | ./scripts/deploy-prod.sh --skip-langfuse --service <static|web>\`
-- NEVER use \`--service core\` or \`--service all\` without Warren approval
-- Use \`--service static\` for UI-only changes (zero downtime)
-- Use \`--service web\` for backend API changes (chatbot stays up)
-
-## End-to-end verification (REQUIRED before marking any task done)
-1. **Tests**: \`bun test\` (or targeted test file)
-2. **TypeScript**: \`bunx tsc --noEmit\` on changed files
-3. **Deploy to test**: \`./scripts/deploy.sh --service <static|web> --skip-langfuse\`
-4. **Verify endpoint** (backend): \`curl -sf https://test.<domain>/api/v1/<endpoint> | jq .\`
-5. **Autologin + verify** (UI): use the project's autologin flow
+## Rules
+- **Fix everything.** Never just report issues — investigate, fix, deploy, document in MEMORY.md.
+- **Git discipline**: Stage only specific files (\`git add src/foo.ts\`). NEVER \`git add -A\`. Commit to branch **$BRANCH** only. Never checkout main.
+- **Deploy**: TEST first (\`./scripts/deploy.sh --skip-langfuse --service static|web\`). Never \`--service core\` without Warren approval.
+- **Verify**: Tests + TypeScript + deploy + endpoint/UI check before marking any task done.
+- **State**: Update state.json each cycle (cycles_completed++, last_cycle_at). \`perpetual: true\` + \`sleep_duration\` controls watchdog respawn.
+- **Auto-notification**: Post-commit hook notifies Warren automatically.
 WSEED
 
 # Create tmux window for this worker (or reuse if session was just created)

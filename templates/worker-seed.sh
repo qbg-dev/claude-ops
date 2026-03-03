@@ -25,8 +25,6 @@ if [ -f "$WORKER_DIR/MEMORY.md" ]; then
   [ "$_mem_lines" -gt 1 ] && HAS_MEM="yes"
 fi
 
-HARNESS_JQ="$HOME/.boring/lib/harness-jq.sh"
-
 # Set tmux pane title to worker name (visible in the tiled layout)
 if [ -n "${TMUX:-}" ]; then
   tmux select-pane -T "$MODULE/$WORKER_NAME" 2>/dev/null || true
@@ -57,54 +55,21 @@ Read ALL of these before doing anything else.
 Execute tasks from mission.md until acceptance passes. Report to module manager.
 Find next task → implement → verify → repeat until done.
 
-> You are a **split pane inside the module manager's window** — not a separate window.
-> To see your siblings, find your own pane first (never use \`tmux display-message\` — it returns the focused pane, not yours):
-> \`\`\`bash
-> OWN_PANE=\$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' | while read pid id; do p=\$PPID; while [ "\$p" -gt 1 ]; do [ "\$p" = "\$pid" ] && echo "\$id" && break 2; p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' '); done; done)
-> tmux list-panes -t "\$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}' | awk -v id="\$OWN_PANE" '\$1==id{print \$2}')"
-> \`\`\`
-
-## Messaging (bus-only — never tmux-send other agents)
-\`\`\`bash
-source ~/.boring/lib/harness-jq.sh
-# Good: specific, actionable, one line
-hq_send "$MODULE/$WORKER_NAME" "$MODULE" "status" "T-3 done: added keepalive to adbpg-lifecycle.ts. Test passing. Starting T-4."
-# Bad: vague, no task reference
-# hq_send "$MODULE/$WORKER_NAME" "$MODULE" "status" "working on stuff"
-\`\`\`
+## Tools
+Use \`mcp__worker-fleet__*\` MCP tools for messaging, tasks, inbox, commits, state, and deploy signals. These are native tool calls — no bash wrappers needed.
 
 ## End-of-Cycle
 **Just stop when done.** The stop hook reads \`sleep_duration\` (${SLEEP_DUR}s) from state.json
 and starts an OS background sleep. When it expires, tmux wakes you. No flag files needed.
 
 ## Rules
-- **Update MEMORY.md before stopping** — it persists across sessions. Keep ≤200 lines, index-only:
-  \`\`\`markdown
-  ## Quick Index
-  - Deployment patterns → [memory/refs/deploy.md](memory/refs/deploy.md)
-  ## Active Facts (≤20 lines inline)
-  - adbpg host: 47.115.249.103:5432 (auto-pauses if idle >10min)
-  \`\`\`
-  Move any section >30 lines to \`memory/refs/{topic}.md\`, replace with a one-liner link.
+- **Update MEMORY.md before stopping** — persists across sessions. Keep ≤200 lines.
 - **Zero mock data.** No placeholders, no hardcoded test data.
-- **Stage only what your task changed.** Run \`git diff --stat\` before every commit. Only include configuration files if your task explicitly requires it.
-- **Deploy to test only.** Verify health, then notify your module manager — the coordinator handles prod. Start your next task immediately; don't wait.
-  \`\`\`bash
-  hq_send "$MODULE/$WORKER_NAME" "$MODULE" "prod-deploy-ready" "service=<s> commit=<sha> summary=<one line>"
-  \`\`\`
-- **End-to-end verification required before every completion.** MM will reject completions without evidence. Run and include in your status message:
-  1. Tests: \`bun test\` (or targeted file)
-  2. TypeScript: \`bunx tsc --noEmit\` on changed files
-  3. Deploy to test: \`./scripts/deploy.sh --service <static|web> --skip-langfuse\`
-  4. Backend: \`curl -sf https://test.<domain>/api/v1/<endpoint> | jq .\`
-  5. UI: generate autologin URL and verify visually
-- **Escalate blockers** via \`hq_send ... "blocked" "..."\`. For critical issues (security, data loss), also notify the operator directly:
-  \`\`\`bash
-  source ~/.boring/lib/event-bus.sh
-  bus_publish "notification" '{"title":"ATTENTION — <topic>","message":"<detail>"}'
-  \`\`\`
-- **Direct user input is forwarded automatically.** If the operator types into your pane, your module manager gets a \`worker-user-prompt\` in its inbox. Just respond normally.
+- **Stage only what your task changed.** Never \`git add -A\`.
+- **Deploy to test only.** Verify health, then notify module manager.
+- **Verify before completion**: Tests + TypeScript + deploy + endpoint/UI check.
+- **Direct user input is forwarded automatically.**
 
 ## Begin
-Read mission.md. Check inbox.jsonl. Execute your tasks.
+Read mission.md. Check inbox. Execute your tasks.
 SEED

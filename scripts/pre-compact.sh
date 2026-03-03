@@ -137,45 +137,10 @@ case "$SESSION_TYPE" in
       echo ""
     fi
 
-    # Capabilities reminder (workers lose this on compaction)
-    echo "### Your Tools & APIs"
-    echo ""
-    echo "**Messaging** (inter-worker communication):"
-    echo '```bash'
-    echo 'bash ~/.claude-ops/scripts/worker-message.sh list                              # who is running?'
-    echo 'bash ~/.claude-ops/scripts/worker-message.sh send chief-of-staff "msg"         # direct message'
-    echo 'bash ~/.claude-ops/scripts/worker-message.sh broadcast "msg" --summary "short" # all workers'
-    echo '```'
-    echo ""
-    echo "**Task management** (your task list at \`${WORKER_DIR}/tasks.json\`):"
-    echo '```bash'
-    echo 'bash ~/.claude-ops/scripts/worker-task.sh list              # show tasks'
-    echo 'bash ~/.claude-ops/scripts/worker-task.sh next              # next unblocked task'
-    echo 'bash ~/.claude-ops/scripts/worker-task.sh add "Subject" --priority high --desc "Details"'
-    echo 'bash ~/.claude-ops/scripts/worker-task.sh claim T001        # start working on it'
-    echo 'bash ~/.claude-ops/scripts/worker-task.sh complete T001     # mark done'
-    echo '```'
-    echo ""
-    echo "**Inbox** (drain at cycle start):"
-    echo '```bash'
-    echo "INBOX=\"${WORKER_DIR}/inbox.jsonl\""
-    echo 'if [ -s "$INBOX" ]; then'
-    echo '  jq -r '"'"'[\(.msg_type // "msg")] from \(.from // "?"): \(.content // .message // "")'"'"' "$INBOX"'
-    echo '  > "$INBOX"  # clear after reading'
-    echo 'fi'
-    echo '```'
-    echo ""
-    echo "**Commits** (structured, with verification):"
-    echo '```bash'
-    echo "bash ${MAIN_ROOT}/.claude/scripts/worker-commit.sh \"fix(scope): description\" --verified-test --verified-tsc"
-    echo '```'
-    echo ""
-    echo "**Deploy** (test first, then prod):"
-    echo '```bash'
-    echo './scripts/deploy.sh --skip-langfuse --service static|web    # → test'
-    echo 'echo y | ./scripts/deploy-prod.sh --skip-langfuse --service static|web  # → prod'
-    echo '```'
-    echo "Never \`--service core\` or \`--service all\` without Warren approval."
+    # Tools reminder — MCP handles messaging, tasks, inbox, commits, state
+    echo "### Tools"
+    echo "Use \`mcp__worker-fleet__*\` MCP tools for messaging, tasks, inbox, commits, state, and deploy signals."
+    echo "Deploy: \`./scripts/deploy.sh --skip-langfuse --service static|web\` (test). Never \`--service core\` without Warren approval."
     echo ""
 
     # Mission reminder
