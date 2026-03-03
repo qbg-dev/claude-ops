@@ -41,16 +41,14 @@ if [[ "$to" == %* ]]; then
   # Bare pane ID (e.g. child panes in broadcast)
   PANE_ID="$to"
 else
-  # Try project-scoped lookup first, fall back to global
+  # STRICT project-scoped lookup — no unscoped fallback to prevent cross-project leakage.
+  # If from_project is known, only deliver to same-project recipient.
+  # If from_project is empty, use PROJECT_ROOT as fallback scope.
   PANE_ID=""
-  if [ -n "$from_project" ]; then
-    PANE_ID=$(jq -r --arg h "$to" --arg proj "$from_project" \
+  _scope="${from_project:-${PROJECT_ROOT:-.}}"
+  if [ -n "$_scope" ]; then
+    PANE_ID=$(jq -r --arg h "$to" --arg proj "$_scope" \
       'to_entries[] | select(.value.harness == $h and (.value.project_root // "") == $proj) | .key' \
-      "$PANE_REGISTRY" 2>/dev/null | head -1 || echo "")
-  fi
-  if [ -z "$PANE_ID" ]; then
-    PANE_ID=$(jq -r --arg h "$to" \
-      'to_entries[] | select(.value.harness == $h) | .key' \
       "$PANE_REGISTRY" 2>/dev/null | head -1 || echo "")
   fi
 fi
