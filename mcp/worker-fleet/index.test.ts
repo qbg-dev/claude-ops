@@ -9,8 +9,9 @@ import { join } from "path";
 import {
   readTasks, writeTasks, nextTaskId, isTaskBlocked,
   writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
-  resolveRecipient, generateSeedContent, _setWorkersDir,
-  type Task,
+  resolveRecipient, generateSeedContent, runDiagnostics, _setWorkersDir,
+  WORKER_NAME,
+  type Task, type DiagnosticIssue,
 } from "./index";
 
 // ── Test fixtures ────────────────────────────────────────────────────
@@ -441,9 +442,8 @@ describe("generateSeedContent", () => {
   });
 
   test("reads handoff.md from disk when present", () => {
-    // Create a handoff.md in the test worker dir
-    const workerName = "chief-of-staff"; // matches WORKER_NAME in test
-    const workerDir = join(TEST_WORKERS_DIR, workerName);
+    // Create a handoff.md in the test worker dir — use actual WORKER_NAME
+    const workerDir = join(TEST_WORKERS_DIR, WORKER_NAME);
     mkdirSync(workerDir, { recursive: true });
     writeFileSync(join(workerDir, "handoff.md"), "Disk handoff: check merge queue");
 
@@ -455,5 +455,160 @@ describe("generateSeedContent", () => {
     // We can at least verify the function doesn't crash
     expect(typeof seed).toBe("string");
     expect(seed.length).toBeGreaterThan(100);
+  });
+
+  test("includes check_config in tool table", () => {
+    const seed = generateSeedContent();
+    expect(seed).toContain("check_config");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// runDiagnostics
+// ═══════════════════════════════════════════════════════════════════
+
+describe("runDiagnostics", () => {
+  test("returns array of DiagnosticIssue objects", () => {
+    const issues = runDiagnostics();
+    expect(Array.isArray(issues)).toBe(true);
+    for (const issue of issues) {
+      expect(["error", "warning"]).toContain(issue.severity);
+      expect(typeof issue.check).toBe("string");
+      expect(typeof issue.message).toBe("string");
+    }
+  });
+
+  test("detects missing worker dir", () => {
+    // Point to a non-existent workers dir
+    const origDir = join(import.meta.dir, ".test-tmp/diagnostics-missing");
+    _setWorkersDir(origDir);
+    try {
+      const issues = runDiagnostics();
+      const workerDirIssue = issues.find(i => i.check === "worker_dir");
+      expect(workerDirIssue).toBeTruthy();
+      expect(workerDirIssue!.severity).toBe("error");
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+    }
+  });
+
+  test("detects missing mission.md", () => {
+    // Create worker dir without mission.md
+    const diagDir = join(import.meta.dir, ".test-tmp/diagnostics-no-mission/workers");
+    // We need a dir named after WORKER_NAME
+    const workerDir = join(diagDir, WORKER_NAME);
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, "state.json"), JSON.stringify({ status: "idle", cycles_completed: 0 }));
+
+    _setWorkersDir(diagDir);
+    try {
+      const issues = runDiagnostics();
+      const missionIssue = issues.find(i => i.check === "mission.md");
+      expect(missionIssue).toBeTruthy();
+      expect(missionIssue!.severity).toBe("error");
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+      rmSync(join(import.meta.dir, ".test-tmp/diagnostics-no-mission"), { recursive: true, force: true });
+    }
+  });
+
+  test("detects invalid state.json", () => {
+    const diagDir = join(import.meta.dir, ".test-tmp/diagnostics-bad-state/workers");
+    const workerDir = join(diagDir, WORKER_NAME);
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, "mission.md"), "Test mission");
+    writeFileSync(join(workerDir, "state.json"), "not valid json{{{");
+
+    _setWorkersDir(diagDir);
+    try {
+      const issues = runDiagnostics();
+      const stateIssue = issues.find(i => i.check === "state.json");
+      expect(stateIssue).toBeTruthy();
+      expect(stateIssue!.severity).toBe("error");
+      expect(stateIssue!.message).toContain("invalid JSON");
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+      rmSync(join(import.meta.dir, ".test-tmp/diagnostics-bad-state"), { recursive: true, force: true });
+    }
+  });
+
+  test("detects missing state fields", () => {
+    const diagDir = join(import.meta.dir, ".test-tmp/diagnostics-empty-state/workers");
+    const workerDir = join(diagDir, WORKER_NAME);
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, "mission.md"), "Test mission");
+    writeFileSync(join(workerDir, "state.json"), "{}"); // valid JSON but missing fields
+
+    _setWorkersDir(diagDir);
+    try {
+      const issues = runDiagnostics();
+      const cyclesIssue = issues.find(i => i.check === "state.cycles_completed");
+      const statusIssue = issues.find(i => i.check === "state.status");
+      expect(cyclesIssue).toBeTruthy();
+      expect(statusIssue).toBeTruthy();
+      expect(cyclesIssue!.severity).toBe("warning");
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+      rmSync(join(import.meta.dir, ".test-tmp/diagnostics-empty-state"), { recursive: true, force: true });
+    }
+  });
+
+  test("detects corrupt inbox.jsonl", () => {
+    const diagDir = join(import.meta.dir, ".test-tmp/diagnostics-bad-inbox/workers");
+    const workerDir = join(diagDir, WORKER_NAME);
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, "mission.md"), "Test mission");
+    writeFileSync(join(workerDir, "state.json"), JSON.stringify({ status: "idle", cycles_completed: 0 }));
+    writeFileSync(join(workerDir, "inbox.jsonl"), '{"valid":true}\nthis is not json\n');
+
+    _setWorkersDir(diagDir);
+    try {
+      const issues = runDiagnostics();
+      const inboxIssue = issues.find(i => i.check === "inbox.jsonl");
+      expect(inboxIssue).toBeTruthy();
+      expect(inboxIssue!.severity).toBe("warning");
+      expect(inboxIssue!.message).toContain("corrupt");
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+      rmSync(join(import.meta.dir, ".test-tmp/diagnostics-bad-inbox"), { recursive: true, force: true });
+    }
+  });
+
+  test("passes with valid config", () => {
+    const diagDir = join(import.meta.dir, ".test-tmp/diagnostics-valid/workers");
+    const workerDir = join(diagDir, WORKER_NAME);
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, "mission.md"), "Complete mission with all goals");
+    writeFileSync(join(workerDir, "state.json"), JSON.stringify({ status: "idle", cycles_completed: 5 }));
+    writeFileSync(join(workerDir, "permissions.json"), JSON.stringify({ model: "sonnet" }));
+
+    _setWorkersDir(diagDir);
+    try {
+      const issues = runDiagnostics();
+      // Should have no errors related to worker config files
+      const configErrors = issues.filter(i =>
+        ["worker_dir", "mission.md", "state.json", "state.cycles_completed", "state.status", "permissions.json", "permissions.model"].includes(i.check)
+      );
+      expect(configErrors.length).toBe(0);
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+      rmSync(join(import.meta.dir, ".test-tmp/diagnostics-valid"), { recursive: true, force: true });
+    }
+  });
+
+  test("each issue has a fix suggestion", () => {
+    // With no worker dir, should have issues with fix suggestions
+    _setWorkersDir(join(import.meta.dir, ".test-tmp/diagnostics-nope"));
+    try {
+      const issues = runDiagnostics();
+      const issuesWithFix = issues.filter(i => i.fix);
+      // Most issues should have fix suggestions
+      expect(issuesWithFix.length).toBeGreaterThan(0);
+      for (const issue of issuesWithFix) {
+        expect(issue.fix!.length).toBeGreaterThan(5);
+      }
+    } finally {
+      _setWorkersDir(TEST_WORKERS_DIR);
+    }
   });
 });

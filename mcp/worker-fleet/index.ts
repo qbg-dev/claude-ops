@@ -2,13 +2,13 @@
 /**
  * worker-fleet MCP server — Tools for worker fleet coordination.
  *
- * 17 tools in 8 categories:
+ * 18 tools in 8 categories:
  *   Messaging (3):  send_message, broadcast, read_inbox
  *   Tasks (4):      create_task, claim_task, complete_task, list_tasks
  *   State (2):      get_worker_state, update_state
  *   Fleet (1):      fleet_status
  *   Deploy (2):     deploy, health_check
- *   Lifecycle (3):  recycle, spawn_child, register_pane
+ *   Lifecycle (4):  recycle, spawn_child, register_pane, check_config
  *   Git (1):        smart_commit
  *   External (1):   post_to_nexus
  *
@@ -60,6 +60,14 @@ function detectWorkerName(): string {
 }
 
 const WORKER_NAME = detectWorkerName();
+
+// Cache git branch at module load for fast diagnostics (no subprocess at check time)
+let _cachedBranch: string | null = null;
+try {
+  _cachedBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+    cwd: process.cwd(), encoding: "utf-8", timeout: 5000,
+  }).trim();
+} catch {}
 
 // ── Generic Helpers ──────────────────────────────────────────────────
 
@@ -448,6 +456,7 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
 | \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
 | \`register_pane()\` | Register this pane in pane-registry (after recycle/manual launch) |
+| \`check_config()\` | Run diagnostics on worker config — fix issues it reports |
 
 These are native MCP tool calls — no bash wrappers needed.
 
@@ -474,6 +483,164 @@ These are native MCP tool calls — no bash wrappers needed.
   }
 
   return seed;
+}
+
+// ── Diagnostics ─────────────────────────────────────────────────────
+
+interface DiagnosticIssue {
+  severity: "error" | "warning";
+  check: string;
+  message: string;
+  fix?: string;
+}
+
+function runDiagnostics(): DiagnosticIssue[] {
+  const issues: DiagnosticIssue[] = [];
+
+  // ── Environment ──
+  if (!process.env.TMUX_PANE) {
+    issues.push({ severity: "warning", check: "env.TMUX_PANE", message: "TMUX_PANE not set — recycle/spawn_child/register_pane won't work", fix: "Launch via launch-flat-worker.sh or set TMUX_PANE manually" });
+  }
+
+  if (WORKER_NAME === "operator") {
+    issues.push({ severity: "warning", check: "env.WORKER_NAME", message: "Worker name defaulted to 'operator' — not on a worker/* branch and WORKER_NAME not set", fix: "Set WORKER_NAME env or checkout a worker/* branch" });
+  }
+
+  // ── Worker config dir ──
+  const workerDir = join(WORKERS_DIR, WORKER_NAME);
+  if (!existsSync(workerDir)) {
+    issues.push({ severity: "error", check: "worker_dir", message: `Worker dir missing: ${workerDir}`, fix: `mkdir -p ${workerDir}` });
+  } else {
+    // mission.md
+    const missionPath = join(workerDir, "mission.md");
+    if (!existsSync(missionPath)) {
+      issues.push({ severity: "error", check: "mission.md", message: "mission.md missing — worker has no goals", fix: `Create ${missionPath} with task list and goals` });
+    } else {
+      try {
+        const content = readFileSync(missionPath, "utf-8").trim();
+        if (content.length < 10) issues.push({ severity: "warning", check: "mission.md", message: "mission.md is nearly empty", fix: "Add goals and tasks to mission.md" });
+      } catch {}
+    }
+
+    // state.json
+    const statePath = join(workerDir, "state.json");
+    if (!existsSync(statePath)) {
+      issues.push({ severity: "error", check: "state.json", message: "state.json missing", fix: `echo '{"status":"idle","cycles_completed":0}' > ${statePath}` });
+    } else {
+      const state = readJsonFile(statePath);
+      if (!state) {
+        issues.push({ severity: "error", check: "state.json", message: "state.json is invalid JSON", fix: `Fix JSON syntax in ${statePath}` });
+      } else {
+        if (typeof state.cycles_completed !== "number") {
+          issues.push({ severity: "warning", check: "state.cycles_completed", message: "state.json missing 'cycles_completed' field", fix: `update_state("cycles_completed", 0)` });
+        }
+        if (!state.status) {
+          issues.push({ severity: "warning", check: "state.status", message: "state.json missing 'status' field", fix: `update_state("status", "idle")` });
+        }
+      }
+    }
+
+    // permissions.json
+    const permsPath = join(workerDir, "permissions.json");
+    if (!existsSync(permsPath)) {
+      issues.push({ severity: "warning", check: "permissions.json", message: "permissions.json missing — using default model (sonnet)", fix: `echo '{"model":"sonnet"}' > ${permsPath}` });
+    } else {
+      const perms = readJsonFile(permsPath);
+      if (!perms) {
+        issues.push({ severity: "error", check: "permissions.json", message: "permissions.json is invalid JSON", fix: `Fix JSON syntax in ${permsPath}` });
+      } else if (!perms.model) {
+        issues.push({ severity: "warning", check: "permissions.model", message: "permissions.json missing 'model' field — defaulting to sonnet", fix: "Add \"model\": \"sonnet\" to permissions.json" });
+      }
+    }
+
+    // tasks.json (if exists, validate)
+    const tasksPath = join(workerDir, "tasks.json");
+    if (existsSync(tasksPath)) {
+      const tasks = readJsonFile(tasksPath);
+      if (!tasks) {
+        issues.push({ severity: "error", check: "tasks.json", message: "tasks.json is invalid JSON", fix: `Fix or delete ${tasksPath} (will be recreated on create_task)` });
+      }
+    }
+
+    // inbox.jsonl (if exists, validate last line)
+    const inboxPath = join(workerDir, "inbox.jsonl");
+    if (existsSync(inboxPath)) {
+      try {
+        const content = readFileSync(inboxPath, "utf-8");
+        const lines = content.trim().split("\n").filter(Boolean);
+        if (lines.length > 0) {
+          const lastLine = lines[lines.length - 1];
+          try { JSON.parse(lastLine); } catch {
+            issues.push({ severity: "warning", check: "inbox.jsonl", message: "inbox.jsonl has corrupt last line — may cause read errors", fix: `read_inbox(clear=true) to reset, or manually fix ${inboxPath}` });
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // ── Git branch (uses cached value from module load — no subprocess) ──
+  if (_cachedBranch && WORKER_NAME !== "operator") {
+    const expectedBranch = `worker/${WORKER_NAME}`;
+    if (_cachedBranch !== expectedBranch) {
+      issues.push({ severity: "warning", check: "git.branch", message: `On branch '${_cachedBranch}' but expected '${expectedBranch}'`, fix: `git checkout ${expectedBranch}` });
+    }
+  }
+
+  // ── Worktree ──
+  if (WORKER_NAME !== "operator") {
+    const worktreeDir = getWorktreeDir();
+    if (!existsSync(worktreeDir)) {
+      issues.push({ severity: "warning", check: "worktree", message: `Worktree dir not found: ${worktreeDir}`, fix: `git -C ${PROJECT_ROOT} worktree add ${worktreeDir} -b worker/${WORKER_NAME}` });
+    }
+  }
+
+  // ── Pane registry ──
+  if (process.env.TMUX_PANE) {
+    const registry = readJsonFile(PANE_REGISTRY_PATH);
+    if (!registry?.[process.env.TMUX_PANE]) {
+      issues.push({ severity: "warning", check: "pane_registry", message: `Pane ${process.env.TMUX_PANE} not in pane-registry — spawn_child/recycle may fail`, fix: "Call register_pane() to fix" });
+    }
+  }
+
+  // ── Required scripts ──
+  const requiredScripts: [string, string][] = [
+    [WORKER_COMMIT_SH, "smart_commit"],
+    [CHECK_WORKERS_SH, "fleet_status"],
+  ];
+  for (const [scriptPath, toolName] of requiredScripts) {
+    if (!existsSync(scriptPath)) {
+      issues.push({ severity: "warning", check: `script.${toolName}`, message: `Script missing for ${toolName}: ${scriptPath}`, fix: `Ensure file exists at ${scriptPath}` });
+    }
+  }
+
+  return issues;
+}
+
+// ── Cached diagnostics — 3 min TTL, lazy on first tool call ─────────
+let _diagCache: { issues: DiagnosticIssue[]; ts: number } | null = null;
+const DIAG_CACHE_TTL_MS = 3 * 60_000; // 3 minutes
+let _firstCallDone = false;
+
+function getCachedDiagnostics(): DiagnosticIssue[] {
+  if (_diagCache && Date.now() - _diagCache.ts < DIAG_CACHE_TTL_MS) return _diagCache.issues;
+  const issues = runDiagnostics();
+  _diagCache = { issues, ts: Date.now() };
+  return issues;
+}
+
+/** Prepend critical diagnostic errors to a tool response on the very first tool call */
+function withStartupDiagnostics(result: { content: { type: "text"; text: string }[] }): typeof result {
+  if (_firstCallDone) return result;
+  _firstCallDone = true;
+  const issues = getCachedDiagnostics();
+  const errors = issues.filter(i => i.severity === "error");
+  if (errors.length === 0) return result;
+  const prefix = "⚠ Config errors detected (run check_config for full report):\n" +
+    errors.map(i => `  ✘ [${i.check}] ${i.message}${i.fix ? ` → ${i.fix}` : ""}`).join("\n") +
+    "\n\n";
+  return {
+    content: [{ type: "text" as const, text: prefix + result.content[0].text }],
+  };
 }
 
 // ── MCP Server ───────────────────────────────────────────────────────
@@ -593,7 +760,7 @@ server.tool(
       const { messages } = readInboxFromCursor(WORKER_NAME, { limit, since, clear });
 
       if (messages.length === 0) {
-        return { content: [{ type: "text" as const, text: clear ? "Inbox cleared (was empty)" : "No new messages" }] };
+        return withStartupDiagnostics({ content: [{ type: "text" as const, text: clear ? "Inbox cleared (was empty)" : "No new messages" }] });
       }
 
       const formatted = messages.map(m => {
@@ -605,7 +772,7 @@ server.tool(
       }).join("\n");
 
       const suffix = clear ? " (inbox cleared)" : "";
-      return { content: [{ type: "text" as const, text: `${messages.length} messages${suffix}:\n${formatted}` }] };
+      return withStartupDiagnostics({ content: [{ type: "text" as const, text: `${messages.length} messages${suffix}:\n${formatted}` }] });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -1333,6 +1500,45 @@ server.tool(
   }
 );
 
+server.tool(
+  "check_config",
+  "Run diagnostics on worker configuration. Checks: env vars, worker dir, mission.md, state.json, permissions.json, tasks.json, inbox, git branch, worktree, pane registry, required scripts. Returns issues with fix suggestions.",
+  {},
+  async () => {
+    const issues = getCachedDiagnostics();
+    if (issues.length === 0) {
+      return { content: [{ type: "text" as const, text: "All checks passed. Configuration looks good." }] };
+    }
+
+    const errors = issues.filter(i => i.severity === "error");
+    const warnings = issues.filter(i => i.severity === "warning");
+
+    let output = `Found ${issues.length} issue(s): ${errors.length} error(s), ${warnings.length} warning(s)\n\n`;
+
+    if (errors.length > 0) {
+      output += "ERRORS (must fix):\n";
+      for (const e of errors) {
+        output += `  ✘ [${e.check}] ${e.message}\n`;
+        if (e.fix) output += `    Fix: ${e.fix}\n`;
+      }
+      output += "\n";
+    }
+
+    if (warnings.length > 0) {
+      output += "WARNINGS:\n";
+      for (const w of warnings) {
+        output += `  ⚠ [${w.check}] ${w.message}\n`;
+        if (w.fix) output += `    Fix: ${w.fix}\n`;
+      }
+    }
+
+    return {
+      content: [{ type: "text" as const, text: output }],
+      isError: errors.length > 0,
+    };
+  }
+);
+
 // ═══════════════════════════════════════════════════════════════════
 // GIT TOOL (1)
 // ═══════════════════════════════════════════════════════════════════
@@ -1465,7 +1671,7 @@ export {
   writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, readJsonFile, acquireLock, releaseLock,
   findOwnPane, getSessionId, getWorkerModel, getWorktreeDir, generateSeedContent,
-  _setWorkersDir,
+  runDiagnostics, _setWorkersDir,
   WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR,
-  type Task, type InboxCursor,
+  type Task, type InboxCursor, type DiagnosticIssue,
 };

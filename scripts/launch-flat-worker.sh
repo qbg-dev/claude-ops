@@ -139,6 +139,7 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
 | \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
 | \`register_pane()\` | Register this pane in pane-registry (after recycle/manual launch) |
+| \`check_config()\` | Run diagnostics on worker config — fix issues it reports |
 
 These are native MCP tool calls — no bash wrappers needed.
 
