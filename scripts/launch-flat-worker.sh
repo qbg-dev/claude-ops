@@ -165,18 +165,48 @@ fi
 
 tmux select-pane -T "$WORKER" -t "$WORKER_PANE"
 
-# Register worker pane in pane-registry
-PANE_REG="${HOME}/.claude-ops/state/pane-registry.json"
-if [ -f "$PANE_REG" ]; then
-  _PANE_TARGET=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' \
-    | awk -v p="$WORKER_PANE" '$1==p{print $2}' 2>/dev/null || echo "")
-  # Update pane registry with worker info
-  TMP_REG=$(mktemp)
-  jq --arg pid "$WORKER_PANE" --arg name "$WORKER" --arg target "${_PANE_TARGET:-}" \
-    --arg proj "$PROJECT_ROOT" --arg sess "$TARGET_SESSION" \
-    '.[$pid] = {"harness": ("worker/" + $name), "session_name": $name, "display": $name, "task": "worker", "done": 0, "total": 0, "pane_target": $target, "project_root": $proj, "tmux_session": $sess}' \
-    "$PANE_REG" > "$TMP_REG" 2>/dev/null && mv "$TMP_REG" "$PANE_REG" || rm -f "$TMP_REG"
-fi
+# Register worker pane in pane-registry (unified format: workers + panes + flat compat)
+PANE_REG="${HARNESS_STATE_DIR:-${HOME}/.boring/state}/pane-registry.json"
+[ ! -f "$PANE_REG" ] && echo '{"workers":{},"panes":{}}' > "$PANE_REG"
+
+_PANE_TARGET=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' \
+  | awk -v p="$WORKER_PANE" '$1==p{print $2}' 2>/dev/null || echo "")
+_PROJ_SLUG=$(basename "$PROJECT_ROOT")
+_WORKER_KEY="${_PROJ_SLUG}:${WORKER}"
+_NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Read permissions.json for config
+_MODEL=$(jq -r '.model // "sonnet"' "$PERMS" 2>/dev/null || echo "sonnet")
+_PERM_MODE=$(jq -r '.permission_mode // "bypassPermissions"' "$PERMS" 2>/dev/null || echo "bypassPermissions")
+_DISALLOWED=$(jq -c '.disallowedTools // []' "$PERMS" 2>/dev/null || echo "[]")
+
+# Read existing state.json / tasks.json for bootstrap
+_STATE=$(cat "$WORKER_DIR/state.json" 2>/dev/null || echo '{"status":"idle","cycles_completed":0}')
+_TASKS=$(cat "$WORKER_DIR/tasks.json" 2>/dev/null || echo '{}')
+
+TMP_REG=$(mktemp)
+jq --arg pid "$WORKER_PANE" --arg name "$WORKER" --arg target "${_PANE_TARGET:-}" \
+  --arg proj "$PROJECT_ROOT" --arg sess "$TARGET_SESSION" \
+  --arg wk "$_WORKER_KEY" --arg wdir "$WORKER_DIR" --arg wtdir "$WORKTREE_DIR" \
+  --arg branch "$BRANCH" --arg model "$_MODEL" --arg perm_mode "$_PERM_MODE" \
+  --argjson disallowed "$_DISALLOWED" --argjson state "$_STATE" --argjson tasks "$_TASKS" \
+  --arg now "$_NOW" \
+  '.workers //= {} | .panes //= {} |
+  .workers[$wk] = ((.workers[$wk] // {}) * {
+    project_root: $proj, worker_dir: $wdir, worktree: $wtdir, branch: $branch,
+    config: {model: $model, permission_mode: $perm_mode, disallowedTools: $disallowed}
+  }) |
+  (if (.workers[$wk].state // null) == null then .workers[$wk].state = $state else . end) |
+  (if (.workers[$wk].tasks // null) == null then .workers[$wk].tasks = $tasks else . end) |
+  .panes[$pid] = {
+    worker: $name, role: "worker", pane_target: $target, tmux_session: $sess,
+    session_id: "", parent_pane: null, registered_at: $now
+  } |
+  .[$pid] = {
+    harness: ("worker/" + $name), session_name: $name, display: $name,
+    task: "worker", done: 0, total: 0, pane_target: $target,
+    project_root: $proj, tmux_session: $sess
+  }' "$PANE_REG" > "$TMP_REG" 2>/dev/null && mv "$TMP_REG" "$PANE_REG" || rm -f "$TMP_REG"
 
 # Launch Claude
 CLAUDE_CMD="claude --model $MODEL --dangerously-skip-permissions"
@@ -193,9 +223,23 @@ done
 sleep 2  # extra settle time after prompt appears
 
 # Inject seed
-tmux load-buffer "$SEED_FILE"
-tmux paste-buffer -t "$WORKER_PANE"
-sleep 2
+# Use a named buffer with PID to prevent stale buffer reuse across invocations
+LAUNCH_BUFFER_NAME="launch-${WORKER}-$$"
+tmux delete-buffer -b "$LAUNCH_BUFFER_NAME" 2>/dev/null || true
+if ! tmux load-buffer -b "$LAUNCH_BUFFER_NAME" "$SEED_FILE"; then
+  echo "ERROR: Failed to load seed into tmux buffer"
+  exit 1
+fi
+tmux paste-buffer -b "$LAUNCH_BUFFER_NAME" -t "$WORKER_PANE" -d
+sleep 4  # large seed pastes need more settle time in Claude TUI
 tmux send-keys -t "$WORKER_PANE" -H 0d
+
+# Retry: if TUI absorbed the Enter during paste processing, send again
+sleep 3
+# Check if prompt is still showing (seed not submitted)
+if tmux capture-pane -t "$WORKER_PANE" -p 2>/dev/null | grep -qE '❯'; then
+  tmux send-keys -t "$WORKER_PANE" -H 0d
+  echo "(Retried Enter for $WORKER)"
+fi
 
 echo "Launched worker/$WORKER in pane $WORKER_PANE (session: $TARGET_SESSION, worktree: $WORKTREE_DIR)"

@@ -117,12 +117,24 @@ pane_registry_remove() {
 }
 
 # Register a child pane with its parent, inheriting harness/permissions.
+# Writes to: panes section (unified), flat compat entry, AND legacy flat format.
 pane_registry_set_parent() {
   local child_pane="$1" parent_pane="$2" harness="$3" pane_target="${4:-}"
-  [ ! -f "$PANE_REGISTRY" ] && echo '{}' > "$PANE_REGISTRY"
+  [ ! -f "$PANE_REGISTRY" ] && echo '{"workers":{},"panes":{}}' > "$PANE_REGISTRY"
+  # Compute depth: parent's depth + 1 (root workers have depth 0)
+  local parent_depth
+  parent_depth=$(jq -r --arg pid "$parent_pane" '.[$pid].depth // 0' "$PANE_REGISTRY" 2>/dev/null || echo 0)
+  local child_depth=$((parent_depth + 1))
+  local worker_name="${harness#worker/}"
+  local tmux_sess
+  tmux_sess=$(echo "$pane_target" | cut -d: -f1 2>/dev/null || echo "")
   locked_jq_write "$PANE_REGISTRY" "pane-registry" \
-    '.[$cid] = ((.[$cid] // {}) * {harness:$h, parent_pane:$pid, pane_target:$pt, task:"child", updated_at:(now|todate)})' \
-    --arg cid "$child_pane" --arg pid "$parent_pane" --arg h "$harness" --arg pt "$pane_target"
+    '.panes //= {} |
+    .panes[$cid] = {worker:$wn, role:"child", pane_target:$pt, tmux_session:$ts,
+      session_id:"", parent_pane:$pid, registered_at:(now|todate)} |
+    .[$cid] = ((.[$cid] // {}) * {harness:$h, parent_pane:$pid, pane_target:$pt, task:"child", depth:($d|tonumber), updated_at:(now|todate)})' \
+    --arg cid "$child_pane" --arg pid "$parent_pane" --arg h "$harness" --arg pt "$pane_target" \
+    --arg d "$child_depth" --arg wn "$worker_name" --arg ts "$tmux_sess"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -573,7 +585,7 @@ harness_sleep_duration() {
       # Check perpetual field: if explicitly false, signal watchdog to skip respawn
       # NOTE: cannot use jq // operator — it treats boolean false as falsy
       perpetual_val=$(_safe_jq "$state" 'if .perpetual == null then "unset" elif .perpetual == false then "false" else "true" end' "$cache")
-      if [ "$perpetual_val" = "false" ]; then
+      if [ "$perpetual_val" = "false" ] || [ "$perpetual_val" = "unset" ]; then
         echo "none"
         return
       fi

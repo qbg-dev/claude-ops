@@ -309,10 +309,24 @@ RSEED
   sleep 2
 
   # 7. Inject full seed prompt into Claude TUI
-  tmux load-buffer "$seed_file" 2>/dev/null || true
-  tmux paste-buffer -t "$pane_id" 2>/dev/null || true
+  # Use unique buffer name (pane + PID) to prevent stale buffer reuse
+  local buf_name="wd-${pane_id#%}-$$"
+  # Delete any pre-existing buffer with this name first
+  tmux delete-buffer -b "$buf_name" 2>/dev/null || true
+  # Load seed — if this fails, skip paste entirely (don't risk stale buffer)
+  if ! tmux load-buffer -b "$buf_name" "$seed_file" 2>/dev/null; then
+    _log "UNSTICK-ERR: $canonical — failed to load seed into tmux buffer (file: $seed_file)"
+    rm -f "$seed_file" 2>/dev/null || true
+    return
+  fi
+  tmux paste-buffer -t "$pane_id" -b "$buf_name" -d 2>/dev/null || true
   sleep 1
   tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+  # Retry Enter after 3s — Claude TUI sometimes swallows the first one during paste processing
+  sleep 3
+  if tmux capture-pane -t "$pane_id" -p 2>/dev/null | tail -3 | grep -qE '❯'; then
+    tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+  fi
   rm -f "$seed_file" 2>/dev/null || true
   # Write pane border status for visual indicator
   echo "⚡ $worker_name" > "/tmp/tmux_pane_status_${pane_id}" 2>/dev/null || true
@@ -490,6 +504,7 @@ _respawn_agent() {
     tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -q "^${pane_id}$" && pane_alive=true
 
     if $pane_alive; then
+      local worker_dir="$PROJECT_ROOT/.claude/workers/$worker_name"
       local prev_session_id
       prev_session_id=$(_get_session_id "$pane_id")
 
@@ -539,10 +554,22 @@ WSEED
       sleep 2
 
       # Inject seed into Claude TUI
-      tmux load-buffer "$prompt_file" 2>/dev/null || true
-      tmux paste-buffer -t "$pane_id" 2>/dev/null || true
+      # Use unique buffer name (pane + PID) to prevent stale buffer reuse
+      local buf_name="wd-${pane_id#%}-$$"
+      tmux delete-buffer -b "$buf_name" 2>/dev/null || true
+      if ! tmux load-buffer -b "$buf_name" "$prompt_file" 2>/dev/null; then
+        _log "RESPAWN-ERR: $canonical — failed to load seed into tmux buffer (file: $prompt_file)"
+        rm -f "$prompt_file" 2>/dev/null || true
+        return
+      fi
+      tmux paste-buffer -t "$pane_id" -b "$buf_name" -d 2>/dev/null || true
       sleep 1
       tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+      # Retry Enter after 3s — Claude TUI sometimes swallows the first one during paste processing
+      sleep 3
+      if tmux capture-pane -t "$pane_id" -p 2>/dev/null | tail -3 | grep -qE '❯'; then
+        tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+      fi
       rm -f "$prompt_file" 2>/dev/null || true
 
       if [ -n "$prev_session_id" ]; then
