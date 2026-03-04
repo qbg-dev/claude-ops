@@ -86,7 +86,16 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 - **Git discipline**: Stage only specific files (\`git add src/foo.ts\`). NEVER \`git add -A\`. Commit to branch **$branch** only. Never checkout main.
 - **Deploy**: TEST only. Commit then \`deploy(service="static")\`. Never \`core\` without Warren approval.
 - **Verify before completing**: Tests pass + TypeScript clean + deploy succeeds + endpoint/UI verified.
-- **Perpetual workers**: Read $project_root/.claude/workers/PERPETUAL-PROTOCOL.md on your first cycle.
 - **Report issues to chief-of-staff**: On any bug, error, or test failure, append to \`$project_root/.claude/workers/chief-of-staff/inbox.jsonl\`. Include: (1) what failed, (2) error, (3) file/endpoint. Log everything — do NOT silently move on.
+
+## If You Run Continuously (Perpetual Mode)
+
+Each cycle: **Observe → Decide → Act → Measure → Adapt** — you're an LLM, not a cron job. Adapt.
+
+- **Build tools**: If you do something twice manually, write a script for it in \`.claude/scripts/{worker}/\`
+- **Adapt sleep**: You can call \`update_state("sleep_duration", N)\` to tune your cycle interval. Increase if nothing changes between cycles; decrease if you're missing things.
+- **Retrospective every 5 cycles**: Write what worked/didn't + strategy changes in MEMORY.md. Post summary to Nexus.
+- **Discover new work**: Read server logs, other workers' MEMORY.md, Nexus \`#features\` for issues in your domain.
+- **Eliminate waste**: Skip checks that never change; cache expensive lookups; reduce frequency of stable checks.
 SEED
 }

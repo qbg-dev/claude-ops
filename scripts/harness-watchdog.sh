@@ -207,20 +207,16 @@ _resume_in_pane() {
   # 2. Kill existing Claude process
   _kill_claude_in_pane "$pane_id"
 
-  # 3. Prepare seed
-  local perpetual_protocol="$PROJECT_ROOT/.claude/workers/PERPETUAL-PROTOCOL.md"
+  # 3. Prepare seed using shared generator (same as initial launch)
   local seed_file="/tmp/worker-${worker}-respawn.txt"
-  cat > "$seed_file" << RSEED
-Watchdog respawn, reason: $reason. You are worker **$worker**.
-
-Read these files NOW in this order:
-1. $worker_dir/mission.md — your mission
-2. ${perpetual_protocol} — self-optimization protocol
-3. $worker_dir/MEMORY.md — accumulated knowledge
-4. Check inbox: use read_inbox MCP tool
-
-Then start your next mission cycle. Do NOT stop to ask if you should continue.
-RSEED
+  if [ -f "${HOME}/.claude-ops/lib/worker-seed.sh" ]; then
+    source "${HOME}/.claude-ops/lib/worker-seed.sh"
+    local branch; branch=$(jq -r --arg n "$worker" '.[$n].branch // "worker/'"$worker"'"' "$REGISTRY" 2>/dev/null)
+    local wt_dir; wt_dir=$(jq -r --arg n "$worker" '.[$n].worktree // "'"$PROJECT_ROOT"'"' "$REGISTRY" 2>/dev/null)
+    generate_worker_seed "$worker" "$worker_dir" "${wt_dir:-$PROJECT_ROOT}" "${branch:-worker/$worker}" "$PROJECT_ROOT" "$reason" > "$seed_file"
+  else
+    echo "Watchdog respawn ($reason). You are worker $worker. Read mission.md and MEMORY.md, then start your next cycle." > "$seed_file"
+  fi
 
   # 4. Launch Claude
   local claude_cmd
@@ -363,8 +359,10 @@ check_worker() {
     if [ -n "$last_cycle_at" ] && [ "$last_cycle_at" != "null" ] && [ "$sleep_dur" -gt 0 ] 2>/dev/null; then
       # Convert ISO timestamp to epoch
       local cycle_epoch
-      cycle_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${last_cycle_at%%.*}" +%s 2>/dev/null \
-        || date -d "${last_cycle_at}" +%s 2>/dev/null || echo 0)
+      # Strip Z / +HH:MM timezone suffix, then fractional seconds — parse as UTC
+      local _clean_ts="${last_cycle_at%%[Z+]*}"; _clean_ts="${_clean_ts%%.*}"
+      cycle_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$_clean_ts" +%s 2>/dev/null \
+        || TZ=UTC date -d "${_clean_ts}" +%s 2>/dev/null || echo 0)
       if [ "$cycle_epoch" -gt 0 ]; then
         local elapsed=$(( now_ts - cycle_epoch ))
         local wake_at=$(( cycle_epoch + sleep_dur ))
