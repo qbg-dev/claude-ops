@@ -24,6 +24,7 @@ import { z } from "zod";
 import {
   readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync,
   readdirSync, openSync, fstatSync, statSync, readSync, closeSync, truncateSync,
+  symlinkSync, lstatSync,
 } from "fs";
 import { join, basename } from "path";
 import { execSync, spawnSync, spawn, type ChildProcess } from "child_process";
@@ -660,9 +661,15 @@ function resolveRecipient(to: string): {
   return { type: "worker", workerName: to };
 }
 
-/** Send text + Enter to a tmux pane. Uses -H 0d for Enter (not literal \n which tmux ignores). */
+/** Send text + Enter to a tmux pane. Uses -H 0d for Enter (not literal \n which tmux ignores).
+ *  Sends Enter 3 times with 300ms delays — Claude's TUI sometimes misses a single Enter
+ *  if the pane isn't fully focused/rendered yet. Extra Enters on an idle prompt are harmless. */
 function tmuxSendMessage(paneId: string, text: string): void {
   execSync(`tmux send-keys -t ${JSON.stringify(paneId)} ${JSON.stringify(text)} ""`, { timeout: 5000 });
+  execSync(`tmux send-keys -t ${JSON.stringify(paneId)} -H 0d`, { timeout: 5000 });
+  spawnSync("sleep", ["0.3"]);
+  execSync(`tmux send-keys -t ${JSON.stringify(paneId)} -H 0d`, { timeout: 5000 });
+  spawnSync("sleep", ["0.3"]);
   execSync(`tmux send-keys -t ${JSON.stringify(paneId)} -H 0d`, { timeout: 5000 });
 }
 
@@ -1073,6 +1080,17 @@ server.registerTool(
     // Worker name — durable inbox + best-effort bus
     const recipientName = resolved.workerName!;
 
+    // Pane-alive check: warn before writing if worker has no live pane
+    let paneWarning = "";
+    try {
+      const registry = readRegistry();
+      const entry = registry[recipientName] as RegistryWorkerEntry | undefined;
+      const paneId = entry?.pane_id;
+      if (!paneId || !isPaneAlive(paneId)) {
+        paneWarning = `\nWARNING: Worker '${recipientName}' has no active pane — message queued in inbox but won't be received until the worker is restarted.`;
+      }
+    } catch { /* registry read failed, skip check */ }
+
     // Step 1: Write to inbox (critical — must succeed)
     const inboxResult = writeToInbox(recipientName, { content, summary, from_name: WORKER_NAME });
     if (!inboxResult.ok) {
@@ -1104,7 +1122,7 @@ server.registerTool(
       // Tmux delivery failed — inbox already delivered, that's fine
     }
 
-    return { content: [{ type: "text" as const, text: `Message sent to ${recipientName}` }] };
+    return { content: [{ type: "text" as const, text: `Message sent to ${recipientName}${paneWarning}` }] };
   }
 );
 
@@ -1613,6 +1631,25 @@ server.registerTool(
 // MEMORY TOOL
 // ═══════════════════════════════════════════════════════════════════
 
+/** Pure helper: upsert a ## Section block in a MEMORY.md string. Exported for testing. */
+function _replaceMemorySection(existing: string, section: string, content: string): string {
+  const heading = `## ${section}`;
+  const lines = existing.split("\n");
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trimEnd() === heading) { sectionStart = i; continue; }
+    if (sectionStart !== -1 && i > sectionStart && lines[i].startsWith("## ")) { sectionEnd = i; break; }
+  }
+  const newBlock = [heading, content.trimEnd(), ""].join("\n");
+  if (sectionStart === -1) {
+    return existing.trimEnd() + "\n\n" + newBlock + "\n";
+  }
+  const before = lines.slice(0, sectionStart).join("\n");
+  const after = lines.slice(sectionEnd).join("\n");
+  return (before ? before + "\n" : "") + newBlock + (after ? "\n" + after : "");
+}
+
 server.registerTool(
   "write_memory",
   {
@@ -1637,33 +1674,11 @@ server.registerTool(
         return { content: [{ type: "text" as const, text: "Error: section is required for replace_section mode" }], isError: true };
       }
 
-      const heading = `## ${section}`;
-      let existing = existsSync(memoryPath) ? readFileSync(memoryPath, "utf-8") : "# Memory\n\n";
-
-      // Find section start
-      const lines = existing.split("\n");
-      let sectionStart = -1;
-      let sectionEnd = lines.length;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trimEnd() === heading) { sectionStart = i; continue; }
-        if (sectionStart !== -1 && i > sectionStart && lines[i].startsWith("## ")) { sectionEnd = i; break; }
-      }
-
-      const newBlock = [heading, content.trimEnd(), ""].join("\n");
-
-      let result: string;
-      if (sectionStart === -1) {
-        // Append
-        result = existing.trimEnd() + "\n\n" + newBlock + "\n";
-      } else {
-        // Replace
-        const before = lines.slice(0, sectionStart).join("\n");
-        const after = lines.slice(sectionEnd).join("\n");
-        result = (before ? before + "\n" : "") + newBlock + (after ? "\n" + after : "");
-      }
-
+      const existing = existsSync(memoryPath) ? readFileSync(memoryPath, "utf-8") : "# Memory\n\n";
+      const hadSection = existing.split("\n").some(l => l.trimEnd() === `## ${section}`);
+      const result = _replaceMemorySection(existing, section, content);
       writeFileSync(memoryPath, result, "utf-8");
-      return { content: [{ type: "text" as const, text: `${sectionStart === -1 ? "Added" : "Updated"} section '${section}' in MEMORY.md` }] };
+      return { content: [{ type: "text" as const, text: `${hadSection ? "Updated" : "Added"} section '${section}' in MEMORY.md` }] };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -1671,10 +1686,7 @@ server.registerTool(
 );
 
 // ═══════════════════════════════════════════════════════════════════
-// LIFECYCLE TOOLS — recycle & spawn_child (below)
-
-// ═══════════════════════════════════════════════════════════════════
-// LIFECYCLE TOOLS (2) — recycle & spawn_child
+// LIFECYCLE TOOLS (4) — recycle, spawn_child, register_pane, check_config
 // ═══════════════════════════════════════════════════════════════════
 
 server.registerTool(
@@ -2131,6 +2143,19 @@ interface CreateWorkerResult {
 }
 
 /** Core logic for creating a worker's directory and files. Exported for testing. */
+/** Symlink worker's MEMORY.md into Claude Code's auto-memory path for the worktree. */
+function linkWorkerMemory(name: string, memoryPath: string): void {
+  // Slug: /Users/wz/Desktop/zPersonalProjects/Wechat-w-{name} → -Users-wz-...-w-{name}
+  const worktreePath = `${PROJECT_ROOT}-w-${name}`;
+  const slug = worktreePath.replace(/\//g, "-");
+  const autoMemoryDir = join(HOME, ".claude", "projects", slug, "memory");
+  const autoMemoryLink = join(autoMemoryDir, "MEMORY.md");
+  if (!existsSync(autoMemoryDir)) mkdirSync(autoMemoryDir, { recursive: true });
+  // Skip if already linked or a real file exists there
+  try { lstatSync(autoMemoryLink); return; } catch { /* doesn't exist, create it */ }
+  symlinkSync(memoryPath, autoMemoryLink);
+}
+
 function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
   const { name, mission, model, perpetual, sleep_duration, taskEntries = [] } = input;
 
@@ -2148,6 +2173,11 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
 
   // Create directory
   mkdirSync(workerDir, { recursive: true });
+
+  // MEMORY.md + auto-memory symlink so Claude Code auto-loads it in the worktree session
+  const memoryPath = join(workerDir, "MEMORY.md");
+  writeFileSync(memoryPath, `# ${name} Memory\n\n`);
+  linkWorkerMemory(name, memoryPath);
 
   // mission.md
   writeFileSync(join(workerDir, "mission.md"), mission.trim() + "\n");
@@ -2332,7 +2362,7 @@ export {
   findOwnPane, getSessionId, getWorkerModel, getWorktreeDir, generateSeedContent,
   runDiagnostics, createWorkerFiles, _setWorkersDir,
   readRegistry, getWorkerEntry, withRegistryLocked, ensureWorkerInRegistry,
-  lintRegistry,
+  lintRegistry, _replaceMemorySection,
   WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR, REGISTRY_PATH,
   type Task, type InboxCursor, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,

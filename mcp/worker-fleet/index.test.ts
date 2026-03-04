@@ -11,6 +11,7 @@ import {
   writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, generateSeedContent, runDiagnostics, createWorkerFiles, _setWorkersDir,
   readRegistry, getWorkerEntry, ensureWorkerInRegistry, lintRegistry,
+  _replaceMemorySection,
   WORKER_NAME, WORKERS_DIR, REGISTRY_PATH,
   type Task, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
@@ -1057,5 +1058,73 @@ describe("create_worker — auto-parent registration", () => {
 
     const entry = registry["existing-worker"] as RegistryWorkerEntry & { parent?: string };
     expect(entry.parent).toBe("original-parent");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// write_memory — _replaceMemorySection logic
+// ═══════════════════════════════════════════════════════════════════
+
+describe("_replaceMemorySection", () => {
+  test("appends new section when heading not present", () => {
+    const existing = "# Memory\n\n## Existing\nsome content\n";
+    const result = _replaceMemorySection(existing, "New Section", "new content");
+    expect(result).toContain("## New Section");
+    expect(result).toContain("new content");
+    expect(result).toContain("## Existing"); // old section preserved
+  });
+
+  test("replaces existing section content", () => {
+    const existing = "# Memory\n\n## My Section\nold content\n\n## Other\nother\n";
+    const result = _replaceMemorySection(existing, "My Section", "new content");
+    expect(result).toContain("new content");
+    expect(result).not.toContain("old content");
+    expect(result).toContain("## Other"); // subsequent section preserved
+  });
+
+  test("replaces last section without trailing garbage", () => {
+    const existing = "# Memory\n\n## First\nfirst content\n\n## Last\nold last\n";
+    const result = _replaceMemorySection(existing, "Last", "new last");
+    expect(result).toContain("new last");
+    expect(result).not.toContain("old last");
+    expect(result).toContain("## First");
+  });
+
+  test("creates file content from scratch (empty existing)", () => {
+    const existing = "# Memory\n\n";
+    const result = _replaceMemorySection(existing, "Cycle Log", "| 1 | done |");
+    expect(result).toContain("## Cycle Log");
+    expect(result).toContain("| 1 | done |");
+  });
+
+  test("heading line with trailing spaces still matches", () => {
+    const existing = "# Memory\n\n## My Section   \nold\n";
+    const result = _replaceMemorySection(existing, "My Section", "fresh");
+    expect(result).toContain("fresh");
+    expect(result).not.toContain("old");
+  });
+
+  test("only replaces up to the next ## heading, not beyond", () => {
+    const existing = "# Memory\n\n## A\na content\n\n## B\nb content\n\n## C\nc content\n";
+    const result = _replaceMemorySection(existing, "B", "b new");
+    expect(result).toContain("b new");
+    expect(result).not.toContain("b content");
+    expect(result).toContain("a content"); // A unchanged
+    expect(result).toContain("c content"); // C unchanged
+  });
+
+  test("section at beginning of file (no before block)", () => {
+    const existing = "## First\nfirst content\n\n## Second\nsecond\n";
+    const result = _replaceMemorySection(existing, "First", "updated first");
+    expect(result).toContain("updated first");
+    expect(result).toContain("## Second");
+    expect(result).not.toContain("first content");
+  });
+
+  test("trimEnd applied to content — no trailing whitespace in block", () => {
+    const result = _replaceMemorySection("# Memory\n\n", "Test", "content   \n\n\n");
+    const lines = result.split("\n");
+    const contentLine = lines.find(l => l === "content");
+    expect(contentLine).toBe("content"); // trimmed
   });
 });
