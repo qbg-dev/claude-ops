@@ -36,8 +36,16 @@ cos_target=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#
 [ -z "$cos_target" ] && exit 0
 
 sha=$(echo "$payload" | jq -r '.commit_sha // .sha // "?"' 2>/dev/null)
-msg=$(echo "$payload" | jq -r '.message // .msg // ""' 2>/dev/null)
+msg=$(echo "$payload" | jq -r '.message // .msg // .description // ""' 2>/dev/null)
 branch=$(echo "$payload" | jq -r '.branch // ""' 2>/dev/null)
+event_type=$(echo "$payload" | jq -r '._event_type // "commit"' 2>/dev/null)
 
-tmux send-keys -t "$cos_target" "[commit from $worker] $sha on $branch: $msg"
+# Use appropriate label based on event type
+if [[ "$event_type" == *"merge-request"* ]]; then
+  label="merge-request from"
+else
+  label="commit from"
+fi
+
+tmux send-keys -t "$cos_target" "[$label $worker] $sha on $branch: $msg"
 tmux send-keys -t "$cos_target" -H 0d
