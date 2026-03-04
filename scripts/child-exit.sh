@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# child-exit.sh — Called by /child-exit slash command.
+# child-exit.sh — Notify parent worker of completed work, then kill own tmux pane.
 #
-# Looks up own pane in pane-registry.json:
-#   - If a parent_pane is registered, notifies the parent via tmux send-keys.
-#   - Then kills own pane with tmux kill-pane -K.
+# Looks up parent from registry.json (via parent field on child entry).
+# Notifies parent via worker-message.sh or direct tmux send-keys.
+# Removes child from registry.json (parent's children array + child entry).
+# Then kills own pane.
 #
 # Usage:
 #   child-exit.sh "summary of what was accomplished"
 #
 # Called by: /child-exit slash command
-# See also:  worker-register-child.sh (registers the parent_pane relationship)
 set -uo pipefail
 trap 'exit 0' EXIT
 
 MESSAGE="${*:-Work complete. No summary provided.}"
-PANE_REGISTRY="${PANE_REGISTRY:-$HOME/.boring/state/pane-registry.json}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || echo "/Users/wz/Desktop/zPersonalProjects/Wechat")}"
+REGISTRY="$PROJECT_ROOT/.claude/workers/registry.json"
 
 # ── 1. Find own pane ID (process-tree walk) ──────────────────────────────────
 OWN_PANE_ID=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null | while read -r pid id; do
@@ -30,52 +31,75 @@ if [ -z "$OWN_PANE_ID" ]; then
   exit 0
 fi
 
-# ── 2. Look up parent pane in registry ───────────────────────────────────────
-PARENT_PANE=$(jq -r --arg pid "$OWN_PANE_ID" '.[$pid].parent_pane // ""' \
-  "$PANE_REGISTRY" 2>/dev/null || echo "")
+# ── 2. Find own worker name + parent from registry ───────────────────────────
+OWN_NAME=""
+PARENT_NAME=""
+if [ -f "$REGISTRY" ]; then
+  # Find entry where pane_id matches our pane
+  OWN_NAME=$(jq -r --arg pid "$OWN_PANE_ID" '
+    to_entries[] | select(.value.pane_id? == $pid) | .key
+  ' "$REGISTRY" 2>/dev/null | head -1)
 
-if [ -z "$PARENT_PANE" ]; then
-  echo "child-exit: pane $OWN_PANE_ID has no parent_pane in registry (not a registered child)." >&2
-  echo "  Killing own pane anyway." >&2
-else
-  # ── 3. Resolve parent name + target ──────────────────────────────────────
-  PARENT_NAME=$(jq -r --arg pid "$PARENT_PANE" '.[$pid].harness // "parent"' \
-    "$PANE_REGISTRY" 2>/dev/null | sed 's|^worker/||')
-  PARENT_TARGET=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
-    | awk -v id="$PARENT_PANE" '$1 == id {print $2; exit}')
-
-  # ── 4. Resolve own name for signature ──────────────────────────────────────
-  OWN_NAME=$(jq -r --arg pid "$OWN_PANE_ID" '.[$pid].harness // .[$pid].session_name // ""' \
-    "$PANE_REGISTRY" 2>/dev/null | sed 's|^worker/||')
-  OWN_TARGET=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
-    | awk -v id="$OWN_PANE_ID" '$1 == id {print $2; exit}')
-
-  # ── 5. Notify parent — try worker-message.sh first, fall back to direct tmux ──
-  NOTIFIED=false
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-  # worker-message.sh only works for "worker/*" harness names
-  if [[ "$PARENT_NAME" != "parent" ]] && bash "$SCRIPT_DIR/worker-message.sh" send "$PARENT_NAME" "$MESSAGE" 2>/dev/null; then
-    echo "child-exit: notified ${PARENT_NAME} via bus — ${MESSAGE}"
-    NOTIFIED=true
-  fi
-
-  # Direct tmux fallback (covers non-worker parents like hq-v3)
-  if [ "$NOTIFIED" = "false" ] && [ -n "$PARENT_TARGET" ]; then
-    SIG="[from ${OWN_TARGET:-$OWN_PANE_ID} (${OWN_NAME:-child})]"
-    tmux send-keys -t "$PARENT_TARGET" "$SIG $MESSAGE"
-    tmux send-keys -t "$PARENT_TARGET" -H 0d
-    echo "child-exit: notified ${PARENT_NAME} via tmux ($PARENT_TARGET) — ${MESSAGE}"
-    NOTIFIED=true
-  fi
-
-  if [ "$NOTIFIED" = "false" ]; then
-    echo "child-exit: could not notify ${PARENT_NAME} (pane gone or bus unavailable)." >&2
+  if [ -n "$OWN_NAME" ]; then
+    PARENT_NAME=$(jq -r --arg n "$OWN_NAME" '.[$n].parent // ""' "$REGISTRY" 2>/dev/null)
   fi
 fi
 
-# ── 6. Kill own pane ─────────────────────────────────────────────────────────
-echo "child-exit: killing pane ${OWN_PANE_ID} (${MY_TARGET:-?})"
+# ── 3. Notify parent ─────────────────────────────────────────────────────────
+NOTIFIED=false
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -n "$PARENT_NAME" ]; then
+  # Try worker-message.sh first (durable inbox)
+  if bash "$SCRIPT_DIR/worker-message.sh" send "$PARENT_NAME" "$MESSAGE" 2>/dev/null; then
+    echo "child-exit: notified $PARENT_NAME via bus — ${MESSAGE}"
+    NOTIFIED=true
+  fi
+
+  # Fallback: direct tmux send-keys to parent pane
+  if [ "$NOTIFIED" = "false" ] && [ -f "$REGISTRY" ]; then
+    PARENT_PANE=$(jq -r --arg n "$PARENT_NAME" '.[$n].pane_id // ""' "$REGISTRY" 2>/dev/null)
+    PARENT_TARGET=$(jq -r --arg n "$PARENT_NAME" '.[$n].pane_target // ""' "$REGISTRY" 2>/dev/null)
+    TARGET="${PARENT_TARGET:-$PARENT_PANE}"
+
+    if [ -n "$TARGET" ]; then
+      SIG="[from ${OWN_NAME:-child}]"
+      tmux send-keys -t "$TARGET" "$SIG $MESSAGE"
+      tmux send-keys -t "$TARGET" -H 0d
+      echo "child-exit: notified $PARENT_NAME via tmux ($TARGET) — ${MESSAGE}"
+      NOTIFIED=true
+    fi
+  fi
+fi
+
+if [ "$NOTIFIED" = "false" ]; then
+  echo "child-exit: could not notify parent (${PARENT_NAME:-unknown})." >&2
+fi
+
+# ── 4. Remove child from registry ────────────────────────────────────────────
+if [ -n "$OWN_NAME" ] && [ -f "$REGISTRY" ]; then
+  _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+  mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
+  _WAIT=0
+  while ! mkdir "$_LOCK_DIR" 2>/dev/null; do
+    sleep 0.5; _WAIT=$((_WAIT + 1))
+    [ "$_WAIT" -ge 10 ] && break
+  done
+
+  TMP=$(mktemp)
+  jq --arg child "$OWN_NAME" --arg parent "${PARENT_NAME:-}" '
+    # Remove child from parent children array
+    if $parent != "" then
+      .[$parent].children = ((.[$parent].children // []) - [$child])
+    else . end |
+    # Delete child entry
+    del(.[$child])
+  ' "$REGISTRY" > "$TMP" 2>/dev/null && mv "$TMP" "$REGISTRY" || rm -f "$TMP"
+
+  rmdir "$_LOCK_DIR" 2>/dev/null || true
+fi
+
+# ── 5. Kill own pane ─────────────────────────────────────────────────────────
+echo "child-exit: killing pane ${OWN_PANE_ID}"
 tmux kill-pane -t "$OWN_PANE_ID"
-# execution stops here — tmux kills this pane
 exit 0

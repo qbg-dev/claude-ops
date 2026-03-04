@@ -9,7 +9,7 @@
  *   Fleet (2):      fleet_status, remote_health
  *   Deploy (2):     deploy, health_check
  *   Lifecycle (4):  recycle, spawn_child, register_pane, check_config
- *   Git (1):        smart_commit
+ *   Management (1): create_worker
  *   External (1):   post_to_nexus
  *
  * Task CRUD and inbox are native TS (no shell subprocess).
@@ -24,7 +24,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync,
-  readdirSync, openSync, fstatSync, readSync, closeSync, truncateSync,
+  readdirSync, openSync, fstatSync, statSync, readSync, closeSync, truncateSync,
 } from "fs";
 import { join, basename } from "path";
 import { execSync, spawnSync, spawn, type ChildProcess } from "child_process";
@@ -39,13 +39,14 @@ let WORKERS_DIR = join(PROJECT_ROOT, ".claude/workers");
 function _setWorkersDir(dir: string) { WORKERS_DIR = dir; }
 const BORING_DIR = process.env.BORING_DIR || join(HOME, ".boring");
 const HARNESS_LOCK_DIR = join(BORING_DIR, "state/locks");
-const PANE_REGISTRY_PATH = join(BORING_DIR, "state/pane-registry.json");
+
+/** Project-level unified registry — replaces per-worker permissions.json, state.json, and pane-registry.json */
+const REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
 
 // Script paths (only for tools that still shell out)
 const WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
-const WORKER_COMMIT_SH = join(PROJECT_ROOT, ".claude/scripts/worker-commit.sh");
 const CHECK_WORKERS_SH = join(CLAUDE_OPS, "scripts/check-flat-workers.sh");
-const REQUEST_MERGE_SH = join(PROJECT_ROOT, ".claude/scripts/request-merge.sh");
+
 
 // ── Relay Configuration ──────────────────────────────────────────────
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || "3847", 10);
@@ -165,151 +166,138 @@ function readJsonFile(path: string): any {
   try { return JSON.parse(readFileSync(path, "utf-8")); } catch { return null; }
 }
 
-// ── Unified Registry Types & Helpers ────────────────────────────────
+// ── Project Registry Types & Helpers ─────────────────────────────────
+// Unified registry: .claude/workers/registry.json
+// Top-level keys: "_config" + worker names. No nested workers/panes sections.
 
-interface RegistryWorker {
-  project_root: string;
-  worker_dir: string;
-  worktree: string;
-  branch: string;
-  config: {
-    model: string;
-    permission_mode: string;
-    disallowedTools: string[];
-    [k: string]: any;
-  };
-  state: Record<string, any>;
-  tasks: Record<string, Task>;
-}
-
-interface RegistryPane {
-  worker: string;
-  role: "worker" | "child" | "operator";
-  pane_target: string;
+interface RegistryConfig {
+  commit_notify: string[];
+  merge_authority: string;
+  deploy_authority: string;
+  mission_authority: string;
   tmux_session: string;
-  session_id: string;
-  parent_pane: string | null;
-  registered_at: string;
+  project_name: string;
 }
 
-interface UnifiedRegistry {
-  workers: Record<string, RegistryWorker>;
-  panes: Record<string, RegistryPane>;
-  [key: string]: any; // flat compat entries (% prefixed pane IDs for shell script backward compat)
+interface RegistryWorkerEntry {
+  model: string;
+  permission_mode: string;
+  disallowed_tools: string[];
+
+  status: string;
+  perpetual: boolean;
+  sleep_duration: number;
+  cycles_completed: number;
+  last_cycle_at: string | null;
+
+  branch: string;
+  worktree: string | null;
+  window: string | null;
+
+  pane_id: string | null;
+  pane_target: string | null;
+  tmux_session: string;
+  session_id: string | null;
+  session_file: string | null;
+
+  mission_file: string;
+  custom: Record<string, any>;
+
+  // Parent/child tracking (for spawn_child)
+  parent?: string | null;      // parent worker name (set on children)
+  children?: string[];         // child worker names (set on parents)
+
+  // Optional commit tracking
+  last_commit_sha?: string;
+  last_commit_msg?: string;
+  last_commit_at?: string;
+  issues_found?: number;
+  issues_fixed?: number;
+}
+
+interface ProjectRegistry {
+  _config: RegistryConfig;
+  [workerName: string]: RegistryWorkerEntry | RegistryConfig;
 }
 
 const LINT_ENABLED = process.env.WORKER_FLEET_LINT !== "0";
 
-/** Project-qualified worker key for multi-project registries */
-function workerKey(name: string): string {
-  return `${PROJECT_SLUG}:${name}`;
+/** Read project registry from disk (no locking — caller handles concurrency) */
+function readRegistry(): ProjectRegistry {
+  const raw = readJsonFile(REGISTRY_PATH);
+  if (!raw || !raw._config) {
+    // Bootstrap empty registry
+    return {
+      _config: {
+        commit_notify: ["merger"],
+        merge_authority: "merger",
+        deploy_authority: "merger",
+        mission_authority: "chief-of-staff",
+        tmux_session: "w",
+        project_name: basename(PROJECT_ROOT),
+      },
+    };
+  }
+  return raw as ProjectRegistry;
 }
 
-/** Read registry from disk (no locking — caller handles concurrency) */
-function readRegistryRaw(): UnifiedRegistry {
-  const raw = readJsonFile(PANE_REGISTRY_PATH) || {};
-  if (!raw.workers) raw.workers = {};
-  if (!raw.panes) raw.panes = {};
-  return raw as UnifiedRegistry;
+/** Get a worker entry from registry (returns null if not found) */
+function getWorkerEntry(name: string): RegistryWorkerEntry | null {
+  const reg = readRegistry();
+  const entry = reg[name];
+  if (!entry || name === "_config") return null;
+  return entry as RegistryWorkerEntry;
 }
 
 /** Atomic read-modify-write under lock. Returns the value from fn(). */
-function withRegistryLocked<T>(fn: (registry: UnifiedRegistry) => T): T {
-  const lockPath = join(HARNESS_LOCK_DIR, "pane-registry");
-  acquireLock(lockPath);
+function withRegistryLocked<T>(fn: (registry: ProjectRegistry) => T): T {
+  const lockPath = join(HARNESS_LOCK_DIR, "worker-registry");
+  if (!acquireLock(lockPath)) {
+    throw new Error("Could not acquire worker-registry lock after 10s — stale lock?");
+  }
   try {
-    const registry = readRegistryRaw();
-    migrateOldEntries(registry);
+    const registry = readRegistry();
     const result = fn(registry);
-    writeFileSync(PANE_REGISTRY_PATH, JSON.stringify(registry, null, 2) + "\n");
+    writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2) + "\n");
     return result;
   } finally {
-    releaseLock(join(HARNESS_LOCK_DIR, "pane-registry"));
+    releaseLock(join(HARNESS_LOCK_DIR, "worker-registry"));
   }
 }
 
-/** Ensure worker entry exists in registry, bootstrapping from filesystem if needed */
-function ensureWorkerInRegistry(registry: UnifiedRegistry, name: string): RegistryWorker {
-  const wk = workerKey(name);
-  if (registry.workers[wk]) return registry.workers[wk];
-
-  const workerDir = join(WORKERS_DIR, name);
-  const perms = readJsonFile(join(workerDir, "permissions.json"));
-  const state = readJsonFile(join(workerDir, "state.json"));
-  const tasks = readJsonFile(join(workerDir, "tasks.json"));
+/** Ensure worker entry exists in registry. Creates default entry if missing. */
+function ensureWorkerInRegistry(registry: ProjectRegistry, name: string): RegistryWorkerEntry {
+  if (registry[name] && name !== "_config") return registry[name] as RegistryWorkerEntry;
 
   const projectName = PROJECT_ROOT.split("/").pop()!;
   const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
 
-  registry.workers[wk] = {
-    project_root: PROJECT_ROOT,
-    worker_dir: workerDir,
-    worktree: worktreeDir,
+  const entry: RegistryWorkerEntry = {
+    model: "sonnet",
+    permission_mode: "bypassPermissions",
+    disallowed_tools: [],
+    status: "idle",
+    perpetual: false,
+    sleep_duration: 1800,
+    cycles_completed: 0,
+    last_cycle_at: null,
     branch: `worker/${name}`,
-    config: perms || { model: "sonnet", permission_mode: "bypassPermissions", disallowedTools: [] },
-    state: state || { status: "idle", cycles_completed: 0 },
-    tasks: tasks && typeof tasks === "object" ? tasks : {},
+    worktree: worktreeDir,
+    window: null,
+    pane_id: null,
+    pane_target: null,
+    tmux_session: registry._config?.tmux_session || "w",
+    session_id: null,
+    session_file: null,
+    mission_file: `.claude/workers/${name}/mission.md`,
+    custom: {},
   };
 
-  return registry.workers[wk];
+  registry[name] = entry;
+  return entry;
 }
 
-/** Migrate old flat pane entries to panes section (idempotent, keeps flat entries for compat) */
-function migrateOldEntries(registry: UnifiedRegistry): boolean {
-  let migrated = false;
-  for (const [key, entry] of Object.entries(registry)) {
-    if (!key.startsWith("%") || key === "workers" || key === "panes") continue;
-    if (!entry || typeof entry !== "object" || !entry.harness) continue;
-    if (registry.panes[key]) continue; // already migrated
-
-    const workerName = (entry.harness as string).replace(/^worker\//, "");
-    registry.panes[key] = {
-      worker: workerName,
-      role: entry.task === "child" ? "child" : "worker",
-      pane_target: entry.pane_target || "",
-      tmux_session: entry.tmux_session || "",
-      session_id: entry.session_id || "",
-      parent_pane: entry.parent_pane || null,
-      registered_at: entry.registered_at || new Date().toISOString(),
-    };
-    migrated = true;
-    // Keep flat entry for backward compat with shell scripts
-  }
-  return migrated;
-}
-
-/** Write flat compat entry alongside panes entry (for shell script backward compat) */
-function writeFlatCompat(registry: UnifiedRegistry, paneId: string, pane: RegistryPane): void {
-  const wk = workerKey(pane.worker);
-  const worker = registry.workers[wk];
-  registry[paneId] = {
-    harness: `worker/${pane.worker}`,
-    session_name: pane.worker,
-    display: pane.worker,
-    task: pane.role === "child" ? "child" : "worker",
-    pane_target: pane.pane_target,
-    project_root: worker?.project_root || PROJECT_ROOT,
-    tmux_session: pane.tmux_session,
-    session_id: pane.session_id,
-    parent_pane: pane.parent_pane,
-    registered_at: pane.registered_at,
-    done: 0,
-    total: 0,
-  };
-}
-
-/** Sync registry state to filesystem state.json (backward compat for shell scripts) */
-function syncStateToFilesystem(name: string, state: Record<string, any>): void {
-  try {
-    const statePath = join(WORKERS_DIR, name, "state.json");
-    const dir = join(WORKERS_DIR, name);
-    if (existsSync(dir)) {
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-    }
-  } catch {}
-}
-
-/** Sync registry tasks to filesystem tasks.json (backward compat for shell scripts) */
+/** Sync tasks to filesystem tasks.json (tasks stay as separate files) */
 function syncTasksToFilesystem(name: string, tasks: Record<string, Task>): void {
   try {
     const tasksPath = join(WORKERS_DIR, name, "tasks.json");
@@ -321,78 +309,56 @@ function syncTasksToFilesystem(name: string, tasks: Record<string, Task>): void 
 }
 
 /** Run registry linter checks */
-function lintRegistry(registry: UnifiedRegistry): DiagnosticIssue[] {
+function lintRegistry(registry: ProjectRegistry): DiagnosticIssue[] {
   if (!LINT_ENABLED) return [];
   const issues: DiagnosticIssue[] = [];
 
-  // Dead panes
-  for (const [paneId, pane] of Object.entries(registry.panes)) {
-    if (!isPaneAlive(paneId)) {
-      issues.push({ severity: "warning", check: "lint.dead_pane", message: `Dead pane ${paneId} (worker: ${pane.worker})`, fix: "Auto-pruned on fleet_status()" });
+  for (const [name, entry] of Object.entries(registry)) {
+    if (name === "_config") continue;
+    const w = entry as RegistryWorkerEntry;
+
+    // worker dir doesn't exist
+    const workerDir = join(WORKERS_DIR, name);
+    if (!existsSync(workerDir)) {
+      issues.push({ severity: "error", check: "lint.worker_dir", message: `Worker '${name}' worker_dir doesn't exist: ${workerDir}` });
+    }
+
+    // Dead pane
+    if (w.pane_id && !isPaneAlive(w.pane_id)) {
+      issues.push({ severity: "warning", check: "lint.dead_pane", message: `Dead pane ${w.pane_id} (worker: ${name})`, fix: "Auto-pruned on fleet_status()" });
+    }
+
+    // worktree doesn't exist (only for non-main-branch workers)
+    if (w.worktree && w.branch !== "main" && !existsSync(w.worktree)) {
+      issues.push({ severity: "warning", check: "lint.worktree", message: `Worker '${name}' worktree doesn't exist: ${w.worktree}` });
+    }
+
+    // model empty
+    if (!w.model) {
+      issues.push({ severity: "warning", check: "lint.model", message: `Worker '${name}' has no model configured` });
     }
   }
 
-  // Duplicate: two live panes for same worker+role=worker
+  // Duplicate: two live panes for same worker
   const workerPanes: Record<string, string[]> = {};
-  for (const [paneId, pane] of Object.entries(registry.panes)) {
-    if (pane.role === "worker" && isPaneAlive(paneId)) {
-      const key = pane.worker;
-      if (!workerPanes[key]) workerPanes[key] = [];
-      workerPanes[key].push(paneId);
+  for (const [name, entry] of Object.entries(registry)) {
+    if (name === "_config") continue;
+    const w = entry as RegistryWorkerEntry;
+    if (w.pane_id && isPaneAlive(w.pane_id)) {
+      if (!workerPanes[name]) workerPanes[name] = [];
+      workerPanes[name].push(w.pane_id);
     }
   }
-  for (const [worker, panes] of Object.entries(workerPanes)) {
+  for (const [name, panes] of Object.entries(workerPanes)) {
     if (panes.length > 1) {
-      issues.push({ severity: "error", check: "lint.duplicate_pane", message: `Worker '${worker}' has ${panes.length} live worker panes: ${panes.join(", ")}` });
-    }
-  }
-
-  // worker_dir doesn't exist
-  for (const [wk, worker] of Object.entries(registry.workers)) {
-    if (!wk.startsWith(`${PROJECT_SLUG}:`)) continue; // only lint our project
-    if (!existsSync(worker.worker_dir)) {
-      issues.push({ severity: "error", check: "lint.worker_dir", message: `Worker '${wk}' worker_dir doesn't exist: ${worker.worker_dir}` });
-    }
-  }
-
-  // worktree doesn't exist
-  for (const [wk, worker] of Object.entries(registry.workers)) {
-    if (!wk.startsWith(`${PROJECT_SLUG}:`)) continue;
-    const name = wk.split(":").slice(1).join(":");
-    if (name !== "operator" && !existsSync(worker.worktree)) {
-      issues.push({ severity: "warning", check: "lint.worktree", message: `Worker '${wk}' worktree doesn't exist: ${worker.worktree}` });
-    }
-  }
-
-  // parent_pane references missing pane
-  for (const [paneId, pane] of Object.entries(registry.panes)) {
-    if (pane.parent_pane && !registry.panes[pane.parent_pane] && !registry[pane.parent_pane]) {
-      issues.push({ severity: "warning", check: "lint.orphan_parent", message: `Pane ${paneId} parent_pane '${pane.parent_pane}' not found`, fix: "Will auto-fix to null" });
-    }
-  }
-
-  // Worker in panes but not in workers (project-scoped)
-  for (const [paneId, pane] of Object.entries(registry.panes)) {
-    const wk = workerKey(pane.worker);
-    // Only check panes belonging to our project
-    const flatEntry = registry[paneId];
-    if (flatEntry?.project_root === PROJECT_ROOT && !registry.workers[wk]) {
-      issues.push({ severity: "warning", check: "lint.missing_worker", message: `Pane ${paneId} references worker '${pane.worker}' not in workers section` });
-    }
-  }
-
-  // config.model empty
-  for (const [wk, worker] of Object.entries(registry.workers)) {
-    if (!wk.startsWith(`${PROJECT_SLUG}:`)) continue;
-    if (!worker.config?.model) {
-      issues.push({ severity: "warning", check: "lint.model", message: `Worker '${wk}' has no model configured` });
+      issues.push({ severity: "warning", check: "lint.duplicate_pane", message: `Worker '${name}' has ${panes.length} live panes: ${panes.join(", ")}` });
     }
   }
 
   return issues;
 }
 
-/** mkdir-based spinlock matching harness-jq.sh convention */
+/** mkdir-based spinlock matching fleet-jq.sh convention */
 function acquireLock(lockPath: string, maxWaitMs = 10_000): boolean {
   const start = Date.now();
   while (true) {
@@ -438,13 +404,7 @@ function getTasksPath(worker: string): string {
 }
 
 function readTasks(worker: string): Record<string, Task> {
-  // Primary: read from unified registry
-  const registry = readRegistryRaw();
-  const wk = workerKey(worker);
-  if (registry.workers[wk]?.tasks && Object.keys(registry.workers[wk].tasks).length > 0) {
-    return registry.workers[wk].tasks;
-  }
-  // Fallback: read from filesystem (pre-migration or other project's workers)
+  // Read from filesystem tasks.json (tasks remain as separate files)
   const path = getTasksPath(worker);
   try {
     const data = JSON.parse(readFileSync(path, "utf-8"));
@@ -455,11 +415,6 @@ function readTasks(worker: string): Record<string, Task> {
 }
 
 function writeTasks(worker: string, tasks: Record<string, Task>): void {
-  withRegistryLocked((registry) => {
-    ensureWorkerInRegistry(registry, worker);
-    registry.workers[workerKey(worker)].tasks = tasks;
-  });
-  // Sync to filesystem for backward compat with shell scripts
   syncTasksToFilesystem(worker, tasks);
 }
 
@@ -624,94 +579,45 @@ function resolveRecipient(to: string): {
     return { type: "pane", paneId: to };
   }
 
-  // "parent" — look up in pane registry, deliver via tmux
+  // "parent" — find operator worker
   if (to === "parent") {
     try {
-      const registry = readRegistryRaw();
-      const ownPane = findOwnPane();
-
-      // Strategy 1: Check panes section for parent_pane
-      if (ownPane?.paneId && registry.panes[ownPane.paneId]?.parent_pane) {
-        const parentPaneId = registry.panes[ownPane.paneId].parent_pane!;
-        const parentPane = registry.panes[parentPaneId];
-        if (parentPane) {
-          if (existsSync(join(WORKERS_DIR, parentPane.worker))) {
-            return { type: "worker", workerName: parentPane.worker };
-          }
-          return { type: "pane", paneId: parentPaneId };
+      const registry = readRegistry();
+      // Look for operator entry with a live pane
+      const opEntry = registry["operator"] as RegistryWorkerEntry | undefined;
+      if (opEntry?.pane_id && isPaneAlive(opEntry.pane_id)) {
+        if (existsSync(join(WORKERS_DIR, "operator"))) {
+          return { type: "worker", workerName: "operator" };
         }
-      }
-
-      // Strategy 2: Check flat entries for parent_pane (legacy compat)
-      if (ownPane?.paneId && registry[ownPane.paneId]?.parent_pane) {
-        const parentPaneId = registry[ownPane.paneId].parent_pane;
-        const parentEntry = registry[parentPaneId];
-        if (parentEntry) {
-          const parentName = parentEntry.harness?.replace(/^worker\//, "");
-          if (parentName && existsSync(join(WORKERS_DIR, parentName))) {
-            return { type: "worker", workerName: parentName };
-          }
-          return { type: "pane", paneId: parentPaneId };
-        }
-      }
-
-      // Strategy 3: Fall back to operator
-      for (const [paneId, pane] of Object.entries(registry.panes)) {
-        if (pane.worker === "operator" && pane.role === "worker") {
-          const flatEntry = registry[paneId];
-          if (flatEntry?.project_root === PROJECT_ROOT || !flatEntry) {
-            if (existsSync(join(WORKERS_DIR, "operator"))) {
-              return { type: "worker", workerName: "operator" };
-            }
-            return { type: "pane", paneId };
-          }
-        }
-      }
-      // Legacy flat fallback for operator
-      for (const [paneId, entry] of Object.entries(registry) as [string, any][]) {
-        if (paneId.startsWith("%") && entry.harness === "worker/operator" &&
-            (entry.project_root || "") === PROJECT_ROOT) {
-          if (existsSync(join(WORKERS_DIR, "operator"))) {
-            return { type: "worker", workerName: "operator" };
-          }
-          return { type: "pane", paneId };
-        }
+        return { type: "pane", paneId: opEntry.pane_id };
       }
       return { type: "pane", error: `No parent found for worker '${WORKER_NAME}'` };
     } catch {
-      return { type: "pane", error: "Failed to read pane registry" };
+      return { type: "pane", error: "Failed to read registry" };
     }
   }
 
-  // "children" — find all child panes from panes section
+  // "children" — look up from registry.json children array
   if (to === "children") {
     try {
-      const registry = readRegistryRaw();
-      const ownPane = findOwnPane();
-      const childPaneIds: string[] = [];
-
-      // Search panes section for entries with parent_pane matching ours
-      if (ownPane?.paneId) {
-        for (const [paneId, pane] of Object.entries(registry.panes)) {
-          if (pane.parent_pane === ownPane.paneId) {
-            childPaneIds.push(paneId);
-          }
-        }
-        // Also check flat entries for children array (legacy compat)
-        const flatEntry = registry[ownPane.paneId];
-        if (flatEntry?.children && Array.isArray(flatEntry.children)) {
-          for (const childId of flatEntry.children) {
-            if (!childPaneIds.includes(childId)) childPaneIds.push(childId);
-          }
-        }
+      const registry = readRegistry();
+      const entry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
+      const childNames = entry?.children || [];
+      if (childNames.length === 0) {
+        return { type: "multi_pane", paneIds: [], error: "No children registered" };
       }
-
-      if (childPaneIds.length === 0) {
-        return { type: "multi_pane", error: "No children found in pane registry" };
+      // Resolve child names to pane IDs
+      const paneIds: string[] = [];
+      for (const childName of childNames) {
+        const childEntry = registry[childName] as RegistryWorkerEntry | undefined;
+        if (childEntry?.pane_id) paneIds.push(childEntry.pane_id);
       }
-      return { type: "multi_pane", paneIds: childPaneIds };
+      if (paneIds.length === 0) {
+        return { type: "multi_pane", paneIds: [], error: "Children registered but none have live panes" };
+      }
+      return { type: "multi_pane", paneIds };
     } catch {
-      return { type: "multi_pane", error: "Failed to read pane registry" };
+      return { type: "multi_pane", error: "Failed to read registry for children" };
     }
   }
 
@@ -742,14 +648,10 @@ function isPaneAlive(paneId: string): boolean {
 function findOwnPane(): { paneId: string; paneTarget: string } | null {
   const tmuxPane = process.env.TMUX_PANE;
   if (tmuxPane) {
-    const registry = readRegistryRaw();
-    // Check panes section first
-    if (registry.panes[tmuxPane]) {
-      return { paneId: tmuxPane, paneTarget: registry.panes[tmuxPane].pane_target || "" };
-    }
-    // Fallback: flat compat entry
-    if (registry[tmuxPane]?.pane_target) {
-      return { paneId: tmuxPane, paneTarget: registry[tmuxPane].pane_target };
+    // Check if registry has matching pane_id for our worker
+    const entry = getWorkerEntry(WORKER_NAME);
+    if (entry?.pane_id === tmuxPane) {
+      return { paneId: tmuxPane, paneTarget: entry.pane_target || "" };
     }
     // Resolve from tmux directly
     try {
@@ -762,23 +664,10 @@ function findOwnPane(): { paneId: string; paneTarget: string } | null {
     return { paneId: tmuxPane, paneTarget: "" };
   }
 
-  // Fallback: search panes section by worker name (excludes children)
-  const registry = readRegistryRaw();
-  for (const [paneId, pane] of Object.entries(registry.panes)) {
-    if (pane.worker === WORKER_NAME && pane.role === "worker") {
-      // Project-scope: check flat entry or worker entry for project match
-      const flatEntry = registry[paneId];
-      if (flatEntry?.project_root === PROJECT_ROOT || registry.workers[workerKey(WORKER_NAME)]) {
-        return { paneId, paneTarget: pane.pane_target || "" };
-      }
-    }
-  }
-  // Legacy fallback: search flat entries
-  for (const [paneId, entry] of Object.entries(registry) as [string, any][]) {
-    if (paneId.startsWith("%") && entry.harness === `worker/${WORKER_NAME}` &&
-        entry.task !== "child" && entry.project_root === PROJECT_ROOT) {
-      return { paneId, paneTarget: entry.pane_target || "" };
-    }
+  // Fallback: search registry by worker name
+  const entry = getWorkerEntry(WORKER_NAME);
+  if (entry?.pane_id) {
+    return { paneId: entry.pane_id, paneTarget: entry.pane_target || "" };
   }
   return null;
 }
@@ -789,15 +678,11 @@ function getSessionId(paneId: string): string | null {
   try { return readFileSync(paneMapPath, "utf-8").trim(); } catch { return null; }
 }
 
-/** Read worker's model from registry (fallback: permissions.json) */
+/** Read worker's model from registry */
 function getWorkerModel(): string {
   try {
-    const registry = readRegistryRaw();
-    const wk = workerKey(WORKER_NAME);
-    if (registry.workers[wk]?.config?.model) return registry.workers[wk].config.model;
-    // Fallback: filesystem
-    const perms = readJsonFile(join(WORKERS_DIR, WORKER_NAME, "permissions.json"));
-    return perms?.model || "sonnet";
+    const entry = getWorkerEntry(WORKER_NAME);
+    return entry?.model || "sonnet";
   } catch { return "sonnet"; }
 }
 
@@ -819,7 +704,7 @@ Worker config: ${workerDir}/
 
 Read these files NOW in this order:
 1. ${workerDir}/mission.md — your goals and tasks
-2. ${workerDir}/state.json — current cycle count and status
+2. Call \`get_worker_state()\` — your current cycle count and status (stored in registry.json)
 3. ${workerDir}/MEMORY.md — what you learned in previous cycles
 
 Then begin your cycle immediately.
@@ -842,22 +727,21 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 
 | Tool | What it does |
 |------|-------------|
-| \`send_message(to, content, summary)\` | Send to a worker, "parent", or raw pane ID "%NN" |
+| \`send_message(to, content, summary)\` | Send to a worker, "parent", "children", or raw pane ID "%NN" |
 | \`broadcast(content, summary)\` | Send to ALL workers (use sparingly) |
 | \`read_inbox(limit?, since?, clear?)\` | Read your inbox; \`clear=true\` truncates after reading |
 | \`create_task(subject, priority?, ...)\` | Add a task to your task list |
 | \`update_task(task_id, status?, subject?, owner?, ...)\` | Update task status/fields — claim, complete, delete, reassign |
 | \`list_tasks(filter?, worker?)\` | List tasks; \`worker="all"\` for cross-worker view |
-| \`get_worker_state(name?)\` | Read any worker's state.json |
-| \`update_state(key, value)\` | Update your state.json + emit bus event |
+| \`get_worker_state(name?)\` | Read any worker's state from registry.json |
+| \`update_state(key, value)\` | Update your state in registry.json + emit bus event |
 | \`fleet_status()\` | Full fleet overview (all workers) |
 | \`deploy(service?)\` | Deploy to TEST server + auto health check |
 | \`health_check(target?)\` | Check server health: \`test\`, \`prod\`, or \`both\` |
-| \`smart_commit(message, files?, ...)\` | Commit with format validation; \`merge_request=true\` to signal chief-of-staff |
 | \`post_to_nexus(message, room?)\` | Post to Nexus chat (prefixed with your name) |
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
 | \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
-| \`register_pane()\` | Register this pane in pane-registry (after recycle/manual launch) |
+| \`register_pane()\` | Register this pane in registry.json (after recycle/manual launch) |
 | \`check_config()\` | Run diagnostics on worker config — fix issues it reports |
 
 These are native MCP tool calls — no bash wrappers needed.
@@ -865,7 +749,7 @@ These are native MCP tool calls — no bash wrappers needed.
 ## Rules
 - **Fix everything.** Never just report issues — investigate, fix, deploy, document in MEMORY.md.
 - **Git discipline**: Stage only specific files (\`git add src/foo.ts\`). NEVER \`git add -A\`. Commit to branch **${branch}** only. Never checkout main.
-- **Deploy**: TEST only. \`smart_commit\` then \`deploy(service="static")\`. The deploy tool auto-checks health. Never \`core\` without Warren approval.
+- **Deploy**: TEST only. Commit then \`deploy(service="static")\`. The deploy tool auto-checks health. Never \`core\` without Warren approval.
 - **Verify before completing**: Tests pass + TypeScript clean + deploy succeeds + endpoint/UI verified.
 - **Perpetual workers**: Read ${PROJECT_ROOT}/.claude/workers/PERPETUAL-PROTOCOL.md on your first cycle for self-optimization guidance.`;
 
@@ -921,34 +805,19 @@ function runDiagnostics(): DiagnosticIssue[] {
       } catch {}
     }
 
-    // state.json
-    const statePath = join(workerDir, "state.json");
-    if (!existsSync(statePath)) {
-      issues.push({ severity: "error", check: "state.json", message: "state.json missing", fix: `echo '{"status":"idle","cycles_completed":0}' > ${statePath}` });
+    // Registry entry (replaces state.json + permissions.json checks)
+    const regEntry = getWorkerEntry(WORKER_NAME);
+    if (!regEntry) {
+      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Run migration or call create_worker/register_pane to bootstrap entry" });
     } else {
-      const state = readJsonFile(statePath);
-      if (!state) {
-        issues.push({ severity: "error", check: "state.json", message: "state.json is invalid JSON", fix: `Fix JSON syntax in ${statePath}` });
-      } else {
-        if (typeof state.cycles_completed !== "number") {
-          issues.push({ severity: "warning", check: "state.cycles_completed", message: "state.json missing 'cycles_completed' field", fix: `update_state("cycles_completed", 0)` });
-        }
-        if (!state.status) {
-          issues.push({ severity: "warning", check: "state.status", message: "state.json missing 'status' field", fix: `update_state("status", "idle")` });
-        }
+      if (typeof regEntry.cycles_completed !== "number") {
+        issues.push({ severity: "warning", check: "registry.cycles_completed", message: "registry entry missing 'cycles_completed' field", fix: `update_state("cycles_completed", 0)` });
       }
-    }
-
-    // permissions.json
-    const permsPath = join(workerDir, "permissions.json");
-    if (!existsSync(permsPath)) {
-      issues.push({ severity: "warning", check: "permissions.json", message: "permissions.json missing — using default model (sonnet)", fix: `echo '{"model":"sonnet"}' > ${permsPath}` });
-    } else {
-      const perms = readJsonFile(permsPath);
-      if (!perms) {
-        issues.push({ severity: "error", check: "permissions.json", message: "permissions.json is invalid JSON", fix: `Fix JSON syntax in ${permsPath}` });
-      } else if (!perms.model) {
-        issues.push({ severity: "warning", check: "permissions.model", message: "permissions.json missing 'model' field — defaulting to sonnet", fix: "Add \"model\": \"sonnet\" to permissions.json" });
+      if (!regEntry.status) {
+        issues.push({ severity: "warning", check: "registry.status", message: "registry entry missing 'status' field", fix: `update_state("status", "idle")` });
+      }
+      if (!regEntry.model) {
+        issues.push({ severity: "warning", check: "registry.model", message: "registry entry missing 'model' field — defaulting to sonnet", fix: `update_state("model", "sonnet")` });
       }
     }
 
@@ -993,18 +862,13 @@ function runDiagnostics(): DiagnosticIssue[] {
     }
   }
 
-  // ── Pane registry ──
+  // ── Registry ──
   if (process.env.TMUX_PANE) {
-    const registry = readRegistryRaw();
-    const inPanes = !!registry.panes[process.env.TMUX_PANE];
-    const inFlat = !!registry[process.env.TMUX_PANE];
-    if (!inPanes && !inFlat) {
-      issues.push({ severity: "error", check: "pane_registry", message: `Pane ${process.env.TMUX_PANE} not in pane-registry — messaging, spawn_child, recycle will NOT work. Call register_pane() BEFORE doing anything else.`, fix: "Call register_pane() immediately" });
-    }
-    // Check if worker exists in workers section
-    const wk = workerKey(WORKER_NAME);
-    if (WORKER_NAME !== "operator" && !registry.workers[wk]) {
-      issues.push({ severity: "error", check: "registry.workers", message: `Worker '${WORKER_NAME}' not in registry.workers — watchdog cannot monitor you, messages cannot reach you. Call register_pane() BEFORE doing anything else.`, fix: "Call register_pane() immediately" });
+    const entry = getWorkerEntry(WORKER_NAME);
+    if (!entry) {
+      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you. Call register_pane() BEFORE doing anything else.`, fix: "Call register_pane() immediately" });
+    } else if (entry.pane_id !== process.env.TMUX_PANE) {
+      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json. Call register_pane() to fix.`, fix: "Call register_pane() immediately" });
     }
   } else {
     issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — you are not registered with the fleet. Messaging, watchdog monitoring, spawn_child, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call register_pane()" });
@@ -1012,20 +876,54 @@ function runDiagnostics(): DiagnosticIssue[] {
 
   // ── Registry linter ──
   try {
-    const registry = readRegistryRaw();
+    const registry = readRegistry();
     const lintIssues = lintRegistry(registry);
     issues.push(...lintIssues);
   } catch {}
 
   // ── Required scripts ──
   const requiredScripts: [string, string][] = [
-    [WORKER_COMMIT_SH, "smart_commit"],
     [CHECK_WORKERS_SH, "fleet_status"],
   ];
   for (const [scriptPath, toolName] of requiredScripts) {
     if (!existsSync(scriptPath)) {
       issues.push({ severity: "warning", check: `script.${toolName}`, message: `Script missing for ${toolName}: ${scriptPath}`, fix: `Ensure file exists at ${scriptPath}` });
     }
+  }
+
+  // ── Git hooks ──
+  // Verify required hooks are installed in the worktree (or main repo for main-branch workers)
+  try {
+    const worktreeDir = getWorktreeDir();
+    let gitDir: string;
+    try {
+      gitDir = execSync(`git -C "${worktreeDir}" rev-parse --git-dir`, { encoding: "utf-8", timeout: 5000 }).trim();
+      if (!gitDir.startsWith("/")) gitDir = join(worktreeDir, gitDir);
+    } catch {
+      gitDir = join(worktreeDir, ".git");
+    }
+    const hooksDir = join(gitDir, "hooks");
+
+    const requiredHooks: [string, string][] = [
+      ["post-commit", "Auto-notify merger/chief-of-staff on commit"],
+      ["commit-msg", "Auto-add Worker:/Cycle: trailers to commit messages"],
+    ];
+    for (const [hookName, desc] of requiredHooks) {
+      const hookPath = join(hooksDir, hookName);
+      if (!existsSync(hookPath)) {
+        issues.push({ severity: "warning", check: `git.hook.${hookName}`, message: `Git ${hookName} hook not installed — ${desc}`, fix: `Relaunch with launch-flat-worker.sh to install hooks, or manually copy from ~/.claude-ops/scripts/worker-${hookName.replace("-", "-")}-hook.sh` });
+      } else {
+        // Check it's executable
+        try {
+          const stat = statSync(hookPath);
+          if (!(stat.mode & 0o111)) {
+            issues.push({ severity: "warning", check: `git.hook.${hookName}`, message: `Git ${hookName} hook exists but is not executable`, fix: `chmod +x ${hookPath}` });
+          }
+        } catch {}
+      }
+    }
+  } catch {
+    // Can't resolve git dir — skip hook checks
   }
 
   return issues;
@@ -1072,7 +970,7 @@ const server = new McpServer({
 server.registerTool(
   "send_message",
   { description: `Send a direct message to a specific worker (durable inbox + tmux instant delivery)`, inputSchema: {
-    to: z.string().describe("Worker name (e.g. 'chief-of-staff', 'chatbot-tools'), 'parent' (spawner pane), 'children' (all child panes), or raw pane ID '%NN'"),
+    to: z.string().describe("Worker name (e.g. 'chief-of-staff', 'chatbot-tools'), 'parent' (operator/spawner), 'children' (all registered children from registry.json), or raw pane ID '%NN'"),
     content: z.string().describe("Message content"),
     summary: z.string().describe("Short preview (5-10 words)"),
   } },
@@ -1498,24 +1396,30 @@ server.registerTool(
 
 server.registerTool(
   "get_worker_state",
-  { description: "Read a worker's state.json (default: your own)", inputSchema: {
+  { description: "Read a worker's state from registry.json (default: your own)", inputSchema: {
     name: z.string().optional().describe("Worker name (default: self)"),
   } },
   async ({ name }) => {
     try {
       const targetName = name || WORKER_NAME;
-      // Primary: read from registry
-      const registry = readRegistryRaw();
-      const wk = workerKey(targetName);
-      if (registry.workers[wk]?.state) {
-        return { content: [{ type: "text" as const, text: JSON.stringify(registry.workers[wk].state, null, 2) }] };
-      }
-      // Fallback: filesystem
-      const statePath = join(WORKERS_DIR, targetName, "state.json");
-      if (!existsSync(statePath)) {
+      const entry = getWorkerEntry(targetName);
+      if (!entry) {
         return { content: [{ type: "text" as const, text: `No state for worker '${targetName}'` }], isError: true };
       }
-      const state = readJsonFile(statePath);
+      // Return state-relevant fields
+      const state: Record<string, any> = {
+        status: entry.status,
+        cycles_completed: entry.cycles_completed,
+        perpetual: entry.perpetual,
+        sleep_duration: entry.sleep_duration,
+        last_cycle_at: entry.last_cycle_at,
+        ...entry.custom,
+      };
+      if (entry.last_commit_sha) state.last_commit_sha = entry.last_commit_sha;
+      if (entry.last_commit_msg) state.last_commit_msg = entry.last_commit_msg;
+      if (entry.last_commit_at) state.last_commit_at = entry.last_commit_at;
+      if (entry.issues_found) state.issues_found = entry.issues_found;
+      if (entry.issues_fixed) state.issues_fixed = entry.issues_fixed;
       return { content: [{ type: "text" as const, text: JSON.stringify(state, null, 2) }] };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
@@ -1525,29 +1429,26 @@ server.registerTool(
 
 server.registerTool(
   "update_state",
-  { description: "Update a key in your own state.json and emit a bus event", inputSchema: {
+  { description: "Update a key in your own state (registry.json) and emit a bus event", inputSchema: {
     key: z.string().describe("State key to update (e.g. 'status', 'cycles_completed')"),
     value: z.union([z.string(), z.number(), z.boolean()]).describe("New value"),
   } },
   async ({ key, value }) => {
     try {
-      // Write to unified registry
+      // Write to project registry
       let stateJson: string = "";
       withRegistryLocked((registry) => {
-        ensureWorkerInRegistry(registry, WORKER_NAME);
-        const wk = workerKey(WORKER_NAME);
-        registry.workers[wk].state[key] = value;
-        stateJson = JSON.stringify(registry.workers[wk].state, null, 2) + "\n";
-      });
-
-      // Sync to filesystem for backward compat
-      try {
-        const wk = workerKey(WORKER_NAME);
-        const registry = readRegistryRaw();
-        if (registry.workers[wk]?.state) {
-          syncStateToFilesystem(WORKER_NAME, registry.workers[wk].state);
+        const entry = ensureWorkerInRegistry(registry, WORKER_NAME);
+        // Allowlist of state-owned fields (prevents overwriting pane_id, branch, etc.)
+        const STATE_KEYS = new Set(["status","cycles_completed","perpetual","sleep_duration","last_cycle_at",
+          "last_commit_sha","last_commit_msg","last_commit_at","issues_found","issues_fixed"]);
+        if (STATE_KEYS.has(key)) {
+          (entry as any)[key] = value;
+        } else {
+          entry.custom[key] = value;
         }
-      } catch {}
+        stateJson = JSON.stringify(entry, null, 2) + "\n";
+      });
 
       // Sync to watchdog config-cache (best-effort, bypasses macOS TCC restrictions)
       try {
@@ -1583,77 +1484,64 @@ server.registerTool(
   { description: "Get full fleet status (same output as check-flat-workers.sh)" },
   async () => {
     try {
-      const registry = readRegistryRaw();
-      migrateOldEntries(registry);
-
-      // Auto-discover workers from filesystem and ensure they're in registry
-      try {
-        const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true })
-          .filter(d => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_"))
-          .map(d => d.name);
-        for (const name of dirs) {
-          ensureWorkerInRegistry(registry, name);
-        }
-      } catch {}
-
-      // Auto-prune dead panes
-      let pruned = 0;
-      for (const [paneId] of Object.entries(registry.panes)) {
-        if (!isPaneAlive(paneId)) {
-          delete registry.panes[paneId];
-          delete registry[paneId]; // flat compat
-          pruned++;
-        }
-      }
-      // Persist pruning
-      if (pruned > 0) {
-        const lockPath = join(HARNESS_LOCK_DIR, "pane-registry");
-        acquireLock(lockPath);
+      // All reads + prunes inside one lock to avoid TOCTOU race
+      const registry = withRegistryLocked((reg) => {
+        // Auto-discover workers from filesystem
         try {
-          writeFileSync(PANE_REGISTRY_PATH, JSON.stringify(registry, null, 2) + "\n");
-        } finally {
-          releaseLock(lockPath);
+          const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true })
+            .filter(d => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_"))
+            .map(d => d.name);
+          for (const name of dirs) {
+            ensureWorkerInRegistry(reg, name);
+          }
+        } catch {}
+
+        // Auto-prune dead panes
+        for (const [key, entry] of Object.entries(reg)) {
+          if (key === "_config" || typeof entry !== "object" || !entry) continue;
+          const w = entry as RegistryWorkerEntry;
+          if (w.pane_id && !isPaneAlive(w.pane_id)) {
+            w.pane_id = null;
+            w.pane_target = null;
+            w.session_id = null;
+          }
         }
-      }
+
+        return { ...reg };
+      });
 
       // Format output
       const projectName = basename(PROJECT_ROOT);
       let output = `=== Worker Fleet Status (${projectName}) ===\n`;
       output += `${new Date().toISOString()}\n\n`;
 
-      // Workers table — only show this project's workers
+      // Workers table
       const header = `${"Worker".padEnd(22)} ${"Status".padEnd(10)} ${"Cycles".padEnd(8)} ${"Last Cycle".padEnd(24)} ${"Found".padEnd(8)} ${"Fixed".padEnd(8)}`;
       output += header + "\n";
       output += `${"------".padEnd(22)} ${"------".padEnd(10)} ${"------".padEnd(8)} ${"----------".padEnd(24)} ${"-----".padEnd(8)} ${"-----".padEnd(8)}\n`;
 
-      const projectWorkers = Object.entries(registry.workers)
-        .filter(([wk]) => wk.startsWith(`${PROJECT_SLUG}:`))
+      const workerEntries = Object.entries(registry)
+        .filter(([key]) => key !== "_config")
         .sort(([a], [b]) => a.localeCompare(b));
 
-      for (const [wk, w] of projectWorkers) {
-        const name = wk.split(":").slice(1).join(":");
-        const s = w.state || {};
-        output += `${name.padEnd(22)} ${String(s.status || "unknown").padEnd(10)} ${String(s.cycles_completed || 0).padEnd(8)} ${String(s.last_cycle_at || "never").padEnd(24)} ${String(s.issues_found || 0).padEnd(8)} ${String(s.issues_fixed || 0).padEnd(8)}\n`;
+      for (const [name, entry] of workerEntries) {
+        const w = entry as RegistryWorkerEntry;
+        output += `${name.padEnd(22)} ${String(w.status || "unknown").padEnd(10)} ${String(w.cycles_completed || 0).padEnd(8)} ${String(w.last_cycle_at || "never").padEnd(24)} ${String(w.issues_found || 0).padEnd(8)} ${String(w.issues_fixed || 0).padEnd(8)}\n`;
       }
 
       // Pane check
       output += "\n=== Pane Check ===\n";
-      for (const [wk] of projectWorkers) {
-        const name = wk.split(":").slice(1).join(":");
-        const workerPanes = Object.entries(registry.panes)
-          .filter(([_, p]) => p.worker === name && p.role === "worker");
-        if (workerPanes.length > 0) {
-          const [paneId, pane] = workerPanes[0];
-          const alive = isPaneAlive(paneId);
-          output += `  ${name} (${paneId} ${pane.pane_target}) ${alive ? "⚡" : "❌ dead"}\n`;
+      for (const [name, entry] of workerEntries) {
+        const w = entry as RegistryWorkerEntry;
+        if (w.pane_id) {
+          const alive = isPaneAlive(w.pane_id);
+          output += `  ${name} (${w.pane_id} ${w.pane_target || "?"}) ${alive ? "⚡" : "❌ dead"}\n`;
         } else {
           output += `  ${name}: NO PANE (dead or not started)\n`;
         }
       }
 
-      if (pruned > 0) {
-        output += `\n(Pruned ${pruned} dead pane(s))\n`;
-      }
+      // (dead panes were already auto-pruned inside withRegistryLocked above)
 
       // Append remote fleet status (best-effort)
       const remote = await relayFetch("GET", "/fleet");
@@ -1837,31 +1725,15 @@ server.registerTool(
 
     // 4. Notify parent/operator of cycle completion
     try {
-      const registry = readRegistryRaw();
-      const paneEntry = registry.panes[ownPane.paneId] || registry[ownPane.paneId];
-      const parentPaneId = paneEntry?.parent_pane;
-      // Find operator pane
-      let operatorName: string | null = null;
-      for (const [, pane] of Object.entries(registry.panes)) {
-        if (pane.worker === "operator" && pane.role === "worker") {
-          operatorName = "operator";
-          break;
-        }
-      }
+      const registry = readRegistry();
+      const config = registry._config as RegistryConfig;
       // Build cycle report
       const cycleReport = message
         ? `[${WORKER_NAME}] ${final ? "FINAL cycle" : "Cycle"} complete: ${message}`
         : `[${WORKER_NAME}] ${final ? "FINAL cycle" : "Cycle"} complete (no summary provided)`;
 
-      // Notify parent if we're a child pane
-      if (parentPaneId) {
-        const parentPane: any = registry.panes?.[parentPaneId] || registry[parentPaneId];
-        const parentName = parentPane?.worker || parentPane?.harness?.replace(/^worker\//, "");
-        if (parentName) {
-          writeToInbox(parentName, { content: cycleReport, summary: `${WORKER_NAME} cycle done`, from_name: WORKER_NAME });
-        }
-      }
-      // Notify operator (if registered and not us)
+      // Notify mission_authority (operator equivalent)
+      const operatorName = config?.mission_authority || null;
       if (operatorName && operatorName !== WORKER_NAME) {
         writeToInbox(operatorName, { content: cycleReport, summary: `${WORKER_NAME} cycle done`, from_name: WORKER_NAME });
       }
@@ -1875,10 +1747,9 @@ server.registerTool(
       try {
         withRegistryLocked((registry) => {
           ensureWorkerInRegistry(registry, WORKER_NAME);
-          const wk = workerKey(WORKER_NAME);
-          registry.workers[wk].state.status = "done";
-          registry.workers[wk].state.completed_at = new Date().toISOString();
-          syncStateToFilesystem(WORKER_NAME, registry.workers[wk].state);
+          const entry = registry[WORKER_NAME] as RegistryWorkerEntry;
+          entry.status = "done";
+          entry.custom.completed_at = new Date().toISOString();
         });
       } catch {}
 
@@ -2046,15 +1917,38 @@ server.registerTool(
       return { content: [{ type: "text" as const, text: `Error: unexpected child pane ID: ${childPaneId}` }], isError: true };
     }
 
-    // 5. Register child via worker-register-child.sh
-    const registerScript = join(CLAUDE_OPS, "scripts/worker-register-child.sh");
+    // 5. Register child in registry.json (parent/children tracking)
+    const childWorkerName = `${WORKER_NAME}-child-${Date.now()}`;
     try {
-      execSync(`bash "${registerScript}" "${childPaneId}" "${ownPane.paneId}"`, {
-        timeout: 10_000, encoding: "utf-8",
+      let childPaneTarget = "";
+      try {
+        childPaneTarget = execSync(
+          `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`,
+          { encoding: "utf-8", timeout: 5000 }
+        ).trim();
+      } catch {}
+
+      withRegistryLocked((registry) => {
+        // Create child entry
+        ensureWorkerInRegistry(registry, childWorkerName);
+        const childEntry = registry[childWorkerName] as RegistryWorkerEntry;
+        childEntry.pane_id = childPaneId;
+        childEntry.pane_target = childPaneTarget;
+        childEntry.parent = WORKER_NAME;
+        childEntry.model = getWorkerModel();
+        childEntry.tmux_session = ownPane.paneTarget?.split(":")[0] || "w";
+
+        // Add child to parent's children array
+        const parentEntry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
+        if (parentEntry) {
+          if (!parentEntry.children) parentEntry.children = [];
+          if (!parentEntry.children.includes(childWorkerName)) {
+            parentEntry.children.push(childWorkerName);
+          }
+        }
       });
     } catch (e: any) {
       // Non-fatal — child can still work without registration
-      // But log the error
     }
 
     // 6. Create a spawn script that launches Claude in the child pane
@@ -2127,7 +2021,7 @@ rm -f "${taskFile}"
 
 server.registerTool(
   "register_pane",
-  { description: "Register this pane in pane-registry as a worker pane. Call this after recycle or manual launch when spawn_child/recycle can't find your pane." },
+  { description: "Register this pane in registry.json as a worker pane. Call this after recycle or manual launch when spawn_child/recycle can't find your pane." },
   async () => {
     const tmuxPane = process.env.TMUX_PANE;
     if (!tmuxPane) {
@@ -2154,52 +2048,20 @@ server.registerTool(
 
     // Lint: check for duplicate live panes for same worker
     if (LINT_ENABLED) {
-      const checkRegistry = readRegistryRaw();
-      for (const [paneId, pane] of Object.entries(checkRegistry.panes)) {
-        if (pane.worker === WORKER_NAME && pane.role === "worker" &&
-            paneId !== tmuxPane && isPaneAlive(paneId)) {
-          const flatEntry = checkRegistry[paneId];
-          if (flatEntry?.project_root === PROJECT_ROOT) {
-            return { content: [{ type: "text" as const, text: `Error: Worker '${WORKER_NAME}' already has a live worker pane: ${paneId} (${pane.pane_target}). Kill it first or use a different worker name.` }], isError: true };
-          }
-        }
+      const existingEntry = getWorkerEntry(WORKER_NAME);
+      if (existingEntry?.pane_id && existingEntry.pane_id !== tmuxPane && isPaneAlive(existingEntry.pane_id)) {
+        return { content: [{ type: "text" as const, text: `Error: Worker '${WORKER_NAME}' already has a live worker pane: ${existingEntry.pane_id} (${existingEntry.pane_target}). Kill it first or use a different worker name.` }], isError: true };
       }
     }
 
-    let operatorInfo = "";
     try {
       withRegistryLocked((registry) => {
-        // Ensure worker entry exists in workers section
         ensureWorkerInRegistry(registry, WORKER_NAME);
-
-        // Write to panes section
-        const paneEntry: RegistryPane = {
-          worker: WORKER_NAME,
-          role: "worker",
-          pane_target: paneTarget,
-          tmux_session: tmuxSession,
-          session_id: "",
-          parent_pane: null,
-          registered_at: new Date().toISOString(),
-        };
-        registry.panes[tmuxPane] = paneEntry;
-
-        // Write flat compat entry for shell scripts
-        writeFlatCompat(registry, tmuxPane, paneEntry);
-
-        // Auto-discover operator as fallback parent
-        if (WORKER_NAME !== "operator") {
-          for (const [paneId, pane] of Object.entries(registry.panes)) {
-            if (pane.worker === "operator" && pane.role === "worker" && paneId !== tmuxPane) {
-              const flatEntry = registry[paneId];
-              if (flatEntry?.project_root === PROJECT_ROOT) {
-                registry[tmuxPane].operator_pane = paneId;
-                operatorInfo = `\nOperator: ${paneId} (fallback parent)`;
-                break;
-              }
-            }
-          }
-        }
+        const entry = registry[WORKER_NAME] as RegistryWorkerEntry;
+        entry.pane_id = tmuxPane;
+        entry.pane_target = paneTarget;
+        entry.tmux_session = tmuxSession;
+        entry.session_id = "";
       });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error writing registry: ${e.message}` }], isError: true };
@@ -2209,8 +2071,8 @@ server.registerTool(
       content: [{
         type: "text" as const,
         text: `Registered pane ${tmuxPane} (${paneTarget}) as worker/${WORKER_NAME}\n` +
-          `Project: ${PROJECT_ROOT}${operatorInfo}\n` +
-          `Registry: ${PANE_REGISTRY_PATH}`,
+          `Project: ${PROJECT_ROOT}\n` +
+          `Registry: ${REGISTRY_PATH}`,
       }],
     };
   }
@@ -2218,7 +2080,7 @@ server.registerTool(
 
 server.registerTool(
   "check_config",
-  { description: "Run diagnostics on worker configuration. Checks: env vars, worker dir, mission.md, state.json, permissions.json, tasks.json, inbox, git branch, worktree, pane registry, required scripts. Returns issues with fix suggestions." },
+  { description: "Run diagnostics on worker configuration. Checks: env vars, worker dir, mission.md, registry.json entry, tasks.json, inbox, git hooks, git branch, worktree, required scripts. Returns issues with fix suggestions." },
   async () => {
     const issues = getCachedDiagnostics();
     if (issues.length === 0) {
@@ -2255,41 +2117,195 @@ server.registerTool(
 );
 
 // ═══════════════════════════════════════════════════════════════════
-// GIT TOOL (1)
+// WORKER MANAGEMENT (1)
 // ═══════════════════════════════════════════════════════════════════
 
+interface CreateWorkerInput {
+  name: string;
+  mission: string;
+  model?: "sonnet" | "opus" | "haiku";
+  perpetual?: boolean;
+  sleep_duration?: number;
+  taskEntries?: Array<{ subject: string; description?: string; priority?: string }>;
+}
+
+interface CreateWorkerResult {
+  ok: boolean;
+  error?: string;
+  workerDir?: string;
+  model?: string;
+  perpetual?: boolean;
+  taskIds?: string[];
+  tasks?: Record<string, Task>;
+  state?: Record<string, any>;
+  permissions?: Record<string, any>;
+}
+
+/** Core logic for creating a worker's directory and files. Exported for testing. */
+function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
+  const { name, mission, model, perpetual, sleep_duration, taskEntries = [] } = input;
+
+  // Validate
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+    return { ok: false, error: `Name must be kebab-case (got '${name}')` };
+  }
+  const workerDir = join(WORKERS_DIR, name);
+  if (existsSync(workerDir)) {
+    return { ok: false, error: `Worker '${name}' already exists at ${workerDir}` };
+  }
+  if (!mission.trim()) {
+    return { ok: false, error: `Mission cannot be empty` };
+  }
+
+  // Create directory
+  mkdirSync(workerDir, { recursive: true });
+
+  // mission.md
+  writeFileSync(join(workerDir, "mission.md"), mission.trim() + "\n");
+
+  // Config (no longer written to permissions.json — stored in registry.json)
+  const selectedModel = model || "sonnet";
+  const permissions = {
+    model: selectedModel,
+    permission_mode: "bypassPermissions",
+    disallowedTools: [
+      "Bash(git checkout main*)",
+      "Bash(git merge*)",
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean*)",
+      "Bash(rm -rf*)",
+    ],
+  };
+
+  // State (no longer written to state.json — stored in registry.json)
+  const isPerpetual = perpetual || false;
+  const state: Record<string, any> = {
+    status: "idle",
+    cycles_completed: 0,
+    perpetual: isPerpetual,
+  };
+  if (isPerpetual) {
+    state.sleep_duration = sleep_duration || 1800;
+  }
+
+  // tasks.json
+  const tasksObj: Record<string, Task> = {};
+  const now = new Date().toISOString();
+  const taskIds: string[] = [];
+  for (const entry of taskEntries) {
+    const taskId = nextTaskId(tasksObj);
+    taskIds.push(taskId);
+    tasksObj[taskId] = {
+      subject: entry.subject,
+      description: entry.description || "",
+      activeForm: `Working on: ${entry.subject}`,
+      status: "pending",
+      priority: (entry.priority as Task["priority"]) || "medium",
+      recurring: false,
+      blocked_by: [],
+      metadata: {},
+      cycles_completed: 0,
+      owner: null,
+      created_at: now,
+      completed_at: null,
+    };
+  }
+  writeFileSync(join(workerDir, "tasks.json"), JSON.stringify(tasksObj, null, 2) + "\n");
+
+  return { ok: true, workerDir, model: selectedModel, perpetual: isPerpetual, taskIds, tasks: tasksObj, state, permissions };
+}
+
 server.registerTool(
-  "smart_commit",
-  { description: "Commit staged changes with structured metadata + optional merge request signal", inputSchema: {
-    message: z.string().describe("Commit message in type(scope): description format"),
-    files: z.string().optional().describe("Space-separated files to git add before committing"),
-    verified_test: z.boolean().optional().describe("Skip test run (pre-verified)"),
-    verified_tsc: z.boolean().optional().describe("Skip tsc check (pre-verified)"),
-    merge_request: z.boolean().optional().describe("Signal chief-of-staff to merge after commit"),
-    service_hint: z.string().optional().describe("Deploy service hint for merge (static|web|core)"),
+  "create_worker",
+  { description: "Create a new worker with mission, config, and optional auto-launch", inputSchema: {
+    name: z.string().describe("Worker name in kebab-case (e.g. 'chatbot-fix')"),
+    mission: z.string().describe("Full mission.md content (markdown)"),
+    model: z.enum(["sonnet", "opus", "haiku"]).optional().describe("LLM model (default: sonnet)"),
+    perpetual: z.boolean().optional().describe("Run in perpetual loop (default: false)"),
+    sleep_duration: z.number().optional().describe("Seconds between cycles, only if perpetual (default: 1800)"),
+    launch: z.boolean().optional().describe("Auto-launch in tmux after creation (default: false)"),
+    tasks: z.string().optional().describe("JSON array of tasks: [{subject, description?, priority?}]"),
   } },
-  async ({ message, files, verified_test, verified_tsc, merge_request, service_hint }) => {
+  async ({ name, mission, model, perpetual, sleep_duration, launch, tasks: tasksJson }) => {
     try {
-      const args = [message];
-      if (files) args.push("--add", files);
-      if (verified_test) args.push("--verified-test");
-      if (verified_tsc) args.push("--verified-tsc");
-
-      const result = runScript(WORKER_COMMIT_SH, args, { timeout: 60_000 });
-      let output = result.stdout;
-
-      if (result.exitCode !== 0) {
-        return { content: [{ type: "text" as const, text: `Commit failed: ${result.stderr || result.stdout}` }], isError: true };
+      // Parse tasks JSON if provided
+      let taskEntries: Array<{ subject: string; description?: string; priority?: string }> = [];
+      if (tasksJson) {
+        try {
+          const parsed = JSON.parse(tasksJson);
+          if (!Array.isArray(parsed)) {
+            return { content: [{ type: "text" as const, text: `Error: tasks must be a JSON array` }], isError: true };
+          }
+          for (const t of parsed) {
+            if (!t.subject || typeof t.subject !== "string") {
+              return { content: [{ type: "text" as const, text: `Error: Each task must have a string 'subject'` }], isError: true };
+            }
+          }
+          taskEntries = parsed;
+        } catch (e: any) {
+          return { content: [{ type: "text" as const, text: `Error parsing tasks JSON: ${e.message}` }], isError: true };
+        }
       }
 
-      if (merge_request && existsSync(REQUEST_MERGE_SH)) {
-        const mrArgs: string[] = [];
-        if (service_hint) mrArgs.push("--service", service_hint);
-        const mrResult = runScript(REQUEST_MERGE_SH, mrArgs);
-        output += "\n" + (mrResult.stdout || mrResult.stderr);
+      // Create files
+      const result = createWorkerFiles({ name, mission, model, perpetual, sleep_duration, taskEntries });
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: `Error: ${result.error}` }], isError: true };
       }
 
-      return { content: [{ type: "text" as const, text: output }] };
+      // Register in unified registry
+      const { state, permissions, taskIds, model: selectedModel, perpetual: isPerpetual } = result as Required<CreateWorkerResult>;
+      withRegistryLocked((registry) => {
+        ensureWorkerInRegistry(registry, name);
+        const entry = registry[name] as RegistryWorkerEntry;
+        entry.model = permissions.model || "sonnet";
+        entry.permission_mode = permissions.permission_mode || "bypassPermissions";
+        entry.disallowed_tools = permissions.disallowedTools || [];
+        entry.status = state.status || "idle";
+        entry.perpetual = state.perpetual || false;
+        entry.sleep_duration = state.sleep_duration || 1800;
+        entry.cycles_completed = state.cycles_completed || 0;
+      });
+
+      // Optional launch
+      let launchInfo = "";
+      if (launch) {
+        const launchScript = join(CLAUDE_OPS, "scripts/launch-flat-worker.sh");
+        if (!existsSync(launchScript)) {
+          launchInfo = `\n  Launch: FAILED — script not found: ${launchScript}`;
+        } else {
+          const launchResult = spawnSync("bash", [launchScript, name, "--project", PROJECT_ROOT], {
+            encoding: "utf-8",
+            timeout: 120_000,
+            env: { ...process.env, PROJECT_ROOT },
+          });
+          if (launchResult.status === 0) {
+            const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
+            const paneId = paneMatch ? paneMatch[1] : "unknown";
+            launchInfo = `\n  Launched: pane ${paneId}`;
+          } else {
+            launchInfo = `\n  Launch: FAILED (exit ${launchResult.status}) — ${(launchResult.stderr || "").slice(0, 200)}`;
+          }
+        }
+      } else {
+        launchInfo = `\n  Launch: manual — bash launch-flat-worker.sh ${name}`;
+      }
+
+      // Return summary
+      const taskSummary = taskIds.length > 0
+        ? `${taskIds.length} (${taskIds.join(", ")})`
+        : "none";
+
+      const summary = [
+        `Created worker/${name}:`,
+        `  Dir: .claude/workers/${name}/`,
+        `  Model: ${selectedModel} | Perpetual: ${isPerpetual}`,
+        `  Tasks: ${taskSummary}`,
+        launchInfo.trim() ? `  ${launchInfo.trim()}` : null,
+      ].filter(Boolean).join("\n");
+
+      return { content: [{ type: "text" as const, text: summary }] };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -2387,10 +2403,10 @@ export {
   writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, isPaneAlive, readJsonFile, acquireLock, releaseLock,
   findOwnPane, getSessionId, getWorkerModel, getWorktreeDir, generateSeedContent,
-  runDiagnostics, _setWorkersDir,
-  readRegistryRaw, withRegistryLocked, ensureWorkerInRegistry, migrateOldEntries,
-  writeFlatCompat, lintRegistry, workerKey,
-  WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR,
+  runDiagnostics, createWorkerFiles, _setWorkersDir,
+  readRegistry, getWorkerEntry, withRegistryLocked, ensureWorkerInRegistry,
+  lintRegistry,
+  WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR, REGISTRY_PATH,
   type Task, type InboxCursor, type DiagnosticIssue,
-  type RegistryWorker, type RegistryPane, type UnifiedRegistry,
+  type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
 };
