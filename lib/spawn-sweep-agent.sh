@@ -10,7 +10,7 @@
 # agent does not launch and an error is returned.
 set -uo pipefail
 
-SPAWN_SWEEP_PERMISSIONS_DIR="${SPAWN_SWEEP_PERMISSIONS_DIR:-$HOME/.boring/sweeps.d/permissions}"
+SPAWN_SWEEP_PERMISSIONS_DIR="${SPAWN_SWEEP_PERMISSIONS_DIR:-$HOME/.boring/harness/permissions}"
 
 spawn_sweep_agent() {
   local sweep_name="${1:?Usage: spawn_sweep_agent <sweep> <project-root> <seed-file>}"

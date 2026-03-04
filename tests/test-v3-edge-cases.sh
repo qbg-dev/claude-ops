@@ -108,9 +108,9 @@ TYPED_EVENTS=$(bus_read "typed-consumer" --type "prompt" 2>/dev/null)
 TYPED_COUNT=$(echo "$TYPED_EVENTS" | jq 'length')
 assert_equals "type filter returns only prompts" "3" "$TYPED_COUNT"
 
-# 1i: Query by type (legacy positional)
+# 1i: Query by type (legacy positional) — bus_query legacy returns NDJSON, use jq -s 'length'
 QUERY_RESULT=$(bus_query "error" 0 2>/dev/null)
-Q_COUNT=$(echo "$QUERY_RESULT" | jq 'length')
+Q_COUNT=$(echo "$QUERY_RESULT" | jq -s 'length')
 assert_equals "query by type finds error events" "1" "$Q_COUNT"
 
 # 1j: Query by --from

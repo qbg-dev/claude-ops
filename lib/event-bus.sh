@@ -289,7 +289,8 @@ bus_query() {
     esac
   done
 
-  [ ! -f "$BUS_STREAM" ] && { $raw || echo "[]"; return 0; }
+  # Empty or missing stream: always return [] — callers expect a valid empty list, not ""
+  { [ ! -f "$BUS_STREAM" ] || [ ! -s "$BUS_STREAM" ]; } && echo "[]" && return 0
 
   # If pattern given but no type, use pattern directly as regex
   # (no early return for empty filters — callers may query all events by seq/limit alone)
