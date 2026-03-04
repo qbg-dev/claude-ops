@@ -20,6 +20,20 @@ generate_worker_seed() {
     header="Watchdog respawn (reason: $reason). $header"
   fi
 
+  # Include handoff.md if present (written by recycle() on shutdown)
+  local handoff_section=""
+  if [ -f "$worker_dir/handoff.md" ]; then
+    local handoff_content
+    handoff_content=$(cat "$worker_dir/handoff.md" 2>/dev/null || true)
+    if [ -n "$handoff_content" ]; then
+      handoff_section="
+## Handoff from Previous Cycle
+
+$handoff_content
+"
+    fi
+  fi
+
   cat << SEED
 $header
 Worktree: $worktree_dir (branch: $branch)
@@ -29,7 +43,7 @@ Read these files NOW in this order:
 1. $worker_dir/mission.md — your goals and tasks
 2. $worker_dir/state.json — current cycle count and status
 3. $worker_dir/MEMORY.md — what you learned in previous cycles
-
+$handoff_section
 Then begin your cycle immediately.
 
 ## Cycle Pattern
