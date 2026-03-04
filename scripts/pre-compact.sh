@@ -133,14 +133,26 @@ echo "You are worker **${WORKER_NAME}**. Worktree: \`$(pwd)\`. Branch: \`worker/
 echo "Worker config directory: \`${WORKER_DIR}/\`"
 echo ""
 
-# State
-STATE_FILE="$WORKER_DIR/state.json"
-if [ -f "$STATE_FILE" ] && [ -s "$STATE_FILE" ]; then
-  echo "### Current State"
+# State — prefer registry.json (v3 workers), fall back to state.json (legacy)
+REGISTRY_FILE="$MAIN_ROOT/.claude/workers/registry.json"
+if [ -f "$REGISTRY_FILE" ]; then
+  REGISTRY_ENTRY=$(jq -r --arg name "$WORKER_NAME" '.[$name] // empty' "$REGISTRY_FILE" 2>/dev/null || true)
+fi
+if [ -n "${REGISTRY_ENTRY:-}" ] && [ "$REGISTRY_ENTRY" != "null" ]; then
+  echo "### Current State (from registry.json)"
   echo '```json'
-  cat "$STATE_FILE"
+  echo "$REGISTRY_ENTRY"
   echo '```'
   echo ""
+else
+  STATE_FILE="$WORKER_DIR/state.json"
+  if [ -f "$STATE_FILE" ] && [ -s "$STATE_FILE" ]; then
+    echo "### Current State (from state.json)"
+    echo '```json'
+    cat "$STATE_FILE"
+    echo '```'
+    echo ""
+  fi
 fi
 
 # Memory
@@ -159,22 +171,43 @@ echo "Use \`mcp__worker-fleet__*\` MCP tools for messaging, tasks, inbox, commit
 echo "Deploy: \`./scripts/deploy.sh --skip-langfuse --service static|web\` (test). Never \`--service core\` without Warren approval."
 echo ""
 
-# Mission (compact — first 40 lines)
+# Mission — show CURRENT PRIORITY section if present, else first 60 lines
 MISSION_FILE="$WORKER_DIR/mission.md"
 if [ -f "$MISSION_FILE" ] && [ -s "$MISSION_FILE" ]; then
   echo "### Mission (compact)"
   echo "Re-read full mission: \`${MISSION_FILE}\`"
   echo ""
-  head -40 "$MISSION_FILE"
-  echo ""
-  echo "(Truncated. Read full file for complete mission.)"
+  # Try to extract CURRENT PRIORITY section
+  CURRENT_PRIORITY=$(awk '/^## CURRENT PRIORITY/{found=1} found{print} found && /^## / && !/^## CURRENT PRIORITY/{exit}' "$MISSION_FILE" 2>/dev/null | head -30)
+  if [ -n "$CURRENT_PRIORITY" ]; then
+    echo "$CURRENT_PRIORITY"
+    echo ""
+    echo "(Showing CURRENT PRIORITY section. Read full mission for complete context.)"
+  else
+    head -60 "$MISSION_FILE"
+    echo ""
+    echo "(Truncated. Read full file for complete mission.)"
+  fi
   echo ""
 fi
 
+# In-progress tasks
+TASKS_FILE="$WORKER_DIR/tasks.json"
+if [ -f "$TASKS_FILE" ] && [ -s "$TASKS_FILE" ]; then
+  IN_PROGRESS=$(jq -r 'to_entries[] | select(.value.status == "in_progress") | "  [\(.key)] \(.value.subject)"' "$TASKS_FILE" 2>/dev/null || true)
+  PENDING=$(jq -r '[to_entries[] | select(.value.status == "pending")] | length' "$TASKS_FILE" 2>/dev/null || echo "0")
+  if [ -n "$IN_PROGRESS" ]; then
+    echo "### In-Progress Tasks (resume these first)"
+    echo "$IN_PROGRESS"
+    echo "($PENDING pending tasks also queued)"
+    echo ""
+  fi
+fi
+
 echo "### Key Reminders"
-echo "- Re-read MEMORY.md for discoveries and progress: \`${MEMORY_FILE}\`"
-echo "- Update MEMORY.md with new discoveries before context fills up again"
-echo "- Update state.json after each cycle (cycles_completed++, issues_found/fixed)"
+echo "- Drain inbox first: \`read_inbox(clear=true)\`"
+echo "- Update memory: \`write_memory(mode='replace_section', section='...', content='...')\` or edit \`${MEMORY_FILE}\`"
+echo "- Update state: \`update_state('cycles_completed', N)\` — NOT state.json (deprecated)"
 echo "- NEVER checkout main. Stay on branch \`worker/${WORKER_NAME}\`"
 echo "- Stage only specific files (never \`git add -A\`)"
 echo "- Post-commit hook auto-notifies Warren"
