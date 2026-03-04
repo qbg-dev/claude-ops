@@ -114,9 +114,11 @@ assert_equals "stuck: deploy output does not match" "no-match" "$STATUS"
 echo ""
 echo "── watchdog: config values ──"
 
-WATCHDOG="$HOME/.boring/scripts/harness-watchdog.sh"
+# Architecture: v3 uses worker-watchdog.sh (full-featured, supports flat workers)
+# harness-watchdog.sh is a simplified crash-only watchdog for legacy harnesses.
+WATCHDOG="$HOME/.boring/scripts/worker-watchdog.sh"
 
-# STUCK_THRESHOLD_SEC must be 1200 (20 min) — hardcoded, not configurable via env default
+# STUCK_THRESHOLD_SEC must be 1200 (20 min) — configurable via env, default 1200
 THRESHOLD=$(grep 'STUCK_THRESHOLD_SEC=' "$WATCHDOG" | head -1 \
   | sed 's/.*:-//' | grep -oE '^[0-9]+')
 assert_equals "stuck threshold hardcoded to 1200 (20 min)" "1200" "$THRESHOLD"
@@ -127,52 +129,45 @@ assert_file_contains "watchdog detects worker/* canonicals" "$WATCHDOG" 'worker/
 assert_file_contains "watchdog calls _check_scrollback_stuck" "$WATCHDOG" "_check_scrollback_stuck"
 
 echo ""
-echo "── stop hook: resolve_progress_file ──"
+echo "── stop hook: tasks.json dispatch ──"
 
-DISPATCH="$HOME/.boring/hooks/gates/stop-harness-dispatch.sh"
+# Architecture: v3 stop hook is stop-worker-dispatch.sh (not stop-harness-dispatch.sh)
+DISPATCH="$HOME/.boring/hooks/gates/stop-worker-dispatch.sh"
 
-# resolve_progress_file must return tasks.json only (no progress.json fallback)
-assert_file_contains "dispatch: resolve_progress_file exists" "$DISPATCH" "resolve_progress_file"
-assert_file_contains "dispatch: returns tasks.json path" "$DISPATCH" "tasks.json"
+# Stop hook must reference tasks.json for task-state dispatch decisions
+assert_file_contains "dispatch: references tasks.json" "$DISPATCH" "tasks.json"
 
-# Verify no progress.json fallback inside the function
-FUNC_BODY=$(awk '/^resolve_progress_file\(\)/,/^}/' "$DISPATCH")
-echo "$FUNC_BODY" | grep -q 'progress\.json' && HAS_PJSON="yes" || HAS_PJSON="no"
-assert_equals "resolve_progress_file: no progress.json fallback" "no" "$HAS_PJSON"
+# Verify no progress.json fallback (v2 regression: dispatched based on progress.json)
+HAS_PJSON="no"
+grep -q 'progress\.json' "$DISPATCH" 2>/dev/null && HAS_PJSON="yes" || true
+assert_equals "dispatch: no progress.json fallback" "no" "$HAS_PJSON"
 
 echo ""
 echo "── harness_sleep_duration: flat worker path ──"
 
-# Create a fake project dir with a worker state.json
+# Create a fake project dir with a registry.json (v3 flat worker format)
+# harness_sleep_duration reads from .claude/workers/registry.json[worker_name]
 PROJ_DIR="$TMPDIR_TEST/proj"
 mkdir -p "$PROJ_DIR/.claude/workers/my-worker"
+mkdir -p "$PROJ_DIR/.claude/workers/no-state"
 
 # perpetual:true, sleep_duration:600
-cat > "$PROJ_DIR/.claude/workers/my-worker/state.json" <<'JSON'
-{"perpetual": true, "sleep_duration": 600, "status": "active"}
+cat > "$PROJ_DIR/.claude/workers/registry.json" <<'JSON'
+{"my-worker": {"perpetual": true, "sleep_duration": 600, "status": "active"}}
 JSON
 SLEEP_DUR=$(PROJECT_ROOT="$PROJ_DIR" harness_sleep_duration "worker/my-worker")
-assert_equals "sleep_duration: reads 600 from state.json" "600" "$SLEEP_DUR"
+assert_equals "sleep_duration: reads 600 from registry.json" "600" "$SLEEP_DUR"
 
 # perpetual:false → "none" (watchdog skips respawn)
-cat > "$PROJ_DIR/.claude/workers/my-worker/state.json" <<'JSON'
-{"perpetual": false, "status": "active"}
+cat > "$PROJ_DIR/.claude/workers/registry.json" <<'JSON'
+{"my-worker": {"perpetual": false, "status": "active"}}
 JSON
 SLEEP_DUR2=$(PROJECT_ROOT="$PROJ_DIR" harness_sleep_duration "worker/my-worker")
 assert_equals "sleep_duration: perpetual:false returns 'none'" "none" "$SLEEP_DUR2"
 
-# Missing state.json → falls through to default
-mkdir -p "$PROJ_DIR/.claude/workers/no-state"
+# Missing entry in registry → "none" (watchdog treats unregistered worker as non-perpetual)
+# jq null | .perpetual == null → "unset" → harness_sleep_duration returns "none"
 SLEEP_DUR3=$(PROJECT_ROOT="$PROJ_DIR" harness_sleep_duration "worker/no-state" 2>/dev/null || echo "")
-# Default is 900 (from harness-jq.sh) — just verify it returns something numeric or empty
-case "$SLEEP_DUR3" in
-  ''|*[!0-9]*)
-    # Empty is fine (no default set in harness_sleep_duration for flat workers with no file)
-    assert_equals "sleep_duration: no state.json → empty" "" "$SLEEP_DUR3"
-    ;;
-  *)
-    assert "sleep_duration: no state.json → numeric default" "$SLEEP_DUR3" "$SLEEP_DUR3"
-    ;;
-esac
+assert_equals "sleep_duration: unregistered worker returns 'none'" "none" "$SLEEP_DUR3"
 
 test_summary

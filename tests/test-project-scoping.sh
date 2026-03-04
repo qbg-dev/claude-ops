@@ -16,15 +16,17 @@ PANE_REGISTRY="${BORING_DIR}/state/pane-registry.json"
 
 echo "── project scoping — static analysis ──"
 
-# ── Test 1: check-flat-workers.sh filters by project_root ────────────────────
+# ── Test 1: check-flat-workers.sh scopes to project root ─────────────────────
+# Architecture: v3 uses registry.json at $PROJECT_ROOT/.claude/workers/registry.json
+# Scoping is via file-path (PROJECT_ROOT variable), not a project_root field in pane-registry.
 TOTAL=$((TOTAL + 1))
-HITS=$(grep -n 'project_root\|PROJECT_ROOT' "$HOME/.claude-ops/scripts/check-flat-workers.sh" 2>/dev/null || true)
-if echo "$HITS" | grep -q "project_root"; then
-  echo -e "  ${GREEN}PASS${RESET} check-flat-workers.sh filters by project_root"
+HITS=$(grep -n 'PROJECT_ROOT\|project_root' "$HOME/.claude-ops/scripts/check-flat-workers.sh" 2>/dev/null || true)
+if echo "$HITS" | grep -qi "project_root"; then
+  echo -e "  ${GREEN}PASS${RESET} check-flat-workers.sh scopes to project root"
   PASS=$((PASS + 1))
 else
-  echo -e "  ${RED}FAIL${RESET} check-flat-workers.sh missing project_root filter"
-  echo "    pane lookups must include project_root guard to avoid cross-project leakage"
+  echo -e "  ${RED}FAIL${RESET} check-flat-workers.sh missing project root scoping"
+  echo "    must use PROJECT_ROOT to scope registry.json path to current project"
   FAIL=$((FAIL + 1))
 fi
 
@@ -61,27 +63,31 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 5: worker-session-register.sh includes project_root in entries ───────
+# ── Test 5: worker-session-register.sh scopes writes to project root ──────────
+# Architecture: v3 resolves project root from worktree path and writes to
+# $PROJECT_ROOT/.claude/workers/registry.json — scoped by file path.
 TOTAL=$((TOTAL + 1))
 REG_SH="$HOME/.claude-ops/hooks/publishers/worker-session-register.sh"
-if grep -q 'project_root' "$REG_SH" 2>/dev/null; then
-  echo -e "  ${GREEN}PASS${RESET} worker-session-register.sh writes project_root to registry"
+if grep -q '_PROJ_ROOT\|PROJECT_ROOT' "$REG_SH" 2>/dev/null; then
+  echo -e "  ${GREEN}PASS${RESET} worker-session-register.sh scopes writes to project root"
   PASS=$((PASS + 1))
 else
-  echo -e "  ${RED}FAIL${RESET} worker-session-register.sh missing project_root in registry write"
+  echo -e "  ${RED}FAIL${RESET} worker-session-register.sh missing project root scoping"
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 6: mcp/worker-fleet/index.ts scopes all pane lookups ────────────────
+# ── Test 6: mcp/worker-fleet/index.ts scopes all registry ops to PROJECT_ROOT ─
+# Architecture: v3 uses PROJECT_ROOT to scope WORKERS_DIR and REGISTRY_PATH
+# (file-path scoping, not per-entry project_root field in pane-registry.json).
 TOTAL=$((TOTAL + 1))
 MCP_TS="$HOME/.claude-ops/mcp/worker-fleet/index.ts"
-# Count pane registry reads that include project_root filter
-PROJ_GUARDED=$(grep -c 'project_root.*PROJECT_ROOT\|PROJECT_ROOT.*project_root' "$MCP_TS" 2>/dev/null || echo 0)
-if [ "$PROJ_GUARDED" -gt 3 ]; then
-  echo -e "  ${GREEN}PASS${RESET} mcp/worker-fleet/index.ts uses project_root scoping (${PROJ_GUARDED} guards)"
+# Count lines where PROJECT_ROOT is used to build scoped paths (WORKERS_DIR, REGISTRY_PATH)
+PROJ_GUARDED=$(grep -c 'WORKERS_DIR\|REGISTRY_PATH' "$MCP_TS" 2>/dev/null || echo 0)
+if [ "$PROJ_GUARDED" -gt 2 ]; then
+  echo -e "  ${GREEN}PASS${RESET} mcp/worker-fleet/index.ts uses PROJECT_ROOT-scoped paths ($PROJ_GUARDED uses)"
   PASS=$((PASS + 1))
 else
-  echo -e "  ${RED}FAIL${RESET} mcp/worker-fleet/index.ts has too few project_root guards ($PROJ_GUARDED)"
+  echo -e "  ${RED}FAIL${RESET} mcp/worker-fleet/index.ts missing PROJECT_ROOT-scoped paths ($PROJ_GUARDED)"
   FAIL=$((FAIL + 1))
 fi
 

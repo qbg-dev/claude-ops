@@ -156,13 +156,14 @@ fi
 # PART 3: Structural checks — files that SHOULD have find_own_pane
 # ═════════════════════════════════════════════════════════════════════
 
-# Test 12: harness-dispatch.sh defines find_own_pane
-assert_file_contains "harness-dispatch.sh defines find_own_pane" \
-  "$HOME/.boring/hooks/harness-dispatch.sh" "find_own_pane()"
+# Test 12: fleet-jq.sh defines hook_find_own_pane (process-tree method)
+# Architecture: v3 moved find_own_pane → hook_find_own_pane in fleet-jq.sh
+assert_file_contains "fleet-jq.sh defines hook_find_own_pane" \
+  "$HOME/.boring/lib/fleet-jq.sh" "hook_find_own_pane()"
 
-# Test 13: harness-dispatch.sh defines pane_id_to_target
-assert_file_contains "harness-dispatch.sh defines pane_id_to_target" \
-  "$HOME/.boring/hooks/harness-dispatch.sh" "pane_id_to_target()"
+# Test 13: fleet-jq.sh defines hook_pane_target (renamed from pane_id_to_target)
+assert_file_contains "fleet-jq.sh defines hook_pane_target" \
+  "$HOME/.boring/lib/fleet-jq.sh" "hook_pane_target()"
 
 # Test 14: report-issue.sh has its own _find_own_pane (inlined)
 assert_file_contains "report-issue.sh has _find_own_pane" \
@@ -172,15 +173,16 @@ assert_file_contains "report-issue.sh has _find_own_pane" \
 assert_file_contains "report-issue.sh has _pane_id_to_target" \
   "$HOME/.boring/bin/report-issue.sh" "_pane_id_to_target()"
 
-# Test 16: discover_agent_panes uses find_own_pane, not display-message
-DISCOVER_SECTION=$(sed -n '/^discover_agent_panes/,/^}/p' "$HOME/.boring/hooks/harness-dispatch.sh" 2>/dev/null || echo "")
+# Test 16: hook_find_own_pane in fleet-jq.sh uses process-tree, not display-message
+# Architecture: v3 uses hook_find_own_pane (in fleet-jq.sh) sourced by all hooks.
+FUNC_SRC=$(sed -n '/^hook_find_own_pane/,/^}/p' "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || echo "")
 TOTAL=$((TOTAL + 1))
-if echo "$DISCOVER_SECTION" | grep -q 'find_own_pane' && ! echo "$DISCOVER_SECTION" | grep -q 'display-message -p'; then
-  echo -e "  ${GREEN}PASS${RESET} discover_agent_panes uses find_own_pane"
+if echo "$FUNC_SRC" | grep -q 'pane_pid\|ppid' && ! echo "$FUNC_SRC" | grep -q 'display-message -p'; then
+  echo -e "  ${GREEN}PASS${RESET} hook_find_own_pane uses process-tree, not display-message"
   PASS=$((PASS + 1))
 else
-  echo -e "  ${RED}FAIL${RESET} discover_agent_panes uses find_own_pane"
-  echo "    Section should use find_own_pane and not display-message -p"
+  echo -e "  ${RED}FAIL${RESET} hook_find_own_pane must use process-tree, not display-message -p"
+  echo "    File: $HOME/.boring/lib/fleet-jq.sh, function: hook_find_own_pane"
   FAIL=$((FAIL + 1))
 fi
 
