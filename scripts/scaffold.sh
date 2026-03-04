@@ -157,7 +157,7 @@ if [ ! -f "$MM_DIR/permissions.json" ]; then
 {
   "model": "sonnet",
   "permission_mode": "bypassPermissions",
-  "denyList": [
+  "disallowedTools": [
     "Bash(./scripts/deploy-prod*)",
     "Bash(./scripts/deploy.sh*)",
     "Bash(git push*)",
