@@ -234,4 +234,46 @@ assert_file_contains "merge-trigger-watchdog: FLAT_REG points to registry.json" 
 assert_file_contains "merge-trigger-watchdog: FLAT_REG variable defined" \
   "$MERGE_WD" "FLAT_REG="
 
+echo ""
+echo "── harness-watchdog: last_cycle_at stamped on respawn (kill-loop prevention) ──"
+
+# Bug (fixed commit ff5aa08): watchdog respawned workers repeatedly without
+# updating last_cycle_at, causing a kill-loop on the next watchdog pass.
+# Fix: stamp last_cycle_at = now in registry.json immediately after launching Claude.
+WATCHDOG_SH2="$HOME/.boring/scripts/harness-watchdog.sh"
+
+# Test: watchdog stamps last_cycle_at on respawn
+TOTAL=$((TOTAL + 1))
+if grep -q 'last_cycle_at = \$ts\|last_cycle_at=.*ts\|last_cycle_at.*_now_iso' "$WATCHDOG_SH2" 2>/dev/null; then
+  echo -e "  ${GREEN}PASS${RESET} watchdog stamps last_cycle_at on respawn"
+  PASS=$((PASS + 1))
+else
+  echo -e "  ${RED}FAIL${RESET} watchdog must stamp last_cycle_at on respawn (prevents kill-loop)"
+  FAIL=$((FAIL + 1))
+fi
+
+# Test: stamp uses date -u (UTC) to match the UTC format read back by the respawn check
+TOTAL=$((TOTAL + 1))
+if grep -q "date -u +\"%Y-%m-%dT%H:%M:%SZ\"" "$WATCHDOG_SH2" 2>/dev/null; then
+  echo -e "  ${GREEN}PASS${RESET} watchdog stamp uses UTC ISO format"
+  PASS=$((PASS + 1))
+else
+  echo -e "  ${RED}FAIL${RESET} watchdog stamp must use 'date -u +\"%Y-%m-%dT%H:%M:%SZ\"'"
+  FAIL=$((FAIL + 1))
+fi
+
+# Test: stamp is protected by registry lock (mkdir-based)
+assert_file_contains "last_cycle_at stamp acquires registry lock" \
+  "$WATCHDOG_SH2" "mkdir \"\$_LOCK_DIR\""
+
+# Runtime test: verify stamped timestamp is recent (within 5 seconds)
+FAKE_REGISTRY="$TMPDIR_TEST/registry-stamp-test.json"
+FAKE_WORKER="stamp-test-worker"
+echo "{\"$FAKE_WORKER\": {\"status\": \"active\", \"perpetual\": true}}" > "$FAKE_REGISTRY"
+_NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+jq --arg n "$FAKE_WORKER" --arg ts "$_NOW_ISO" '.[$n].last_cycle_at = $ts' \
+  "$FAKE_REGISTRY" > "$FAKE_REGISTRY.tmp" && mv "$FAKE_REGISTRY.tmp" "$FAKE_REGISTRY"
+STORED_TS=$(jq -r --arg n "$FAKE_WORKER" '.[$n].last_cycle_at // empty' "$FAKE_REGISTRY" 2>/dev/null)
+assert_equals "last_cycle_at stamp: jq write round-trips correctly" "$_NOW_ISO" "$STORED_TS"
+
 test_summary

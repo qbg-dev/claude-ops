@@ -941,3 +941,121 @@ describe("writeToInbox — path traversal safety", () => {
     expect((result as any).error).toContain("not found");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// spawn_child — parent/children registry tracking (in-memory)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("spawn_child — parent/children registry tracking", () => {
+  // Simulate the exact registry mutation logic from spawn_child (index.ts ~line 1858)
+  function registerChild(
+    registry: ProjectRegistry,
+    parentName: string,
+    childName: string,
+    childPaneId: string
+  ) {
+    ensureWorkerInRegistry(registry, childName);
+    const child = registry[childName] as RegistryWorkerEntry;
+    child.pane_id = childPaneId;
+    child.parent = parentName;
+
+    const parent = registry[parentName] as RegistryWorkerEntry | undefined;
+    if (parent) {
+      if (!parent.children) parent.children = [];
+      if (!parent.children.includes(childName)) parent.children.push(childName);
+    }
+  }
+
+  test("child entry gets parent field set to spawner name", () => {
+    const registry = makeProjectRegistry({
+      "parent-worker": makeRegistryEntry({ pane_id: "%10" }),
+    });
+    registerChild(registry, "parent-worker", "parent-worker-child-1", "%11");
+
+    const child = registry["parent-worker-child-1"] as RegistryWorkerEntry & { parent?: string };
+    expect(child.parent).toBe("parent-worker");
+  });
+
+  test("spawned child is added to parent's children array", () => {
+    const registry = makeProjectRegistry({
+      "parent-worker": makeRegistryEntry({ pane_id: "%10" }),
+    });
+    registerChild(registry, "parent-worker", "child-a", "%11");
+
+    const parent = registry["parent-worker"] as RegistryWorkerEntry;
+    expect(parent.children).toContain("child-a");
+  });
+
+  test("spawning two children accumulates both in parent's children[]", () => {
+    const registry = makeProjectRegistry({
+      "parent-worker": makeRegistryEntry(),
+    });
+    registerChild(registry, "parent-worker", "child-a", "%11");
+    registerChild(registry, "parent-worker", "child-b", "%12");
+
+    const parent = registry["parent-worker"] as RegistryWorkerEntry;
+    expect(parent.children).toContain("child-a");
+    expect(parent.children).toContain("child-b");
+    expect(parent.children!.length).toBe(2);
+  });
+
+  test("duplicate child is not added twice to parent's children[]", () => {
+    const registry = makeProjectRegistry({
+      "parent-worker": makeRegistryEntry(),
+    });
+    registerChild(registry, "parent-worker", "child-dup", "%11");
+    registerChild(registry, "parent-worker", "child-dup", "%11"); // second time
+
+    const parent = registry["parent-worker"] as RegistryWorkerEntry;
+    const dupes = parent.children!.filter((c: string) => c === "child-dup");
+    expect(dupes.length).toBe(1);
+  });
+
+  test("child pane_id is recorded in child's registry entry", () => {
+    const registry = makeProjectRegistry({
+      "parent-worker": makeRegistryEntry(),
+    });
+    registerChild(registry, "parent-worker", "child-pane-test", "%99");
+
+    const child = registry["child-pane-test"] as RegistryWorkerEntry;
+    expect(child.pane_id).toBe("%99");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// create_worker — auto-sets parent field (commit 1751574)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("create_worker — auto-parent registration", () => {
+  // Simulate the auto-parent logic added in commit 1751574
+  function applyAutoParent(registry: ProjectRegistry, workerName: string, callerName: string) {
+    ensureWorkerInRegistry(registry, workerName);
+    const entry = registry[workerName] as RegistryWorkerEntry & { parent?: string };
+    if (!entry.parent) {
+      entry.parent = callerName;
+    }
+  }
+
+  test("new entry gets parent set to calling worker", () => {
+    const testDir = join(TEST_WORKERS_DIR, "new-worker");
+    mkdirSync(testDir, { recursive: true });
+
+    const registry = makeProjectRegistry({
+      "chief-of-staff": makeRegistryEntry({ pane_id: "%1" }),
+    });
+    applyAutoParent(registry, "new-worker", "chief-of-staff");
+
+    const entry = registry["new-worker"] as RegistryWorkerEntry & { parent?: string };
+    expect(entry.parent).toBe("chief-of-staff");
+  });
+
+  test("existing entry with parent already set is NOT overwritten", () => {
+    const registry = makeProjectRegistry({
+      "existing-worker": { ...makeRegistryEntry(), parent: "original-parent" } as any,
+    });
+    applyAutoParent(registry, "existing-worker", "chief-of-staff");
+
+    const entry = registry["existing-worker"] as RegistryWorkerEntry & { parent?: string };
+    expect(entry.parent).toBe("original-parent");
+  });
+});

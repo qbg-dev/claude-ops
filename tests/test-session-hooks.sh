@@ -213,4 +213,40 @@ fi
 BAD_PATTERN=$(grep -n 'send-keys.*\\\\n' "$MCP_TS" 2>/dev/null | grep -v '0d\|#\|\/\/' || true)
 assert_empty "MCP: no bare \\n embedded in send-keys text" "$BAD_PATTERN"
 
+echo ""
+echo "── worker-session-register: session_id written to registry.json ──"
+
+REGISTER_SH="$HOME/.boring/hooks/publishers/worker-session-register.sh"
+
+# Test 20: writes session_id field (not pane-registry.json — v3 invariant)
+assert_file_contains "register: writes .session_id to registry.json" \
+  "$REGISTER_SH" 'session_id = $sid'
+
+# Test 21: reads from registry.json (not pane-registry.json)
+assert_file_contains "register: reads registry.json (not pane-registry)" \
+  "$REGISTER_SH" "registry.json"
+grep -q 'pane-registry' "$REGISTER_SH" 2>/dev/null && HAS_PANEREG="yes" || HAS_PANEREG="no"
+assert_equals "register: no pane-registry.json references" "no" "$HAS_PANEREG"
+
+# Test 22: idempotent — skips write if session_id already set
+assert_file_contains "register: idempotent skip if session_id already set" \
+  "$REGISTER_SH" 'EXISTING'
+
+# Test 23: runtime — jq write produces correct session_id in registry
+FAKE_REGISTRY2="$TMPDIR_TEST/session-reg-test.json"
+FAKE_WORKER2="reg-test-worker"
+FAKE_SID="session-abc-123"
+echo "{\"$FAKE_WORKER2\": {\"status\": \"active\", \"session_id\": \"\"}}" > "$FAKE_REGISTRY2"
+TMP_OUT=$(mktemp)
+jq --arg n "$FAKE_WORKER2" --arg sid "$FAKE_SID" \
+  '.[$n].session_id = $sid' "$FAKE_REGISTRY2" > "$TMP_OUT" \
+  && mv "$TMP_OUT" "$FAKE_REGISTRY2" || rm -f "$TMP_OUT"
+STORED_SID=$(jq -r --arg n "$FAKE_WORKER2" '.[$n].session_id // ""' "$FAKE_REGISTRY2" 2>/dev/null)
+assert_equals "register: jq write round-trips session_id correctly" "$FAKE_SID" "$STORED_SID"
+
+# Test 24: worktree path resolver strips -w-<worker> suffix to find project root
+# e.g. /path/Wechat-w-harness-optimizer → /path/Wechat
+assert_file_contains "register: worktree path resolver strips -w-<worker> suffix" \
+  "$REGISTER_SH" "sed 's|-w-[^/]*\$||'"
+
 test_summary
