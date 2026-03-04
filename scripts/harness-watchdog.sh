@@ -218,7 +218,17 @@ _resume_in_pane() {
     echo "Watchdog respawn ($reason). You are worker $worker. Read mission.md and MEMORY.md, then start your next cycle." > "$seed_file"
   fi
 
-  # 4. Launch Claude
+  # 4. Stamp last_cycle_at = now so next watchdog pass skips (prevents kill-loop)
+  local _now_iso; _now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+  mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
+  local _WAIT=0
+  while ! mkdir "$_LOCK_DIR" 2>/dev/null; do sleep 0.5; _WAIT=$((_WAIT+1)); [ "$_WAIT" -ge 10 ] && break; done
+  local _tmp; _tmp=$(mktemp)
+  jq --arg n "$worker" --arg ts "$_now_iso" '.[$n].last_cycle_at = $ts' "$REGISTRY" > "$_tmp" 2>/dev/null && mv "$_tmp" "$REGISTRY" || rm -f "$_tmp"
+  rmdir "$_LOCK_DIR" 2>/dev/null || true
+
+  # 5. Launch Claude
   local claude_cmd
   claude_cmd=$(_build_claude_cmd "$worker" "$prev_session_id")
   tmux send-keys -t "$pane_id" "$claude_cmd" 2>/dev/null || true
