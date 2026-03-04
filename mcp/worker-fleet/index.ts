@@ -2,15 +2,13 @@
 /**
  * worker-fleet MCP server — Tools for worker fleet coordination.
  *
- * 19 tools in 8 categories:
+ * 15 tools in 5 categories:
  *   Messaging (3):  send_message, broadcast, read_inbox
  *   Tasks (3):      create_task, update_task, list_tasks
  *   State (2):      get_worker_state, update_state
- *   Fleet (2):      fleet_status, remote_health
- *   Deploy (2):     deploy, health_check
+ *   Fleet (1):      fleet_status
  *   Lifecycle (4):  recycle, spawn_child, register_pane, check_config
  *   Management (1): create_worker
- *   External (1):   post_to_nexus
  *
  * Task CRUD and inbox are native TS (no shell subprocess).
  * Messaging writes inbox first (durable), then fires bus (best-effort).
@@ -778,9 +776,6 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 | \`get_worker_state(name?)\` | Read any worker's state from registry.json |
 | \`update_state(key, value)\` | Update your state in registry.json + emit bus event |
 | \`fleet_status()\` | Full fleet overview (all workers) |
-| \`deploy(service?)\` | Deploy to TEST server + auto health check |
-| \`health_check(target?)\` | Check server health: \`test\`, \`prod\`, or \`both\` |
-| \`post_to_nexus(message, room?)\` | Post to Nexus chat (prefixed with your name) |
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
 | \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
 | \`register_pane()\` | Register this pane in registry.json (after recycle/manual launch) |
@@ -791,7 +786,7 @@ These are native MCP tool calls — no bash wrappers needed.
 ## Rules
 - **Fix everything.** Never just report issues — investigate, fix, deploy, document in MEMORY.md.
 - **Git discipline**: Stage only specific files (\`git add src/foo.ts\`). NEVER \`git add -A\`. Commit to branch **${branch}** only. Never checkout main.
-- **Deploy**: TEST only. Commit then \`deploy(service="static")\`. The deploy tool auto-checks health. Never \`core\` without Warren approval.
+- **Deploy**: TEST only. Commit then run \`bash ~/Desktop/zPersonalProjects/Wechat/scripts/deploy.sh --skip-langfuse --service static\`. Never \`core\` without Warren approval.
 - **Verify before completing**: Tests pass + TypeScript clean + deploy succeeds + endpoint/UI verified.
 - **Report everything to chief-of-staff via MCP**: On any bug, error, test failure, completed task, or finding worth noting — use \`send_message(to="chief-of-staff", content="...", summary="...")\`. Never append to inbox.jsonl directly. Never silently move on.
 - **Send results back**: When your mission produces output (analysis, compiled data, recommendations) — send it to chief-of-staff via \`send_message\`.
@@ -1613,133 +1608,8 @@ server.registerTool(
   }
 );
 
-server.registerTool(
-  "remote_health",
-  { description: "Check connectivity to the remote relay server (cross-machine fleet communication)" },
-  async () => {
-    if (!REMOTE_RELAY_URL) {
-      return { content: [{ type: "text" as const, text: "No REMOTE_RELAY_URL configured" }] };
-    }
-    const result = await relayFetch("GET", "/health");
-    if (!result) {
-      return { content: [{ type: "text" as const, text: `Remote relay unreachable at ${REMOTE_RELAY_URL}` }], isError: true };
-    }
-    return { content: [{ type: "text" as const, text: `Remote relay OK: ${JSON.stringify(result)}` }] };
-  }
-);
-
 // ═══════════════════════════════════════════════════════════════════
-// DEPLOY & HEALTH TOOLS (2)
-// ═══════════════════════════════════════════════════════════════════
-
-server.registerTool(
-  "deploy",
-  { description: "Deploy to test server (workers cannot deploy to prod). Runs deploy.sh with --skip-langfuse, then auto-checks health.", inputSchema: {
-    service: z.enum(["static", "web", "core", "all"]).optional()
-      .describe("Which service to deploy (default: static). 'static' = zero downtime UI only. 'core' requires Warren approval."),
-  } },
-  async ({ service }) => {
-    const svc = service || "static";
-
-    // Guard: workers cannot deploy to prod
-    if (WORKER_NAME === "chief-of-staff" || WORKER_NAME === "quick-fixer") {
-      // These workers have special deploy permissions but still only test via this tool
-    }
-
-    // Guard: core deploy needs Warren approval
-    if (svc === "core") {
-      return {
-        content: [{ type: "text" as const, text: "Error: --service core restarts the WeChat callback handler. Message Warren for approval first, then use bash directly." }],
-        isError: true,
-      };
-    }
-
-    try {
-      // Step 1: Deploy to test
-      const deployArgs = ["--skip-langfuse"];
-      if (svc !== "all") deployArgs.push("--service", svc);
-      const deployScript = join(PROJECT_ROOT, "scripts/deploy.sh");
-
-      if (!existsSync(deployScript)) {
-        return {
-          content: [{ type: "text" as const, text: `Error: Deploy script not found at ${deployScript}` }],
-          isError: true,
-        };
-      }
-
-      const result = runScript(deployScript, deployArgs, { timeout: 300_000 }); // 5 min timeout
-
-      if (result.exitCode !== 0) {
-        return {
-          content: [{ type: "text" as const, text: `Deploy failed (service=${svc}):\n${result.stderr || result.stdout}` }],
-          isError: true,
-        };
-      }
-
-      // Step 2: Auto health check
-      let healthOutput = "";
-      try {
-        const healthResult = spawnSync("curl", ["-sf", "--max-time", "10", "https://test.baoyuansmartlife.com/health"], {
-          encoding: "utf-8", timeout: 15_000,
-        });
-        if (healthResult.status === 0) {
-          healthOutput = `\nHealth check: PASS`;
-        } else {
-          healthOutput = `\nHealth check: FAIL (${healthResult.stderr || "no response"})`;
-        }
-      } catch {
-        healthOutput = "\nHealth check: FAIL (timeout)";
-      }
-
-      return {
-        content: [{ type: "text" as const, text: `Deployed service=${svc} to test${healthOutput}\n\n${result.stdout.slice(-500)}` }],
-      };
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
-
-server.registerTool(
-  "health_check",
-  { description: "Check test and/or prod server health (curl /health endpoint)", inputSchema: {
-    target: z.enum(["test", "prod", "both"]).optional().describe("Which server to check (default: test)"),
-  } },
-  async ({ target }) => {
-    const t = target || "test";
-    const results: string[] = [];
-
-    const checkHealth = (label: string, url: string): string => {
-      try {
-        const result = spawnSync("curl", ["-sf", "--max-time", "10", url], {
-          encoding: "utf-8", timeout: 15_000,
-        });
-        if (result.status === 0) {
-          // Parse health response for detail
-          try {
-            const data = JSON.parse(result.stdout);
-            const version = data.version || data.commit || "";
-            return `${label}: PASS${version ? ` (${version})` : ""}`;
-          } catch {
-            return `${label}: PASS`;
-          }
-        }
-        return `${label}: FAIL (status ${result.status})`;
-      } catch (e: any) {
-        return `${label}: FAIL (${e.message})`;
-      }
-    };
-
-    if (t === "test" || t === "both") {
-      results.push(checkHealth("test", "https://test.baoyuansmartlife.com/health"));
-    }
-    if (t === "prod" || t === "both") {
-      results.push(checkHealth("prod", "https://wx.baoyuansmartlife.com/health"));
-    }
-
-    return { content: [{ type: "text" as const, text: results.join("\n") }] };
-  }
-);
+// LIFECYCLE TOOLS — recycle & spawn_child (below)
 
 // ═══════════════════════════════════════════════════════════════════
 // LIFECYCLE TOOLS (2) — recycle & spawn_child
@@ -2367,72 +2237,6 @@ server.registerTool(
       ].filter(Boolean).join("\n");
 
       return { content: [{ type: "text" as const, text: summary }] };
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
-
-// ═══════════════════════════════════════════════════════════════════
-// NEXUS TOOL (1)
-// ═══════════════════════════════════════════════════════════════════
-
-server.registerTool(
-  "post_to_nexus",
-  { description: "Post a status message to a Nexus room with [worker-name] prefix", inputSchema: {
-    message: z.string().describe("Message content"),
-    room: z.string().optional().describe("Nexus room (default: nexus-qbg-zhu)"),
-  } },
-  async ({ message, room }) => {
-    try {
-      const targetRoom = room || "nexus-qbg-zhu";
-      const prefixedMessage = `[${WORKER_NAME}] ${message}`;
-
-      const nexusConfig = join(HOME, ".nexus-config");
-      let accessToken = process.env.NEXUS_ACCESS_TOKEN || "";
-      let homeserver = process.env.NEXUS_HOMESERVER || "https://footemp.bar";
-
-      if (!accessToken && existsSync(nexusConfig)) {
-        try {
-          const config = readJsonFile(nexusConfig);
-          accessToken = config?.access_token || config?.accessToken || "";
-          homeserver = config?.homeserver || homeserver;
-        } catch {}
-      }
-
-      if (!accessToken) {
-        return {
-          content: [{ type: "text" as const, text: `Nexus token not configured. Message not sent.\nIntended: [${WORKER_NAME}] ${message} → ${targetRoom}` }],
-          isError: true,
-        };
-      }
-
-      const txnId = `m${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-      const roomAlias = targetRoom.startsWith("#") ? targetRoom : `#${targetRoom}:footemp.bar`;
-
-      const resolveResult = spawnSync("curl", [
-        "-sf", "-H", `Authorization: Bearer ${accessToken}`,
-        `${homeserver}/_matrix/client/v3/directory/room/${encodeURIComponent(roomAlias)}`,
-      ], { encoding: "utf-8", timeout: 10_000 });
-
-      let roomId: string;
-      try { roomId = JSON.parse(resolveResult.stdout).room_id; } catch {
-        return { content: [{ type: "text" as const, text: `Failed to resolve room '${targetRoom}'` }], isError: true };
-      }
-
-      const sendResult = spawnSync("curl", [
-        "-sf", "-X", "PUT",
-        "-H", `Authorization: Bearer ${accessToken}`,
-        "-H", "Content-Type: application/json",
-        "-d", JSON.stringify({ msgtype: "m.text", body: prefixedMessage }),
-        `${homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txnId}`,
-      ], { encoding: "utf-8", timeout: 10_000 });
-
-      if (sendResult.status !== 0) {
-        return { content: [{ type: "text" as const, text: `Failed to send to Nexus: ${sendResult.stderr}` }], isError: true };
-      }
-
-      return { content: [{ type: "text" as const, text: `Posted to ${targetRoom}: [${WORKER_NAME}] ${message}` }] };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
