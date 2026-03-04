@@ -1078,13 +1078,22 @@ server.registerTool(
       return { content: [{ type: "text" as const, text: `Error: ${inboxResult.error}` }], isError: true };
     }
 
-    // Step 2: Fire bus for tmux instant delivery (best-effort)
+    // Step 2: Tmux instant delivery (best-effort)
+    // Prefer direct pane_id from registry.json (flat workers don't appear in pane-registry.json)
     try {
-      const args = ["send", recipientName, content];
-      if (summary) args.push("--summary", summary);
-      runScript(WORKER_MESSAGE_SH, args, { timeout: 10_000 });
+      const registry = readRegistry();
+      const entry = registry[recipientName] as RegistryWorkerEntry | undefined;
+      const paneId = entry?.pane_id;
+      if (paneId && isPaneAlive(paneId)) {
+        execSync(`tmux send-keys -t "${paneId}" ${JSON.stringify(`\n[msg from ${WORKER_NAME}] ${content}\n`)} ""`, { timeout: 5000 });
+      } else {
+        // Fall back to worker-message.sh (uses legacy pane-registry.json)
+        const args = ["send", recipientName, content];
+        if (summary) args.push("--summary", summary);
+        runScript(WORKER_MESSAGE_SH, args, { timeout: 10_000 });
+      }
     } catch {
-      // Bus failed — inbox already delivered, that's fine
+      // Tmux delivery failed — inbox already delivered, that's fine
     }
 
     return { content: [{ type: "text" as const, text: `Message sent to ${recipientName}` }] };
