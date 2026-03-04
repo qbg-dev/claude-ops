@@ -761,7 +761,7 @@ Then begin your cycle immediately.
 
 Every cycle follows this sequence:
 
-1. **Drain inbox** — \`read_inbox(clear=true)\` — act on messages before anything else
+1. **Drain inbox** — \`read_inbox()\` — act on messages before anything else (cursor-based, no data loss)
 2. **Check tasks** — \`list_tasks(filter="pending")\` — find highest-priority unblocked work
 3. **Claim** — \`update_task(task_id="T00N", status="in_progress")\` — mark what you're working on
 4. **Do the work** — investigate, fix, test, commit, deploy, verify
