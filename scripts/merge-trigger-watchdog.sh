@@ -8,13 +8,26 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 TRIGGER="$PROJECT_ROOT/.claude/workers/.merge-trigger"
-PANE_REG="${HOME}/.claude-ops/state/pane-registry.json"
+PANE_REG="${HARNESS_STATE_DIR:-${HOME}/.boring/state}/pane-registry.json"
+FLAT_REG="$PROJECT_ROOT/.claude/workers/registry.json"
 POLL_INTERVAL="${POLL_INTERVAL:-1}"
 
-# Resolve chief-of-staff pane
+# Resolve chief-of-staff pane — registry.json first (flat workers), then pane-registry.json (legacy)
 _find_chief_pane() {
-  jq -r 'to_entries[] | select(.value.harness == "worker/chief-of-staff") | .key' \
-    "$PANE_REG" 2>/dev/null | head -1 || echo ""
+  local result=""
+  # PRIMARY: registry.json (flat workers — new system)
+  if [ -f "$FLAT_REG" ]; then
+    result=$(jq -r '."chief-of-staff".pane_id // ""' "$FLAT_REG" 2>/dev/null || echo "")
+  fi
+  # FALLBACK: pane-registry.json panes section (unified format)
+  [ -z "${result:-}" ] && result=$(jq -r \
+    '[.panes | to_entries[] | select(.value.worker == "chief-of-staff" and .value.role == "worker") | .key] | first // ""' \
+    "$PANE_REG" 2>/dev/null || echo "")
+  # FALLBACK: pane-registry.json flat entries (project-scoped)
+  [ -z "${result:-}" ] && result=$(jq -r --arg proj "$PROJECT_ROOT" \
+    'to_entries[] | select(.key | startswith("%")) | select(.value.harness == "worker/chief-of-staff" and (.value.project_root // "") == $proj) | .key' \
+    "$PANE_REG" 2>/dev/null | head -1 || echo "")
+  echo "${result:-}"
 }
 
 _pane_target() {
