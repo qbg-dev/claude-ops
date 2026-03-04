@@ -355,6 +355,29 @@ function lintRegistry(registry: ProjectRegistry): DiagnosticIssue[] {
     }
   }
 
+  // Parent/child enforcement: every non-config worker should be either a parent (has children) or a child (has parent)
+  const allWorkerNames = Object.keys(registry).filter(n => n !== "_config");
+  for (const name of allWorkerNames) {
+    const w = registry[name] as RegistryWorkerEntry;
+    const hasParent = !!w.parent;
+    const hasChildren = Array.isArray(w.children) && w.children.length > 0;
+    if (!hasParent && !hasChildren) {
+      issues.push({ severity: "warning", check: "lint.orphan", message: `Worker '${name}' has no parent and no children — orphaned in hierarchy`, fix: `Set parent field (e.g. "chief-of-staff") or register children via spawn_child` });
+    }
+    // Validate parent reference exists in registry
+    if (w.parent && !registry[w.parent]) {
+      issues.push({ severity: "error", check: "lint.parent_missing", message: `Worker '${name}' references parent '${w.parent}' which doesn't exist in registry` });
+    }
+    // Validate children references exist in registry
+    if (w.children) {
+      for (const child of w.children) {
+        if (!registry[child]) {
+          issues.push({ severity: "error", check: "lint.child_missing", message: `Worker '${name}' references child '${child}' which doesn't exist in registry` });
+        }
+      }
+    }
+  }
+
   return issues;
 }
 
@@ -579,11 +602,24 @@ function resolveRecipient(to: string): {
     return { type: "pane", paneId: to };
   }
 
-  // "parent" — find operator worker
+  // "parent" — find parent worker (from registry parent field, then fallback to "operator")
   if (to === "parent") {
     try {
       const registry = readRegistry();
-      // Look for operator entry with a live pane
+      // 1. Check this worker's parent field
+      const myEntry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
+      const parentName = myEntry?.parent;
+      if (parentName) {
+        const parentEntry = registry[parentName] as RegistryWorkerEntry | undefined;
+        if (parentEntry?.pane_id && isPaneAlive(parentEntry.pane_id)) {
+          if (existsSync(join(WORKERS_DIR, parentName))) {
+            return { type: "worker", workerName: parentName };
+          }
+          return { type: "pane", paneId: parentEntry.pane_id };
+        }
+        return { type: "pane", error: `Parent '${parentName}' for worker '${WORKER_NAME}' has no live pane` };
+      }
+      // 2. Fallback: look for "operator" entry
       const opEntry = registry["operator"] as RegistryWorkerEntry | undefined;
       if (opEntry?.pane_id && isPaneAlive(opEntry.pane_id)) {
         if (existsSync(join(WORKERS_DIR, "operator"))) {
@@ -591,7 +627,7 @@ function resolveRecipient(to: string): {
         }
         return { type: "pane", paneId: opEntry.pane_id };
       }
-      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}'` };
+      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}' (no parent field set, no operator entry)` };
     } catch {
       return { type: "pane", error: "Failed to read registry" };
     }

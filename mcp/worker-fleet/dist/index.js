@@ -19707,6 +19707,25 @@ function lintRegistry(registry2) {
       issues.push({ severity: "warning", check: "lint.duplicate_pane", message: `Worker '${name}' has ${panes.length} live panes: ${panes.join(", ")}` });
     }
   }
+  const allWorkerNames = Object.keys(registry2).filter((n) => n !== "_config");
+  for (const name of allWorkerNames) {
+    const w = registry2[name];
+    const hasParent = !!w.parent;
+    const hasChildren = Array.isArray(w.children) && w.children.length > 0;
+    if (!hasParent && !hasChildren) {
+      issues.push({ severity: "warning", check: "lint.orphan", message: `Worker '${name}' has no parent and no children \u2014 orphaned in hierarchy`, fix: `Set parent field (e.g. "chief-of-staff") or register children via spawn_child` });
+    }
+    if (w.parent && !registry2[w.parent]) {
+      issues.push({ severity: "error", check: "lint.parent_missing", message: `Worker '${name}' references parent '${w.parent}' which doesn't exist in registry` });
+    }
+    if (w.children) {
+      for (const child of w.children) {
+        if (!registry2[child]) {
+          issues.push({ severity: "error", check: "lint.child_missing", message: `Worker '${name}' references child '${child}' which doesn't exist in registry` });
+        }
+      }
+    }
+  }
   return issues;
 }
 function acquireLock(lockPath, maxWaitMs = 1e4) {
@@ -19876,6 +19895,18 @@ function resolveRecipient(to) {
   if (to === "parent") {
     try {
       const registry2 = readRegistry();
+      const myEntry = registry2[WORKER_NAME];
+      const parentName = myEntry?.parent;
+      if (parentName) {
+        const parentEntry = registry2[parentName];
+        if (parentEntry?.pane_id && isPaneAlive(parentEntry.pane_id)) {
+          if (existsSync(join(WORKERS_DIR, parentName))) {
+            return { type: "worker", workerName: parentName };
+          }
+          return { type: "pane", paneId: parentEntry.pane_id };
+        }
+        return { type: "pane", error: `Parent '${parentName}' for worker '${WORKER_NAME}' has no live pane` };
+      }
       const opEntry = registry2["operator"];
       if (opEntry?.pane_id && isPaneAlive(opEntry.pane_id)) {
         if (existsSync(join(WORKERS_DIR, "operator"))) {
@@ -19883,7 +19914,7 @@ function resolveRecipient(to) {
         }
         return { type: "pane", paneId: opEntry.pane_id };
       }
-      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}'` };
+      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}' (no parent field set, no operator entry)` };
     } catch {
       return { type: "pane", error: "Failed to read registry" };
     }
