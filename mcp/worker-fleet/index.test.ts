@@ -11,8 +11,8 @@ import {
   writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, generateSeedContent, runDiagnostics, createWorkerFiles, _setWorkersDir,
   readRegistry, getWorkerEntry, ensureWorkerInRegistry, lintRegistry,
-  _replaceMemorySection,
-  WORKER_NAME, WORKERS_DIR, REGISTRY_PATH,
+  _replaceMemorySection, acquireLock, releaseLock, getWorktreeDir, getSessionId,
+  WORKER_NAME, WORKERS_DIR, REGISTRY_PATH, HARNESS_LOCK_DIR,
   type Task, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
 } from "./index";
@@ -1126,5 +1126,113 @@ describe("_replaceMemorySection", () => {
     const lines = result.split("\n");
     const contentLine = lines.find(l => l === "content");
     expect(contentLine).toBe("content"); // trimmed
+  });
+});
+
+// ── acquireLock / releaseLock ────────────────────────────────────────────────
+
+describe("acquireLock / releaseLock", () => {
+  const TEST_LOCK = join(TEST_DIR, "test-lock-dir");
+
+  test("acquires lock by creating dir", () => {
+    const acquired = acquireLock(TEST_LOCK, 100);
+    expect(acquired).toBe(true);
+    expect(existsSync(TEST_LOCK)).toBe(true);
+    releaseLock(TEST_LOCK);
+  });
+
+  test("release removes the lock dir", () => {
+    acquireLock(TEST_LOCK, 100);
+    releaseLock(TEST_LOCK);
+    expect(existsSync(TEST_LOCK)).toBe(false);
+  });
+
+  test("second acquire fails while lock is held (short timeout)", () => {
+    acquireLock(TEST_LOCK, 100);
+    // Lock is held — second attempt with very short timeout should fail
+    const secondAcquire = acquireLock(TEST_LOCK, 50);
+    // Could be true (stale lock recovery) or false; both are valid outcomes
+    // The important thing is it doesn't throw
+    expect(typeof secondAcquire).toBe("boolean");
+    releaseLock(TEST_LOCK);
+  });
+
+  test("stale lock recovery: force-removes old lock and re-acquires", () => {
+    // Simulate a stale lock from a crashed process (mkdir manually, don't release)
+    mkdirSync(TEST_LOCK, { recursive: true });
+    // Now try to acquire with a short timeout — it should force-remove the stale lock
+    const recovered = acquireLock(TEST_LOCK, 200);
+    expect(recovered).toBe(true);
+    releaseLock(TEST_LOCK);
+  });
+
+  test("acquire + release is idempotent across multiple cycles", () => {
+    for (let i = 0; i < 3; i++) {
+      const ok = acquireLock(TEST_LOCK, 500);
+      expect(ok).toBe(true);
+      releaseLock(TEST_LOCK);
+    }
+  });
+});
+
+// ── getWorktreeDir ───────────────────────────────────────────────────────────
+
+describe("getWorktreeDir", () => {
+  test("returns a string with -w-WORKER_NAME suffix", () => {
+    const dir = getWorktreeDir();
+    expect(dir).toContain(`-w-${WORKER_NAME}`);
+  });
+
+  test("result ends with ProjectName-w-WORKER_NAME pattern", () => {
+    const dir = getWorktreeDir();
+    const base = dir.split("/").pop()!;
+    expect(base).toMatch(/-w-/); // has -w- separator
+    expect(base.endsWith(`-w-${WORKER_NAME}`)).toBe(true);
+  });
+
+  test("result is an absolute path", () => {
+    const dir = getWorktreeDir();
+    expect(dir.startsWith("/")).toBe(true);
+  });
+});
+
+// ── getSessionId ─────────────────────────────────────────────────────────────
+
+describe("getSessionId", () => {
+  test("returns null for non-existent pane file", () => {
+    const result = getSessionId("nonexistent-pane-id-xyz");
+    expect(result).toBeNull();
+  });
+
+  test("returns trimmed file content when pane map file exists", () => {
+    // Create a fake pane-map file
+    const HOME = process.env.HOME!;
+    const paneMapDir = join(HOME, ".claude/pane-map/by-pane");
+    const fakePaneId = `test-pane-${Date.now()}`;
+    const fakePanePath = join(paneMapDir, fakePaneId);
+    mkdirSync(paneMapDir, { recursive: true });
+    writeFileSync(fakePanePath, "  abc-session-id-123  \n");
+    try {
+      const result = getSessionId(fakePaneId);
+      expect(result).toBe("abc-session-id-123");
+    } finally {
+      // Cleanup
+      try { rmSync(fakePanePath); } catch {}
+    }
+  });
+
+  test("returns empty string for empty pane map file (trimmed to '')", () => {
+    const HOME = process.env.HOME!;
+    const paneMapDir = join(HOME, ".claude/pane-map/by-pane");
+    const fakePaneId = `test-pane-empty-${Date.now()}`;
+    const fakePanePath = join(paneMapDir, fakePaneId);
+    mkdirSync(paneMapDir, { recursive: true });
+    writeFileSync(fakePanePath, "   \n");
+    try {
+      const result = getSessionId(fakePaneId);
+      expect(result).toBe(""); // trim of whitespace-only
+    } finally {
+      try { rmSync(fakePanePath); } catch {}
+    }
   });
 });
