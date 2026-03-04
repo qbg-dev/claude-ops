@@ -2,10 +2,11 @@
 /**
  * worker-fleet MCP server — Tools for worker fleet coordination.
  *
- * 15 tools in 5 categories:
+ * 16 tools in 6 categories:
  *   Messaging (3):  send_message, broadcast, read_inbox
  *   Tasks (3):      create_task, update_task, list_tasks
  *   State (2):      get_worker_state, update_state
+ *   Memory (1):     write_memory
  *   Fleet (1):      fleet_status
  *   Lifecycle (4):  recycle, spawn_child, register_pane, check_config
  *   Management (1): create_worker
@@ -1602,6 +1603,67 @@ server.registerTool(
       }
 
       return { content: [{ type: "text" as const, text: output }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// MEMORY TOOL
+// ═══════════════════════════════════════════════════════════════════
+
+server.registerTool(
+  "write_memory",
+  {
+    description: "Write or update a section in this worker's MEMORY.md. Use mode='replace_section' to update an existing ## Section (creates it if missing), or mode='overwrite' to replace the entire file.",
+    inputSchema: {
+      content: z.string().describe("The content to write"),
+      mode: z.enum(["replace_section", "overwrite"]).describe("'replace_section': upsert a ## Section block by heading; 'overwrite': replace entire file"),
+      section: z.string().optional().describe("Section heading (without ##) — required for replace_section mode"),
+    },
+  },
+  async ({ content, mode, section }) => {
+    try {
+      const memoryPath = join(WORKERS_DIR, WORKER_NAME, "MEMORY.md");
+
+      if (mode === "overwrite") {
+        writeFileSync(memoryPath, content, "utf-8");
+        return { content: [{ type: "text" as const, text: `Wrote MEMORY.md (${content.length} chars)` }] };
+      }
+
+      // replace_section mode
+      if (!section) {
+        return { content: [{ type: "text" as const, text: "Error: section is required for replace_section mode" }], isError: true };
+      }
+
+      const heading = `## ${section}`;
+      let existing = existsSync(memoryPath) ? readFileSync(memoryPath, "utf-8") : "# Memory\n\n";
+
+      // Find section start
+      const lines = existing.split("\n");
+      let sectionStart = -1;
+      let sectionEnd = lines.length;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trimEnd() === heading) { sectionStart = i; continue; }
+        if (sectionStart !== -1 && i > sectionStart && lines[i].startsWith("## ")) { sectionEnd = i; break; }
+      }
+
+      const newBlock = [heading, content.trimEnd(), ""].join("\n");
+
+      let result: string;
+      if (sectionStart === -1) {
+        // Append
+        result = existing.trimEnd() + "\n\n" + newBlock + "\n";
+      } else {
+        // Replace
+        const before = lines.slice(0, sectionStart).join("\n");
+        const after = lines.slice(sectionEnd).join("\n");
+        result = (before ? before + "\n" : "") + newBlock + (after ? "\n" + after : "");
+      }
+
+      writeFileSync(memoryPath, result, "utf-8");
+      return { content: [{ type: "text" as const, text: `${sectionStart === -1 ? "Added" : "Updated"} section '${section}' in MEMORY.md` }] };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
