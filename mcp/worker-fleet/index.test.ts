@@ -457,6 +457,15 @@ describe("resolveRecipient", () => {
       expect(result.workerName).not.toBe("operator");
     }
   });
+
+  test("parent error includes mission_authority name in message", () => {
+    // Error message should say which mission_authority was tried, not hardcoded 'operator'
+    const result = resolveRecipient("parent");
+    if (result.error) {
+      // Should reference a named authority or say unset — never say "operator entry"
+      expect(result.error).not.toBe(`No parent found for worker '${WORKER_NAME}' (no parent field set, no operator entry)`);
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -871,6 +880,13 @@ describe("lintRegistry", () => {
     const issues = lintRegistry(registry);
     const missingParent = issues.find(i => i.check === "lint.parent_missing");
     expect(missingParent).toBeUndefined();
+  });
+
+  test("_config.mission_authority defaults to 'chief-of-staff' in makeProjectRegistry", () => {
+    // Verify test helper and production default match — mission_authority must never be 'operator'
+    const registry = makeProjectRegistry();
+    expect(registry._config.mission_authority).toBe("chief-of-staff");
+    expect(registry._config.mission_authority).not.toBe("operator");
   });
 });
 

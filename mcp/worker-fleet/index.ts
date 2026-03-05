@@ -955,7 +955,7 @@ function runDiagnostics(): DiagnosticIssue[] {
     const worktreeDir = getWorktreeDir();
     let gitDir: string;
     try {
-      gitDir = execSync(`git -C "${worktreeDir}" rev-parse --git-dir`, { encoding: "utf-8", timeout: 5000 }).trim();
+      gitDir = execSync(`git -C "${worktreeDir}" rev-parse --git-dir 2>/dev/null`, { encoding: "utf-8", timeout: 5000, shell: "/bin/bash" }).trim();
       if (!gitDir.startsWith("/")) gitDir = join(worktreeDir, gitDir);
     } catch {
       gitDir = join(worktreeDir, ".git");
