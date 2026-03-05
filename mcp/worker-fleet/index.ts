@@ -266,7 +266,11 @@ function withRegistryLocked<T>(fn: (registry: ProjectRegistry) => T): T {
 
 /** Ensure worker entry exists in registry. Creates default entry if missing. */
 function ensureWorkerInRegistry(registry: ProjectRegistry, name: string): RegistryWorkerEntry {
-  if (registry[name] && name !== "_config") return registry[name] as RegistryWorkerEntry;
+  if (registry[name] && name !== "_config") {
+    const e = registry[name] as RegistryWorkerEntry;
+    if (!e.custom) e.custom = {};  // backfill missing custom field for older entries
+    return e;
+  }
 
   const projectName = PROJECT_ROOT.split("/").pop()!;
   const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);

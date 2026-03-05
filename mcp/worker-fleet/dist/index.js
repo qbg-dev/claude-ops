@@ -19468,7 +19468,9 @@ import {
   statSync,
   readSync,
   closeSync,
-  truncateSync
+  truncateSync,
+  lstatSync,
+  rmSync
 } from "fs";
 import { join, basename } from "path";
 import { execSync, spawnSync, spawn } from "child_process";
@@ -19632,8 +19634,12 @@ function withRegistryLocked(fn) {
   }
 }
 function ensureWorkerInRegistry(registry2, name) {
-  if (registry2[name] && name !== "_config")
-    return registry2[name];
+  if (registry2[name] && name !== "_config") {
+    const e = registry2[name];
+    if (!e.custom)
+      e.custom = {};
+    return e;
+  }
   const projectName = PROJECT_ROOT.split("/").pop();
   const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
   const entry = {
@@ -19907,14 +19913,18 @@ function resolveRecipient(to) {
         }
         return { type: "pane", error: `Parent '${parentName}' for worker '${WORKER_NAME}' has no live pane` };
       }
-      const opEntry = registry2["operator"];
-      if (opEntry?.pane_id && isPaneAlive(opEntry.pane_id)) {
-        if (existsSync(join(WORKERS_DIR, "operator"))) {
-          return { type: "worker", workerName: "operator" };
+      const config2 = registry2._config;
+      const authorityName = config2?.mission_authority;
+      if (authorityName && authorityName !== WORKER_NAME) {
+        const authEntry = registry2[authorityName];
+        if (authEntry?.pane_id && isPaneAlive(authEntry.pane_id)) {
+          if (existsSync(join(WORKERS_DIR, authorityName))) {
+            return { type: "worker", workerName: authorityName };
+          }
+          return { type: "pane", paneId: authEntry.pane_id };
         }
-        return { type: "pane", paneId: opEntry.pane_id };
       }
-      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}' (no parent field set, no operator entry)` };
+      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}' (parent field not set in registry, mission_authority '${authorityName || "unset"}' has no live pane)` };
     } catch {
       return { type: "pane", error: "Failed to read registry" };
     }
@@ -19942,6 +19952,14 @@ function resolveRecipient(to) {
     }
   }
   return { type: "worker", workerName: to };
+}
+function tmuxSendMessage(paneId, text) {
+  execSync(`tmux send-keys -t ${JSON.stringify(paneId)} ${JSON.stringify(text)} ""`, { timeout: 5000 });
+  execSync(`tmux send-keys -t ${JSON.stringify(paneId)} -H 0d`, { timeout: 5000 });
+  spawnSync("sleep", ["0.3"]);
+  execSync(`tmux send-keys -t ${JSON.stringify(paneId)} -H 0d`, { timeout: 5000 });
+  spawnSync("sleep", ["0.3"]);
+  execSync(`tmux send-keys -t ${JSON.stringify(paneId)} -H 0d`, { timeout: 5000 });
 }
 function isPaneAlive(paneId) {
   try {
@@ -20011,20 +20029,21 @@ Worker config: ${workerDir}/
 Read these files NOW in this order:
 1. ${workerDir}/mission.md \u2014 your goals and tasks
 2. Call \`get_worker_state()\` \u2014 your current cycle count and status (stored in registry.json)
-3. ${workerDir}/MEMORY.md \u2014 what you learned in previous cycles
+3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
 
-Then begin your cycle immediately.
+Your MEMORY.md is auto-loaded by Claude (see "persistent auto memory directory" in your context).
+Use Edit/Write to update it directly at that path. Then begin your cycle immediately.
 
 ## Cycle Pattern
 
 Every cycle follows this sequence:
 
-1. **Drain inbox** \u2014 \`read_inbox(clear=true)\` \u2014 act on messages before anything else
-2. **Check tasks** \u2014 \`list_tasks(filter="pending")\` \u2014 find highest-priority unblocked work
-3. **Claim** \u2014 \`update_task(task_id="T00N", status="in_progress")\` \u2014 mark what you're working on
-4. **Do the work** \u2014 investigate, fix, test, commit, deploy, verify
-5. **Complete** \u2014 \`update_task(task_id="T00N", status="completed")\` \u2014 only after fully verified
-6. **Update state** \u2014 \`update_state("cycles_completed", N+1)\` then \`update_state("last_cycle_at", ISO)\`
+1. **Heartbeat** \u2014 \`heartbeat(cycles_completed=N)\` \u2014 auto-registers your pane + stamps cycle state in one call
+2. **Drain inbox** \u2014 \`read_inbox()\` \u2014 act on messages before anything else (cursor-based, no data loss)
+3. **Check tasks** \u2014 \`list_tasks(filter="pending")\` \u2014 find highest-priority unblocked work
+4. **Claim** \u2014 \`update_task(task_id="T00N", status="in_progress")\` \u2014 mark what you're working on
+5. **Do the work** \u2014 investigate, fix, test, commit, deploy, verify
+6. **Complete** \u2014 \`update_task(task_id="T00N", status="completed")\` \u2014 only after fully verified
 7. **Perpetual?** \u2014 if \`perpetual: true\`, sleep for \`sleep_duration\` seconds, then loop
 
 If your inbox has a message from Warren or chief-of-staff, prioritize it over your current task list.
@@ -20033,8 +20052,7 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 
 | Tool | What it does |
 |------|-------------|
-| \`send_message(to, content, summary)\` | Send to a worker, "parent", "children", or raw pane ID "%NN" |
-| \`broadcast(content, summary)\` | Send to ALL workers (use sparingly) |
+| \`send_message(to, content, summary)\` | Send to a worker, "parent", "children", raw pane "%NN", or **"all"** (broadcast to every worker) |
 | \`read_inbox(limit?, since?, clear?)\` | Read your inbox; \`clear=true\` truncates after reading |
 | \`create_task(subject, priority?, ...)\` | Add a task to your task list |
 | \`update_task(task_id, status?, subject?, owner?, ...)\` | Update task status/fields \u2014 claim, complete, delete, reassign |
@@ -20042,22 +20060,29 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 | \`get_worker_state(name?)\` | Read any worker's state from registry.json |
 | \`update_state(key, value)\` | Update your state in registry.json + emit bus event |
 | \`fleet_status()\` | Full fleet overview (all workers) |
-| \`deploy(service?)\` | Deploy to TEST server + auto health check |
-| \`health_check(target?)\` | Check server health: \`test\`, \`prod\`, or \`both\` |
-| \`post_to_nexus(message, room?)\` | Post to Nexus chat (prefixed with your name) |
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
 | \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
-| \`register_pane()\` | Register this pane in registry.json (after recycle/manual launch) |
-| \`check_config()\` | Run diagnostics on worker config \u2014 fix issues it reports |
+| \`heartbeat(cycles_completed?, extra?)\` | Call at start of each cycle: auto-registers pane + stamps last_cycle_at, status, cycles_completed |
 
 These are native MCP tool calls \u2014 no bash wrappers needed.
 
 ## Rules
 - **Fix everything.** Never just report issues \u2014 investigate, fix, deploy, document in MEMORY.md.
 - **Git discipline**: Stage only specific files (\`git add src/foo.ts\`). NEVER \`git add -A\`. Commit to branch **${branch}** only. Never checkout main.
-- **Deploy**: TEST only. Commit then \`deploy(service="static")\`. The deploy tool auto-checks health. Never \`core\` without Warren approval.
+- **Deploy**: TEST only. See your mission.md for project-specific deploy commands.
 - **Verify before completing**: Tests pass + TypeScript clean + deploy succeeds + endpoint/UI verified.
-- **Perpetual workers**: Read ${PROJECT_ROOT}/.claude/workers/PERPETUAL-PROTOCOL.md on your first cycle for self-optimization guidance.`;
+- **Report everything to chief-of-staff via MCP**: On any bug, error, test failure, completed task, or finding worth noting \u2014 use \`send_message(to="chief-of-staff", content="...", summary="...")\`. Never append to inbox.jsonl directly. Never silently move on.
+- **Send results back**: When your mission produces output (analysis, compiled data, recommendations) \u2014 send it to chief-of-staff via \`send_message\`.
+
+## If You Run Continuously (Perpetual Mode)
+
+Each cycle: **Observe \u2192 Decide \u2192 Act \u2192 Measure \u2192 Adapt** \u2014 you're an LLM, not a cron job. Adapt.
+
+- **Save learnings**: Edit your MEMORY.md (auto-loaded path \u2014 see "persistent auto memory directory" in your context). Claude picks it up next session automatically.
+- **Scripts first**: Check \`.claude/scripts/${WORKER_NAME}/\` before writing inline bash. If you do something twice, save it as a script there. Scripts persist across recycles; one-off bash commands don't.
+- **Adapt sleep**: Call \`update_state("sleep_duration", N)\` to tune your cycle interval.
+- **Discover new work**: Read server logs, other workers' MEMORY.md, Nexus for issues in your domain.
+- **Eliminate waste**: Skip checks that never change; cache expensive lookups.`;
   if (handoff) {
     seed += `
 
@@ -20101,7 +20126,7 @@ function runDiagnostics() {
     }
     const regEntry = getWorkerEntry(WORKER_NAME);
     if (!regEntry) {
-      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Run migration or call create_worker/register_pane to bootstrap entry" });
+      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Run migration or call create_worker to bootstrap entry, then heartbeat() to register" });
     } else {
       if (typeof regEntry.cycles_completed !== "number") {
         issues.push({ severity: "warning", check: "registry.cycles_completed", message: "registry entry missing 'cycles_completed' field", fix: `update_state("cycles_completed", 0)` });
@@ -20152,12 +20177,12 @@ function runDiagnostics() {
   if (process.env.TMUX_PANE) {
     const entry = getWorkerEntry(WORKER_NAME);
     if (!entry) {
-      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json \u2014 watchdog cannot monitor you. Call register_pane() BEFORE doing anything else.`, fix: "Call register_pane() immediately" });
+      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json \u2014 watchdog cannot monitor you. Call heartbeat() BEFORE doing anything else.`, fix: "Call heartbeat() immediately" });
     } else if (entry.pane_id !== process.env.TMUX_PANE) {
-      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json. Call register_pane() to fix.`, fix: "Call register_pane() immediately" });
+      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json. Call heartbeat() to fix.`, fix: "Call heartbeat() immediately" });
     }
   } else {
-    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set \u2014 you are not registered with the fleet. Messaging, watchdog monitoring, spawn_child, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call register_pane()" });
+    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set \u2014 you are not registered with the fleet. Messaging, watchdog monitoring, spawn_child, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call heartbeat()" });
   }
   try {
     const registry2 = readRegistry();
@@ -20176,7 +20201,7 @@ function runDiagnostics() {
     const worktreeDir = getWorktreeDir();
     let gitDir;
     try {
-      gitDir = execSync(`git -C "${worktreeDir}" rev-parse --git-dir`, { encoding: "utf-8", timeout: 5000 }).trim();
+      gitDir = execSync(`git -C "${worktreeDir}" rev-parse --git-dir 2>/dev/null`, { encoding: "utf-8", timeout: 5000, shell: "/bin/bash" }).trim();
       if (!gitDir.startsWith("/"))
         gitDir = join(worktreeDir, gitDir);
     } catch {
@@ -20204,7 +20229,7 @@ function runDiagnostics() {
   return issues;
 }
 var _diagCache = null;
-var DIAG_CACHE_TTL_MS = 3 * 60000;
+var DIAG_CACHE_TTL_MS = 1e4;
 var _firstCallDone = false;
 function getCachedDiagnostics() {
   if (_diagCache && Date.now() - _diagCache.ts < DIAG_CACHE_TTL_MS)
@@ -20234,11 +20259,55 @@ var server = new McpServer({
   name: "worker-fleet",
   version: "2.0.0"
 });
-server.registerTool("send_message", { description: `Send a direct message to a specific worker (durable inbox + tmux instant delivery)`, inputSchema: {
-  to: exports_external.string().describe("Worker name (e.g. 'chief-of-staff', 'chatbot-tools'), 'parent' (operator/spawner), 'children' (all registered children from registry.json), or raw pane ID '%NN'"),
+server.registerTool("send_message", { description: `Primary inter-worker communication. Use whenever you need to coordinate with another worker, report findings to chief-of-staff, or notify your parent/children. Writes to the recipient's durable inbox (survives restarts) and delivers instantly via tmux if the pane is live. Use to="all" to broadcast fleet-wide (expensive \u2014 use sparingly). Use to="parent"/"children" for hierarchy traversal without knowing names.`, inputSchema: {
+  to: exports_external.string().describe("Worker name, 'parent', 'children', 'all' (broadcast to every worker), or raw pane ID '%NN'"),
   content: exports_external.string().describe("Message content"),
   summary: exports_external.string().describe("Short preview (5-10 words)")
 } }, async ({ to, content, summary }) => {
+  if (to === "all") {
+    const failures = [];
+    const successes = [];
+    try {
+      const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_")).map((d) => d.name).filter((name) => name !== WORKER_NAME);
+      for (const name of dirs) {
+        const result = writeToInbox(name, { content, summary, from_name: WORKER_NAME });
+        if (result.ok)
+          successes.push(name);
+        else
+          failures.push(`${name}: ${result.error}`);
+      }
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error listing workers: ${e.message}` }], isError: true };
+    }
+    try {
+      const args = ["broadcast", content];
+      if (summary)
+        args.push("--summary", summary);
+      runScript(WORKER_MESSAGE_SH, args, { timeout: 1e4 });
+    } catch {}
+    let remoteCount = 0;
+    try {
+      const remote = await relayFetch("GET", "/workers");
+      if (remote) {
+        for (const [proj, workers] of Object.entries(remote)) {
+          for (const w of workers) {
+            if (w === WORKER_NAME || successes.includes(w))
+              continue;
+            const r = await relayFetch("POST", "/msg", { project: proj, worker: w, content, summary, from_name: WORKER_NAME });
+            if (r?.ok)
+              remoteCount++;
+          }
+        }
+      }
+    } catch {}
+    let msg = `Broadcast to ${successes.length} local workers`;
+    if (remoteCount > 0)
+      msg += ` + ${remoteCount} remote`;
+    if (failures.length > 0)
+      msg += `
+Failed: ${failures.join(", ")}`;
+    return { content: [{ type: "text", text: msg }] };
+  }
   const resolved = resolveRecipient(to);
   if (resolved.error) {
     return { content: [{ type: "text", text: `Error: ${resolved.error}` }], isError: true };
@@ -20248,16 +20317,13 @@ server.registerTool("send_message", { description: `Send a direct message to a s
     const successes = [];
     const failures = [];
     const dead = [];
-    const msg = JSON.stringify(`
-[msg from ${WORKER_NAME}] ${content}
-`);
     for (const pId of paneIds) {
       if (!isPaneAlive(pId)) {
         dead.push(pId);
         continue;
       }
       try {
-        execSync(`tmux send-keys -t "${pId}" ${msg} ""`, { timeout: 5000 });
+        tmuxSendMessage(pId, `[msg from ${WORKER_NAME}] ${content}`);
         successes.push(pId);
       } catch {
         failures.push(pId);
@@ -20277,9 +20343,7 @@ Failed: ${failures.join(", ")}`;
       return { content: [{ type: "text", text: `Error: Pane ${resolved.paneId} is dead (not found in tmux)` }], isError: true };
     }
     try {
-      execSync(`tmux send-keys -t "${resolved.paneId}" ${JSON.stringify(`
-[msg from ${WORKER_NAME}] ${content}
-`)} ""`, { timeout: 5000 });
+      tmuxSendMessage(resolved.paneId, `[msg from ${WORKER_NAME}] ${content}`);
       const label = to === "parent" ? `parent (pane ${resolved.paneId})` : `pane ${resolved.paneId}`;
       return { content: [{ type: "text", text: `Sent to ${label} (tmux-only, no inbox)` }] };
     } catch (e) {
@@ -20287,6 +20351,16 @@ Failed: ${failures.join(", ")}`;
     }
   }
   const recipientName = resolved.workerName;
+  let paneWarning = "";
+  try {
+    const registry2 = readRegistry();
+    const entry = registry2[recipientName];
+    const paneId = entry?.pane_id;
+    if (!paneId || !isPaneAlive(paneId)) {
+      paneWarning = `
+WARNING: Worker '${recipientName}' has no active pane \u2014 message queued in inbox but won't be received until the worker is restarted.`;
+    }
+  } catch {}
   const inboxResult = writeToInbox(recipientName, { content, summary, from_name: WORKER_NAME });
   if (!inboxResult.ok) {
     const remoteResult = await relayFetch("POST", "/msg", {
@@ -20306,9 +20380,7 @@ Failed: ${failures.join(", ")}`;
     const entry = registry2[recipientName];
     const paneId = entry?.pane_id;
     if (paneId && isPaneAlive(paneId)) {
-      execSync(`tmux send-keys -t "${paneId}" ${JSON.stringify(`
-[msg from ${WORKER_NAME}] ${content}
-`)} ""`, { timeout: 5000 });
+      tmuxSendMessage(paneId, `[msg from ${WORKER_NAME}] ${content}`);
     } else {
       const args = ["send", recipientName, content];
       if (summary)
@@ -20316,65 +20388,9 @@ Failed: ${failures.join(", ")}`;
       runScript(WORKER_MESSAGE_SH, args, { timeout: 1e4 });
     }
   } catch {}
-  return { content: [{ type: "text", text: `Message sent to ${recipientName}` }] };
+  return { content: [{ type: "text", text: `Message sent to ${recipientName}${paneWarning}` }] };
 });
-server.registerTool("broadcast", { description: "Send a message to all workers (use sparingly \u2014 costs scale with team size)", inputSchema: {
-  content: exports_external.string().describe("Message content"),
-  summary: exports_external.string().describe("Short preview (5-10 words)")
-} }, async ({ content, summary }) => {
-  const failures = [];
-  const successes = [];
-  try {
-    const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_")).map((d) => d.name).filter((name) => name !== WORKER_NAME);
-    for (const name of dirs) {
-      const result = writeToInbox(name, { content, summary, from_name: WORKER_NAME });
-      if (result.ok) {
-        successes.push(name);
-      } else {
-        failures.push(`${name}: ${result.error}`);
-      }
-    }
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error listing workers: ${e.message}` }], isError: true };
-  }
-  try {
-    const args = ["broadcast", content];
-    if (summary)
-      args.push("--summary", summary);
-    runScript(WORKER_MESSAGE_SH, args, { timeout: 1e4 });
-  } catch {}
-  let remoteCount = 0;
-  try {
-    const remote = await relayFetch("GET", "/workers");
-    if (remote) {
-      for (const [proj, workers] of Object.entries(remote)) {
-        for (const w of workers) {
-          if (w === WORKER_NAME)
-            continue;
-          if (successes.includes(w))
-            continue;
-          const r = await relayFetch("POST", "/msg", {
-            project: proj,
-            worker: w,
-            content,
-            summary,
-            from_name: WORKER_NAME
-          });
-          if (r?.ok)
-            remoteCount++;
-        }
-      }
-    }
-  } catch {}
-  let msg = `Broadcast to ${successes.length} local workers`;
-  if (remoteCount > 0)
-    msg += ` + ${remoteCount} remote`;
-  if (failures.length > 0)
-    msg += `
-Failed: ${failures.join(", ")}`;
-  return { content: [{ type: "text", text: msg }] };
-});
-server.registerTool("read_inbox", { description: "Read your inbox messages (durable messages from other workers)", inputSchema: {
+server.registerTool("read_inbox", { description: "Read messages sent to you by other workers or Warren. Call at the start of every cycle to act on pending instructions before checking tasks. Uses a cursor so repeated calls only return new messages \u2014 no data loss on restart. Use clear=true only if you want to explicitly purge old messages.", inputSchema: {
   limit: exports_external.number().optional().describe("Max messages to return (default: all)"),
   since: exports_external.string().optional().describe("ISO timestamp \u2014 only messages after this time"),
   clear: exports_external.boolean().optional().describe("If true, clear inbox after reading (replaces clear_inbox)")
@@ -20399,7 +20415,7 @@ ${formatted}` }] });
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("create_task", { description: "Create a new task in your worker's task list", inputSchema: {
+server.registerTool("create_task", { description: "Track a unit of work you've identified. Use whenever you discover a bug, feature, or investigation that needs doing \u2014 even mid-cycle. Tasks survive recycles, can block each other, and give the team visibility into your queue. Prefer creating tasks over holding work in context.", inputSchema: {
   subject: exports_external.string().describe("Task title (imperative form)"),
   description: exports_external.string().optional().describe("Detailed description"),
   priority: exports_external.enum(["critical", "high", "medium", "low"]).optional().describe("Priority level (default: medium)"),
@@ -20452,7 +20468,7 @@ server.registerTool("create_task", { description: "Create a new task in your wor
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("update_task", { description: "Update a task's status, owner, subject, description, priority, or dependencies. Use status='in_progress' to claim, 'completed' to finish, 'deleted' to remove.", inputSchema: {
+server.registerTool("update_task", { description: "Advance a task through its lifecycle or reassign it. Claim work with status='in_progress' before starting (prevents double-work across workers). Mark 'completed' only after fully verified. Use 'deleted' to discard irrelevant tasks. Set add_blocked_by to express dependencies that gate execution.", inputSchema: {
   task_id: exports_external.string().describe("Task ID (e.g. 'T001')"),
   status: exports_external.enum(["pending", "in_progress", "completed", "deleted"]).optional().describe("New status"),
   subject: exports_external.string().optional().describe("New subject"),
@@ -20554,7 +20570,7 @@ server.registerTool("update_task", { description: "Update a task's status, owner
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("list_tasks", { description: "List tasks across workers \u2014 unified cross-worker view or filtered to one worker", inputSchema: {
+server.registerTool("list_tasks", { description: "Survey available work before starting a cycle. Use filter='pending' to find unblocked tasks ready to claim. Use worker='all' to see the full fleet's queue and avoid duplicating work another worker is already doing.", inputSchema: {
   filter: exports_external.enum(["all", "pending", "in_progress", "blocked"]).optional().describe("Filter by status (default: all non-deleted)"),
   worker: exports_external.string().optional().describe("Specific worker name, or 'all' for cross-worker view (default: self)")
 } }, async ({ filter, worker }) => {
@@ -20614,7 +20630,7 @@ ${results.join(`
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("get_worker_state", { description: "Read a worker's state from registry.json (default: your own)", inputSchema: {
+server.registerTool("get_worker_state", { description: "Read persisted state for any worker \u2014 cycles completed, sleep duration, last commit, custom metrics. Call at startup to resume where you left off. Omit name to read your own state.", inputSchema: {
   name: exports_external.string().optional().describe("Worker name (default: self)")
 } }, async ({ name }) => {
   try {
@@ -20646,7 +20662,7 @@ server.registerTool("get_worker_state", { description: "Read a worker's state fr
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("update_state", { description: "Update a key in your own state (registry.json) and emit a bus event", inputSchema: {
+server.registerTool("update_state", { description: "Persist your own state across recycles \u2014 cycle count, sleep duration, custom metrics. Call after every cycle to stamp cycles_completed and last_cycle_at. The watchdog reads last_cycle_at to detect stuck workers, so always update it.", inputSchema: {
   key: exports_external.string().describe("State key to update (e.g. 'status', 'cycles_completed')"),
   value: exports_external.union([exports_external.string(), exports_external.number(), exports_external.boolean()]).describe("New value")
 } }, async ({ key, value }) => {
@@ -20694,7 +20710,7 @@ server.registerTool("update_state", { description: "Update a key in your own sta
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("fleet_status", { description: "Get full fleet status (same output as check-flat-workers.sh)" }, async () => {
+server.registerTool("fleet_status", { description: "Snapshot of every worker's health \u2014 pane alive, status, last cycle, recent commits. Use to understand the fleet before spawning children, to check if a recipient worker is actually running before messaging, or to diagnose why something isn't responding." }, async () => {
   try {
     const registry2 = withRegistryLocked((reg) => {
       try {
@@ -20758,107 +20774,39 @@ server.registerTool("fleet_status", { description: "Get full fleet status (same 
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 });
-server.registerTool("remote_health", { description: "Check connectivity to the remote relay server (cross-machine fleet communication)" }, async () => {
-  if (!REMOTE_RELAY_URL) {
-    return { content: [{ type: "text", text: "No REMOTE_RELAY_URL configured" }] };
-  }
-  const result = await relayFetch("GET", "/health");
-  if (!result) {
-    return { content: [{ type: "text", text: `Remote relay unreachable at ${REMOTE_RELAY_URL}` }], isError: true };
-  }
-  return { content: [{ type: "text", text: `Remote relay OK: ${JSON.stringify(result)}` }] };
-});
-server.registerTool("deploy", { description: "Deploy to test server (workers cannot deploy to prod). Runs deploy.sh with --skip-langfuse, then auto-checks health.", inputSchema: {
-  service: exports_external.enum(["static", "web", "core", "all"]).optional().describe("Which service to deploy (default: static). 'static' = zero downtime UI only. 'core' requires Warren approval.")
-} }, async ({ service }) => {
-  const svc = service || "static";
-  if (WORKER_NAME === "chief-of-staff" || WORKER_NAME === "quick-fixer") {}
-  if (svc === "core") {
-    return {
-      content: [{ type: "text", text: "Error: --service core restarts the WeChat callback handler. Message Warren for approval first, then use bash directly." }],
-      isError: true
-    };
-  }
-  try {
-    const deployArgs = ["--skip-langfuse"];
-    if (svc !== "all")
-      deployArgs.push("--service", svc);
-    const deployScript = join(PROJECT_ROOT, "scripts/deploy.sh");
-    if (!existsSync(deployScript)) {
-      return {
-        content: [{ type: "text", text: `Error: Deploy script not found at ${deployScript}` }],
-        isError: true
-      };
+function _replaceMemorySection(existing, section, content) {
+  const heading = `## ${section}`;
+  const lines = existing.split(`
+`);
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  for (let i = 0;i < lines.length; i++) {
+    if (lines[i].trimEnd() === heading) {
+      sectionStart = i;
+      continue;
     }
-    const result = runScript(deployScript, deployArgs, { timeout: 300000 });
-    if (result.exitCode !== 0) {
-      return {
-        content: [{ type: "text", text: `Deploy failed (service=${svc}):
-${result.stderr || result.stdout}` }],
-        isError: true
-      };
+    if (sectionStart !== -1 && i > sectionStart && lines[i].startsWith("## ")) {
+      sectionEnd = i;
+      break;
     }
-    let healthOutput = "";
-    try {
-      const healthResult = spawnSync("curl", ["-sf", "--max-time", "10", "https://test.baoyuansmartlife.com/health"], {
-        encoding: "utf-8",
-        timeout: 15000
-      });
-      if (healthResult.status === 0) {
-        healthOutput = `
-Health check: PASS`;
-      } else {
-        healthOutput = `
-Health check: FAIL (${healthResult.stderr || "no response"})`;
-      }
-    } catch {
-      healthOutput = `
-Health check: FAIL (timeout)`;
-    }
-    return {
-      content: [{ type: "text", text: `Deployed service=${svc} to test${healthOutput}
+  }
+  const newBlock = [heading, content.trimEnd(), ""].join(`
+`);
+  if (sectionStart === -1) {
+    return existing.trimEnd() + `
 
-${result.stdout.slice(-500)}` }]
-    };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+` + newBlock + `
+`;
   }
-});
-server.registerTool("health_check", { description: "Check test and/or prod server health (curl /health endpoint)", inputSchema: {
-  target: exports_external.enum(["test", "prod", "both"]).optional().describe("Which server to check (default: test)")
-} }, async ({ target }) => {
-  const t = target || "test";
-  const results = [];
-  const checkHealth = (label, url) => {
-    try {
-      const result = spawnSync("curl", ["-sf", "--max-time", "10", url], {
-        encoding: "utf-8",
-        timeout: 15000
-      });
-      if (result.status === 0) {
-        try {
-          const data = JSON.parse(result.stdout);
-          const version2 = data.version || data.commit || "";
-          return `${label}: PASS${version2 ? ` (${version2})` : ""}`;
-        } catch {
-          return `${label}: PASS`;
-        }
-      }
-      return `${label}: FAIL (status ${result.status})`;
-    } catch (e) {
-      return `${label}: FAIL (${e.message})`;
-    }
-  };
-  if (t === "test" || t === "both") {
-    results.push(checkHealth("test", "https://test.baoyuansmartlife.com/health"));
-  }
-  if (t === "prod" || t === "both") {
-    results.push(checkHealth("prod", "https://wx.baoyuansmartlife.com/health"));
-  }
-  return { content: [{ type: "text", text: results.join(`
-`) }] };
-});
-server.registerTool("recycle", { description: "Self-recycle: write handoff context, notify parent/operator, then restart as a fresh Claude session in the same pane. Use at end of a cycle or when context is stale. Set final=true for last cycle (exit without restarting).", inputSchema: {
+  const before = lines.slice(0, sectionStart).join(`
+`);
+  const after = lines.slice(sectionEnd).join(`
+`);
+  return (before ? before + `
+` : "") + newBlock + (after ? `
+` + after : "");
+}
+server.registerTool("recycle", { description: "Restart yourself with a fresh context window in the same pane. Use when your context is getting full, at the end of a long cycle, or when you've completed your mission. Writes a handoff.md so the next instance knows what happened. Set final=true to exit without restarting (mission complete).", inputSchema: {
   message: exports_external.string().optional().describe("Handoff message for the next instance (what's done, what's next, blockers)"),
   final: exports_external.boolean().optional().describe("If true, this is the last cycle \u2014 exit cleanly without restarting. Use when work is complete.")
 } }, async ({ message, final }) => {
@@ -20980,7 +20928,7 @@ tmux send-keys -t "$PANE_ID" -H 0d
 
 # Wait for TUI ready (poll for statusline, max 90s)
 WAIT=0
-until tmux capture-pane -t "$PANE_ID" -p 2>/dev/null | grep -q "Context left"; do
+until tmux capture-pane -t "$PANE_ID" -p 2>/dev/null | grep -qE "bypass permissions|Context left"; do
   sleep 3; WAIT=$((WAIT+3))
   [ "$WAIT" -ge 90 ] && break
 done
@@ -21015,7 +20963,7 @@ rm -f "${recycleScript}"
     }]
   };
 });
-server.registerTool("spawn_child", { description: "Fork yourself into a new pane split to the right. The child inherits your full conversation context and can work independently.", inputSchema: {
+server.registerTool("spawn_child", { description: "Parallelize work by forking into a new pane. Use when you have independent subtasks that would be faster done simultaneously \u2014 research + implementation, testing multiple approaches, or delegating grunt work to a Sonnet child while you reason on Opus. The child gets a task injected after launch.", inputSchema: {
   task: exports_external.string().optional().describe("Task/instruction to inject into the child after it starts")
 } }, async ({ task }) => {
   const ownPane = findOwnPane();
@@ -21082,9 +21030,9 @@ tmux send-keys -t "$CHILD_PANE" -H 0d
     writeFileSync(taskFile, task);
     scriptContent += `
 # Wait for TUI ready (max 120s \u2014 fork-session loads full conversation)
-# Use "Context left" from statusline as signal \u2014 more reliable than prompt character
+# Use statusline as signal \u2014 more reliable than prompt character
 WAIT=0
-until tmux capture-pane -t "$CHILD_PANE" -p 2>/dev/null | grep -q "Context left"; do
+until tmux capture-pane -t "$CHILD_PANE" -p 2>/dev/null | grep -qE "bypass permissions|Context left"; do
   sleep 3; WAIT=$((WAIT+3))
   [ "$WAIT" -ge 120 ] && break
 done
@@ -21124,50 +21072,112 @@ Task injected: "${task.slice(0, 80)}${task.length > 80 ? "..." : ""}"` : "";
     }]
   };
 });
-server.registerTool("register_pane", { description: "Register this pane in registry.json as a worker pane. Call this after recycle or manual launch when spawn_child/recycle can't find your pane." }, async () => {
-  const tmuxPane = process.env.TMUX_PANE;
-  if (!tmuxPane) {
-    return { content: [{ type: "text", text: "Error: TMUX_PANE env var not set. Are you running in tmux?" }], isError: true };
+server.registerTool("heartbeat", {
+  description: "Call at the start of every cycle. Auto-registers your pane in the fleet (so send_message and fleet_status can find you) and stamps your state \u2014 no separate register_pane or update_state needed. Pass cycles_completed to increment your counter. Any extra key/value goes into custom state.",
+  inputSchema: {
+    cycles_completed: exports_external.number().optional().describe("Your current cycle count \u2014 pass N+1 at end of each cycle"),
+    status: exports_external.string().optional().describe("Worker status (default: 'active')"),
+    extra: exports_external.record(exports_external.union([exports_external.string(), exports_external.number(), exports_external.boolean()])).optional().describe("Any additional custom state to persist (e.g. {pass_rate: 99, current_focus: 'fix-tests'})")
   }
+}, async ({ cycles_completed, status, extra }) => {
+  const tmuxPane = process.env.TMUX_PANE;
   let paneTarget = "";
   let tmuxSession = "";
-  try {
-    const raw = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index} #{session_name}' | awk -v id="${tmuxPane}" '$1 == id {print $2, $3}'`, { encoding: "utf-8", timeout: 5000 }).trim();
-    const parts = raw.split(" ");
-    paneTarget = parts[0] || "";
-    tmuxSession = parts[1] || "";
-  } catch {}
-  if (!isPaneAlive(tmuxPane)) {
-    return { content: [{ type: "text", text: `Error: Pane ${tmuxPane} is not alive in tmux. Check your TMUX_PANE env var.` }], isError: true };
+  if (tmuxPane) {
+    try {
+      const raw = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index} #{session_name}' | awk -v id="${tmuxPane}" '$1 == id {print $2, $3}'`, { encoding: "utf-8", timeout: 5000 }).trim();
+      const parts2 = raw.split(" ");
+      paneTarget = parts2[0] || "";
+      tmuxSession = parts2[1] || "";
+    } catch {}
   }
-  if (LINT_ENABLED) {
-    const existingEntry = getWorkerEntry(WORKER_NAME);
-    if (existingEntry?.pane_id && existingEntry.pane_id !== tmuxPane && isPaneAlive(existingEntry.pane_id)) {
-      return { content: [{ type: "text", text: `Error: Worker '${WORKER_NAME}' already has a live worker pane: ${existingEntry.pane_id} (${existingEntry.pane_target}). Kill it first or use a different worker name.` }], isError: true };
-    }
-  }
+  const now = new Date().toISOString();
+  let registered = false;
   try {
     withRegistryLocked((registry2) => {
       ensureWorkerInRegistry(registry2, WORKER_NAME);
       const entry = registry2[WORKER_NAME];
-      entry.pane_id = tmuxPane;
-      entry.pane_target = paneTarget;
-      entry.tmux_session = tmuxSession;
-      entry.session_id = "";
+      if (tmuxPane && isPaneAlive(tmuxPane)) {
+        if (entry.pane_id !== tmuxPane) {
+          entry.pane_id = tmuxPane;
+          entry.pane_target = paneTarget;
+          entry.tmux_session = tmuxSession;
+          registered = true;
+        }
+      }
+      entry.status = status || "active";
+      entry.last_cycle_at = now;
+      if (cycles_completed !== undefined)
+        entry.cycles_completed = cycles_completed;
+      if (extra) {
+        for (const [k, v] of Object.entries(extra))
+          entry.custom[k] = v;
+      }
     });
   } catch (e) {
-    return { content: [{ type: "text", text: `Error writing registry: ${e.message}` }], isError: true };
+    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
-  return {
-    content: [{
-      type: "text",
-      text: `Registered pane ${tmuxPane} (${paneTarget}) as worker/${WORKER_NAME}
-` + `Project: ${PROJECT_ROOT}
-` + `Registry: ${REGISTRY_PATH}`
-    }]
-  };
+  try {
+    const payload = JSON.stringify({ worker: WORKER_NAME, key: "heartbeat", value: now, channel: "worker-fleet-mcp" });
+    execSync(`source "${CLAUDE_OPS}/lib/event-bus.sh" && bus_publish "agent.state-changed" '${payload.replace(/'/g, "'\\''")}'`, { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash" });
+  } catch {}
+  const blocking = [];
+  const autoFixed = [];
+  if (WORKER_NAME === "operator") {
+    blocking.push("WORKER_NAME is 'operator' (env var not set at launch). Your registry entry will conflict with other workers. Notify chief-of-staff and ask to be re-launched via launch-flat-worker.sh with the correct worker name.");
+  }
+  if (!tmuxPane) {
+    blocking.push("TMUX_PANE env var is not set \u2014 not running inside tmux. Watchdog cannot monitor you, send_message cannot reach you. You must be launched via launch-flat-worker.sh inside a tmux pane.");
+  } else if (!isPaneAlive(tmuxPane)) {
+    blocking.push(`TMUX_PANE=${tmuxPane} no longer exists in tmux. Your session is detached or the pane was killed. Re-launch via launch-flat-worker.sh.`);
+  }
+  try {
+    const reg = readRegistry();
+    const myEntry = reg[WORKER_NAME];
+    if (!myEntry) {
+      blocking.push(`Worker '${WORKER_NAME}' still missing from registry.json after heartbeat write \u2014 likely a file permission error on ${REGISTRY_PATH}. Check permissions and re-run heartbeat.`);
+    } else {
+      if (!myEntry.pane_id) {
+        blocking.push(`No pane_id in registry for '${WORKER_NAME}' even after heartbeat. Watchdog and messaging cannot reach you. Check TMUX_PANE env var and registry write permissions.`);
+      }
+      if (!myEntry.parent) {
+        const config2 = reg._config;
+        const auth = config2?.mission_authority || "chief-of-staff";
+        try {
+          withRegistryLocked((r) => {
+            const e = r[WORKER_NAME];
+            if (e && !e.parent)
+              e.parent = auth;
+          });
+          autoFixed.push(`parent auto-set to '${auth}' (mission_authority)`);
+        } catch {
+          blocking.push(`No parent set for '${WORKER_NAME}' and auto-fix failed. Run update_state("parent", "${auth}") before continuing.`);
+        }
+      }
+    }
+  } catch {
+    blocking.push(`Could not read registry.json to verify state \u2014 check file at ${REGISTRY_PATH}.`);
+  }
+  if (blocking.length > 0) {
+    const msg = [
+      `HEARTBEAT FAILED \u2014 ${blocking.length} issue(s) must be resolved before continuing:`,
+      ...blocking.map((b, i) => `${i + 1}. ${b}`)
+    ].join(`
+`);
+    return { content: [{ type: "text", text: msg }], isError: true };
+  }
+  const parts = [`Heartbeat OK: ${WORKER_NAME} at ${now}`];
+  if (registered)
+    parts.push(`pane registered: ${tmuxPane} (${paneTarget})`);
+  if (cycles_completed !== undefined)
+    parts.push(`cycles: ${cycles_completed}`);
+  if (autoFixed.length > 0)
+    parts.push(`auto-fixed: ${autoFixed.join(", ")}`);
+  if (extra)
+    parts.push(`custom: ${Object.keys(extra).join(", ")}`);
+  return { content: [{ type: "text", text: parts.join(" | ") }] };
 });
-server.registerTool("check_config", { description: "Run diagnostics on worker configuration. Checks: env vars, worker dir, mission.md, registry.json entry, tasks.json, inbox, git hooks, git branch, worktree, required scripts. Returns issues with fix suggestions." }, async () => {
+server.registerTool("check_config", { description: "Diagnose why things aren't working. Checks your environment, registry entry, required files, git branch, and worktree. Returns specific issues with fix suggestions. Run when something feels wrong \u2014 missing messages, watchdog not picking you up, tools misbehaving." }, async () => {
   const issues = getCachedDiagnostics();
   if (issues.length === 0) {
     return { content: [{ type: "text", text: "All checks passed. Configuration looks good." }] };
@@ -21207,7 +21217,7 @@ server.registerTool("check_config", { description: "Run diagnostics on worker co
   };
 });
 function createWorkerFiles(input) {
-  const { name, mission, model, perpetual, sleep_duration, taskEntries = [] } = input;
+  const { name, mission, model, perpetual, sleep_duration, disallowed_tools, window: windowGroup, parent, permission_mode, taskEntries = [] } = input;
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
     return { ok: false, error: `Name must be kebab-case (got '${name}')` };
   }
@@ -21219,20 +21229,38 @@ function createWorkerFiles(input) {
     return { ok: false, error: `Mission cannot be empty` };
   }
   mkdirSync(workerDir, { recursive: true });
+  const worktreePath = `${PROJECT_ROOT}-w-${name}`;
+  const slug = worktreePath.replace(/\//g, "-");
+  const autoMemoryDir = join(HOME, ".claude", "projects", slug, "memory");
+  mkdirSync(autoMemoryDir, { recursive: true });
+  const autoMemoryPath = join(autoMemoryDir, "MEMORY.md");
+  try {
+    if (lstatSync(autoMemoryPath).isSymbolicLink()) {
+      rmSync(autoMemoryPath);
+    }
+  } catch {}
+  if (!existsSync(autoMemoryPath)) {
+    writeFileSync(autoMemoryPath, `# ${name} Memory
+
+`);
+  }
   writeFileSync(join(workerDir, "mission.md"), mission.trim() + `
 `);
   const selectedModel = model || "sonnet";
+  const defaultDisallowed = [
+    "Bash(git checkout main*)",
+    "Bash(git merge*)",
+    "Bash(git push*)",
+    "Bash(git reset --hard*)",
+    "Bash(git clean*)",
+    "Bash(rm -rf*)"
+  ];
   const permissions = {
     model: selectedModel,
-    permission_mode: "bypassPermissions",
-    disallowedTools: [
-      "Bash(git checkout main*)",
-      "Bash(git merge*)",
-      "Bash(git push*)",
-      "Bash(git reset --hard*)",
-      "Bash(git clean*)",
-      "Bash(rm -rf*)"
-    ]
+    permission_mode: permission_mode || "bypassPermissions",
+    disallowedTools: disallowed_tools ?? defaultDisallowed,
+    window: windowGroup || null,
+    parent: parent || null
   };
   const isPerpetual = perpetual || false;
   const state = {
@@ -21268,15 +21296,19 @@ function createWorkerFiles(input) {
 `);
   return { ok: true, workerDir, model: selectedModel, perpetual: isPerpetual, taskIds, tasks: tasksObj, state, permissions };
 }
-server.registerTool("create_worker", { description: "Create a new worker with mission, config, and optional auto-launch", inputSchema: {
+server.registerTool("create_worker", { description: "Spin up a new persistent worker with its own mission, memory, and task list. Use when you've identified a domain of work that warrants a dedicated agent \u2014 ongoing monitoring, specialized repair, continuous optimization. Set launch=true to start it immediately in a new tmux pane.", inputSchema: {
   name: exports_external.string().describe("Worker name in kebab-case (e.g. 'chatbot-fix')"),
   mission: exports_external.string().describe("Full mission.md content (markdown)"),
   model: exports_external.enum(["sonnet", "opus", "haiku"]).optional().describe("LLM model (default: sonnet)"),
   perpetual: exports_external.boolean().optional().describe("Run in perpetual loop (default: false)"),
   sleep_duration: exports_external.number().optional().describe("Seconds between cycles, only if perpetual (default: 1800)"),
+  disallowed_tools: exports_external.string().optional().describe('JSON array of disallowed tool patterns (default: safe git/rm guards). Example: ["Bash(git push*)","Edit","Bash(*deploy*)"]'),
+  window: exports_external.string().optional().describe("tmux window group name (e.g. 'optimizers', 'monitors'). Workers in the same group share a tiled layout."),
+  parent: exports_external.string().optional().describe("Parent worker name (default: auto-set to calling worker)"),
+  permission_mode: exports_external.string().optional().describe("Claude permission mode (default: bypassPermissions)"),
   launch: exports_external.boolean().optional().describe("Auto-launch in tmux after creation (default: false)"),
   tasks: exports_external.string().optional().describe("JSON array of tasks: [{subject, description?, priority?}]")
-} }, async ({ name, mission, model, perpetual, sleep_duration, launch, tasks: tasksJson }) => {
+} }, async ({ name, mission, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, parent, permission_mode, launch, tasks: tasksJson }) => {
   try {
     let taskEntries = [];
     if (tasksJson) {
@@ -21295,7 +21327,19 @@ server.registerTool("create_worker", { description: "Create a new worker with mi
         return { content: [{ type: "text", text: `Error parsing tasks JSON: ${e.message}` }], isError: true };
       }
     }
-    const result = createWorkerFiles({ name, mission, model, perpetual, sleep_duration, taskEntries });
+    let disallowedTools;
+    if (disallowedToolsJson) {
+      try {
+        const parsed = JSON.parse(disallowedToolsJson);
+        if (!Array.isArray(parsed) || !parsed.every((t) => typeof t === "string")) {
+          return { content: [{ type: "text", text: `Error: disallowed_tools must be a JSON array of strings` }], isError: true };
+        }
+        disallowedTools = parsed;
+      } catch (e) {
+        return { content: [{ type: "text", text: `Error parsing disallowed_tools JSON: ${e.message}` }], isError: true };
+      }
+    }
+    const result = createWorkerFiles({ name, mission, model, perpetual, sleep_duration, disallowed_tools: disallowedTools, window: windowGroup, parent, permission_mode, taskEntries });
     if (!result.ok) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
     }
@@ -21310,6 +21354,14 @@ server.registerTool("create_worker", { description: "Create a new worker with mi
       entry.perpetual = state.perpetual || false;
       entry.sleep_duration = state.sleep_duration || 1800;
       entry.cycles_completed = state.cycles_completed || 0;
+      if (permissions.window) {
+        entry.window = permissions.window;
+      }
+      if (permissions.parent) {
+        entry.parent = permissions.parent;
+      } else if (!entry.parent) {
+        entry.parent = WORKER_NAME || "chief-of-staff";
+      }
     });
     let launchInfo = "";
     if (launch) {
@@ -21318,7 +21370,11 @@ server.registerTool("create_worker", { description: "Create a new worker with mi
         launchInfo = `
   Launch: FAILED \u2014 script not found: ${launchScript}`;
       } else {
-        const launchResult = spawnSync("bash", [launchScript, name, "--project", PROJECT_ROOT], {
+        const launchArgs = [launchScript, name, "--project", PROJECT_ROOT];
+        if (permissions.window) {
+          launchArgs.push("--window", permissions.window);
+        }
+        const launchResult = spawnSync("bash", launchArgs, {
           encoding: "utf-8",
           timeout: 120000,
           env: { ...process.env, PROJECT_ROOT }
@@ -21342,69 +21398,14 @@ server.registerTool("create_worker", { description: "Create a new worker with mi
       `Created worker/${name}:`,
       `  Dir: .claude/workers/${name}/`,
       `  Model: ${selectedModel} | Perpetual: ${isPerpetual}`,
+      permissions.window ? `  Window: ${permissions.window}` : null,
+      `  Parent: ${permissions.parent || WORKER_NAME || "chief-of-staff"}`,
+      permissions.disallowedTools.length > 0 ? `  Disallowed: ${permissions.disallowedTools.length} rules` : `  Disallowed: none (full access)`,
       `  Tasks: ${taskSummary}`,
       launchInfo.trim() ? `  ${launchInfo.trim()}` : null
     ].filter(Boolean).join(`
 `);
     return { content: [{ type: "text", text: summary }] };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-  }
-});
-server.registerTool("post_to_nexus", { description: "Post a status message to a Nexus room with [worker-name] prefix", inputSchema: {
-  message: exports_external.string().describe("Message content"),
-  room: exports_external.string().optional().describe("Nexus room (default: nexus-qbg-zhu)")
-} }, async ({ message, room }) => {
-  try {
-    const targetRoom = room || "nexus-qbg-zhu";
-    const prefixedMessage = `[${WORKER_NAME}] ${message}`;
-    const nexusConfig = join(HOME, ".nexus-config");
-    let accessToken = process.env.NEXUS_ACCESS_TOKEN || "";
-    let homeserver = process.env.NEXUS_HOMESERVER || "https://footemp.bar";
-    if (!accessToken && existsSync(nexusConfig)) {
-      try {
-        const config2 = readJsonFile(nexusConfig);
-        accessToken = config2?.access_token || config2?.accessToken || "";
-        homeserver = config2?.homeserver || homeserver;
-      } catch {}
-    }
-    if (!accessToken) {
-      return {
-        content: [{ type: "text", text: `Nexus token not configured. Message not sent.
-Intended: [${WORKER_NAME}] ${message} \u2192 ${targetRoom}` }],
-        isError: true
-      };
-    }
-    const txnId = `m${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-    const roomAlias = targetRoom.startsWith("#") ? targetRoom : `#${targetRoom}:footemp.bar`;
-    const resolveResult = spawnSync("curl", [
-      "-sf",
-      "-H",
-      `Authorization: Bearer ${accessToken}`,
-      `${homeserver}/_matrix/client/v3/directory/room/${encodeURIComponent(roomAlias)}`
-    ], { encoding: "utf-8", timeout: 1e4 });
-    let roomId;
-    try {
-      roomId = JSON.parse(resolveResult.stdout).room_id;
-    } catch {
-      return { content: [{ type: "text", text: `Failed to resolve room '${targetRoom}'` }], isError: true };
-    }
-    const sendResult = spawnSync("curl", [
-      "-sf",
-      "-X",
-      "PUT",
-      "-H",
-      `Authorization: Bearer ${accessToken}`,
-      "-H",
-      "Content-Type: application/json",
-      "-d",
-      JSON.stringify({ msgtype: "m.text", body: prefixedMessage }),
-      `${homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txnId}`
-    ], { encoding: "utf-8", timeout: 1e4 });
-    if (sendResult.status !== 0) {
-      return { content: [{ type: "text", text: `Failed to send to Nexus: ${sendResult.stderr}` }], isError: true };
-    }
-    return { content: [{ type: "text", text: `Posted to ${targetRoom}: [${WORKER_NAME}] ${message}` }] };
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
@@ -21448,6 +21449,7 @@ export {
   createWorkerFiles,
   acquireLock,
   _setWorkersDir,
+  _replaceMemorySection,
   WORKER_NAME,
   WORKERS_DIR,
   REGISTRY_PATH,
