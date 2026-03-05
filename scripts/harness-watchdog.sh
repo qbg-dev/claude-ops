@@ -209,14 +209,14 @@ _resume_in_pane() {
 
   # 3. Prepare seed using shared generator (same as initial launch)
   local seed_file="/tmp/worker-${worker}-respawn.txt"
-  if [ -f "${HOME}/.claude-ops/lib/worker-seed.sh" ]; then
-    source "${HOME}/.claude-ops/lib/worker-seed.sh"
-    local branch; branch=$(jq -r --arg n "$worker" '.[$n].branch // "worker/'"$worker"'"' "$REGISTRY" 2>/dev/null)
-    local wt_dir; wt_dir=$(jq -r --arg n "$worker" '.[$n].worktree // "'"$PROJECT_ROOT"'"' "$REGISTRY" 2>/dev/null)
-    generate_worker_seed "$worker" "$worker_dir" "${wt_dir:-$PROJECT_ROOT}" "${branch:-worker/$worker}" "$PROJECT_ROOT" "$reason" > "$seed_file"
-  else
-    echo "Watchdog respawn ($reason). You are worker $worker. Read mission.md and MEMORY.md, then start your next cycle." > "$seed_file"
-  fi
+  local _claude_ops="${HOME}/.claude-ops"
+  WORKER_NAME="$worker" PROJECT_ROOT="$PROJECT_ROOT" \
+    "${HOME}/.bun/bin/bun" -e "
+      const { generateSeedContent } = await import('${_claude_ops}/mcp/worker-fleet/index.ts');
+      process.stdout.write(generateSeedContent());
+    " > "$seed_file" 2>/dev/null || {
+    echo "Watchdog respawn ($reason). You are worker $worker. Read mission.md, then start your next cycle." > "$seed_file"
+  }
 
   # 4. Stamp last_cycle_at = now so next watchdog pass skips (prevents kill-loop)
   local _now_iso; _now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -329,21 +329,23 @@ _relaunch_claude() {
     fi
 
     sleep 2
-    if [ -f "${HOME}/.claude-ops/lib/worker-seed.sh" ]; then
-      source "${HOME}/.claude-ops/lib/worker-seed.sh"
-      local seed_file="/tmp/worker-${worker}-watchdog-seed.txt"
-      local branch; branch=$(jq -r --arg n "$worker" '.[$n].branch // "worker/'"$worker"'"' "$REGISTRY" 2>/dev/null)
-      local worker_dir="$PROJECT_ROOT/.claude/workers/$worker"
-      generate_worker_seed "$worker" "$worker_dir" "$wt_dir" "$branch" "$PROJECT_ROOT" > "$seed_file"
+    local seed_file="/tmp/worker-${worker}-watchdog-seed.txt"
+    local _claude_ops="${HOME}/.claude-ops"
+    WORKER_NAME="$worker" PROJECT_ROOT="$PROJECT_ROOT" \
+      "${HOME}/.bun/bin/bun" -e "
+        const { generateSeedContent } = await import('${_claude_ops}/mcp/worker-fleet/index.ts');
+        process.stdout.write(generateSeedContent());
+      " > "$seed_file" 2>/dev/null || {
+      echo "You are worker $worker. Read mission.md, then start your next cycle." > "$seed_file"
+    }
 
-      local buf="watchdog-${worker}-$$"
-      tmux delete-buffer -b "$buf" 2>/dev/null || true
-      tmux load-buffer -b "$buf" "$seed_file" 2>/dev/null || true
-      tmux paste-buffer -b "$buf" -t "$pane" -d 2>/dev/null || true
-      sleep 4
-      tmux send-keys -t "$pane" -H 0d
-      rm -f "$seed_file"
-    fi
+    local buf="watchdog-${worker}-$$"
+    tmux delete-buffer -b "$buf" 2>/dev/null || true
+    tmux load-buffer -b "$buf" "$seed_file" 2>/dev/null || true
+    tmux paste-buffer -b "$buf" -t "$pane" -d 2>/dev/null || true
+    sleep 4
+    tmux send-keys -t "$pane" -H 0d
+    rm -f "$seed_file"
   ) &
 }
 

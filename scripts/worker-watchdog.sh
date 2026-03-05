@@ -3,7 +3,7 @@
 #
 # Runs as a background daemon (via launchd or cron).
 # Every CHECK_INTERVAL seconds:
-#   1. Read pane-registry.json for all registered agents
+#   1. Read registry.json (project) + pane-registry.json (legacy) for all registered agents
 #   2. For each: check pane alive, Claude process alive, last tool-call event time
 #   3. Classify: graceful_sleep | awake | stuck | crashed
 #   4. Publish agent.* bus events
@@ -17,7 +17,7 @@
 #
 # Requirements:
 #   - PROJECT_ROOT set (or auto-detected via git)
-#   - pane-registry.json populated by agents at startup
+#   - .claude/workers/registry.json (project) or pane-registry.json (legacy) populated at startup
 #   - ~/.boring/lib/fleet-jq.sh + event-bus.sh available
 #
 # Crash-loop file: ~/.boring/state/harness-runtime/{canonical}/crash-loop
@@ -188,7 +188,14 @@ _get_session_id() {
   local pane_id="$1"
   local sid=""
 
-  # Try pane registry first
+  # Try project registry.json first (worker panes)
+  local proj_registry="$PROJECT_ROOT/.claude/workers/registry.json"
+  if [ -f "$proj_registry" ]; then
+    sid=$(jq -r --arg pid "$pane_id" 'to_entries[] | select(.key != "_config") | select(.value.pane_id == $pid) | .value.session_id // empty' "$proj_registry" 2>/dev/null | head -1 || echo "")
+    [ -n "$sid" ] && [ "$sid" != "null" ] && [ "$sid" != "none" ] && { echo "$sid"; return; }
+  fi
+
+  # Fall back to legacy pane registry
   sid=$(jq -r --arg p "$pane_id" '.[$p].session_id // empty' "$PANE_REGISTRY" 2>/dev/null || echo "")
   [ -n "$sid" ] && [ "$sid" != "null" ] && [ "$sid" != "none" ] && { echo "$sid"; return; }
 
@@ -201,25 +208,25 @@ _get_session_id() {
 }
 
 # ── Build Claude command from worker config ───────────────────────
-# Reads permissions.json + state.json to construct the full CLI command,
+# Reads registry.json to construct the full CLI command,
 # optionally with --resume <session_id> for context recovery.
 _build_claude_cmd() {
   local worker_name="$1"
   local session_id="${2:-}"   # optional: resume this session
   local worker_dir="$PROJECT_ROOT/.claude/workers/$worker_name"
-  local perms="$worker_dir/permissions.json"
+  local registry="$PROJECT_ROOT/.claude/workers/registry.json"
 
-  # Read model from permissions.json (with runtime cache fallback for macOS TCC)
-  local perms_cache="$HARNESS_STATE_DIR/harness-runtime/worker/$worker_name/permissions-cache.json"
+  # Read model from registry.json (with runtime cache fallback for macOS TCC)
+  local cache="$HARNESS_STATE_DIR/harness-runtime/worker/$worker_name/config-cache.json"
   local model
-  model=$(jq -r '.model // empty' "$perms" 2>/dev/null)
-  [ -z "$model" ] && model=$(jq -r '.model // empty' "$perms_cache" 2>/dev/null)
+  model=$(jq -r --arg n "$worker_name" '.[$n].model // empty' "$registry" 2>/dev/null)
+  [ -z "$model" ] && model=$(jq -r '.model // empty' "$cache" 2>/dev/null)
   [ -z "$model" ] && model="sonnet"
 
-  # Read permission_mode from permissions.json (with runtime cache fallback)
+  # Read permission_mode from registry.json (with runtime cache fallback)
   local perm_mode
-  perm_mode=$(jq -r '.permission_mode // empty' "$perms" 2>/dev/null)
-  [ -z "$perm_mode" ] && perm_mode=$(jq -r '.permission_mode // empty' "$perms_cache" 2>/dev/null)
+  perm_mode=$(jq -r --arg n "$worker_name" '.[$n].permission_mode // empty' "$registry" 2>/dev/null)
+  [ -z "$perm_mode" ] && perm_mode=$(jq -r '.permission_mode // empty' "$cache" 2>/dev/null)
   [ -z "$perm_mode" ] && perm_mode="bypassPermissions"
 
   # Build base command
@@ -239,6 +246,22 @@ _build_claude_cmd() {
   fi
 
   echo "$cmd"
+}
+
+# ── Get window name for a worker (from project registry or legacy pane-registry) ──
+_get_worker_window() {
+  local pane_id="$1"
+  local proj_registry="$PROJECT_ROOT/.claude/workers/registry.json"
+  local win=""
+  # Try project registry first
+  if [ -f "$proj_registry" ]; then
+    win=$(jq -r --arg pid "$pane_id" 'to_entries[] | select(.key != "_config") | select(.value.pane_id == $pid) | .value.window // empty' "$proj_registry" 2>/dev/null | head -1 || echo "")
+  fi
+  # Fall back to legacy pane-registry
+  if [ -z "$win" ] || [ "$win" = "null" ]; then
+    win=$(jq -r --arg p "$pane_id" '.[$p].window // empty' "$PANE_REGISTRY" 2>/dev/null || echo "")
+  fi
+  echo "$win"
 }
 
 # ── Kill + resume a stuck flat worker in the same pane ────────────
@@ -268,7 +291,7 @@ _unstick_worker() {
   # For main-window workers (no worktree), prepend WORKER_NAME env
   local claude_cmd
   local unstick_window_check
-  unstick_window_check=$(jq -r --arg pid "$pane_id" '.[$pid].window // .panes[$pid].window // empty' "$PANE_REGISTRY" 2>/dev/null || echo "")
+  unstick_window_check=$(_get_worker_window "$pane_id")
   if [ -n "$unstick_window_check" ]; then
     claude_cmd="export WORKER_NAME=$worker_name && $(_build_claude_cmd "$worker_name" "$prev_session_id")"
   else
@@ -282,15 +305,15 @@ _unstick_worker() {
   fi
 
   # 4. Prepare seed file BEFORE launching Claude (shared template)
-  source "${HOME}/.claude-ops/lib/worker-seed.sh"
   local seed_file="/tmp/worker-${worker_name}-respawn.txt"
-  if [ -n "$unstick_window_check" ]; then
-    # Main-window worker: use PROJECT_ROOT as worktree, "main" as branch
-    generate_worker_seed "$worker_name" "$worker_dir" "$PROJECT_ROOT" "main" "$PROJECT_ROOT" "idle ${idle_sec}s" > "$seed_file"
-  else
-    local _wt_dir="$PROJECT_ROOT/../$(basename "$PROJECT_ROOT")-w-${worker_name}"
-    generate_worker_seed "$worker_name" "$worker_dir" "$_wt_dir" "worker/$worker_name" "$PROJECT_ROOT" "idle ${idle_sec}s" > "$seed_file"
-  fi
+  local _claude_ops="${HOME}/.claude-ops"
+  WORKER_NAME="$worker_name" PROJECT_ROOT="$PROJECT_ROOT" \
+    "${HOME}/.bun/bin/bun" -e "
+      const { generateSeedContent } = await import('${_claude_ops}/mcp/worker-fleet/index.ts');
+      process.stdout.write(generateSeedContent());
+    " > "$seed_file" 2>/dev/null || {
+    echo "You are worker $worker_name. Read mission.md, then start your next cycle." > "$seed_file"
+  }
 
   # 5. Launch Claude in the same pane
   tmux send-keys -t "$pane_id" "$claude_cmd" 2>/dev/null || true
@@ -338,12 +361,32 @@ _unstick_worker() {
 check_agent() {
   local pane_id="$1"
   local entry; entry=$(pane_registry_read "$pane_id")
-  [ "$entry" = "{}" ] && return
+  local canonical=""
+  local pane_target=""
 
-  local canonical; canonical=$(echo "$entry" | jq -r '.harness // empty')
+  if [ "$entry" != "{}" ]; then
+    # Found in legacy pane-registry
+    canonical=$(echo "$entry" | jq -r '.harness // empty')
+    pane_target=$(echo "$entry" | jq -r '.pane_target // empty')
+  fi
+
+  # Fall back to project registry.json (worker panes)
+  if [ -z "$canonical" ]; then
+    local proj_registry="$PROJECT_ROOT/.claude/workers/registry.json"
+    if [ -f "$proj_registry" ]; then
+      # Find worker name by pane_id
+      local worker_name
+      worker_name=$(jq -r --arg pid "$pane_id" 'to_entries[] | select(.key != "_config") | select(.value.pane_id == $pid) | .key' "$proj_registry" 2>/dev/null | head -1)
+      if [ -n "$worker_name" ]; then
+        canonical="worker/$worker_name"
+        pane_target=$(jq -r --arg n "$worker_name" '.[$n].pane_target // empty' "$proj_registry" 2>/dev/null || echo "")
+        # Synthesize entry for downstream code
+        entry=$(jq -nc --arg h "$canonical" --arg pt "$pane_target" '{harness: $h, pane_target: $pt}')
+      fi
+    fi
+  fi
+
   [ -z "$canonical" ] && return
-
-  local pane_target; pane_target=$(echo "$entry" | jq -r '.pane_target // empty')
   local now_ts; now_ts=$(date -u +%s)
 
   # ── Skip crash recovery for child panes — ephemeral, parent handles cleanup ──
@@ -542,24 +585,22 @@ _respawn_agent() {
         sleep 1
       fi
 
-      # Prepare seed file BEFORE launching (shared template)
-      source "${HOME}/.claude-ops/lib/worker-seed.sh"
+      # Prepare seed file BEFORE launching (generated via bun)
       local prompt_file="/tmp/watchdog-prompt-${worker_name}.txt"
-      # Check if this is a main-window worker (has window field in registry)
-      local _respawn_window_check
-      _respawn_window_check=$(jq -r --arg pid "$pane_id" '.[$pid].window // .panes[$pid].window // empty' "$PANE_REGISTRY" 2>/dev/null || echo "")
-      if [ -n "$_respawn_window_check" ]; then
-        generate_worker_seed "$worker_name" "$worker_dir" "$PROJECT_ROOT" "main" "$PROJECT_ROOT" "$reason" > "$prompt_file"
-      else
-        local _wt_dir="$PROJECT_ROOT/../$(basename "$PROJECT_ROOT")-w-${worker_name}"
-        generate_worker_seed "$worker_name" "$worker_dir" "$_wt_dir" "worker/$worker_name" "$PROJECT_ROOT" "$reason" > "$prompt_file"
-      fi
+      local _claude_ops="${HOME}/.claude-ops"
+      WORKER_NAME="$worker_name" PROJECT_ROOT="$PROJECT_ROOT" \
+        "${HOME}/.bun/bin/bun" -e "
+          const { generateSeedContent } = await import('${_claude_ops}/mcp/worker-fleet/index.ts');
+          process.stdout.write(generateSeedContent());
+        " > "$prompt_file" 2>/dev/null || {
+        echo "You are worker $worker_name. Read mission.md, then start your next cycle." > "$prompt_file"
+      }
 
       # Build command from config, resume previous session
       # For main-window workers (no worktree), set WORKER_NAME env
       local claude_cmd
       local worker_window_check
-      worker_window_check=$(jq -r --arg pid "$pane_id" '.[$pid].window // .panes[$pid].window // empty' "$PANE_REGISTRY" 2>/dev/null || echo "")
+      worker_window_check=$(_get_worker_window "$pane_id")
       if [ -n "$worker_window_check" ]; then
         claude_cmd="export WORKER_NAME=$worker_name && $(_build_claude_cmd "$worker_name" "$prev_session_id")"
       else
@@ -612,7 +653,7 @@ _respawn_agent() {
 
     # Check if this worker belongs to a main window (no worktree, shared window)
     local worker_window
-    worker_window=$(jq -r --arg pid "$pane_id" '.[$pid].window // .panes[$pid].window // empty' "$PANE_REGISTRY" 2>/dev/null || echo "")
+    worker_window=$(_get_worker_window "$pane_id")
 
     if [ -n "$worker_window" ]; then
       # Main-window worker — create new pane in existing window instead of new worktree
@@ -631,15 +672,32 @@ _respawn_agent() {
           _new_target=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' \
             | awk -v p="$new_pane" '$1==p{print $2}' 2>/dev/null || echo "")
           local _now; _now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # Update project registry with new pane info
+          local _proj_registry="$PROJECT_ROOT/.claude/workers/registry.json"
+          if [ -f "$_proj_registry" ]; then
+            local _lock_dir="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+            mkdir -p "$(dirname "$_lock_dir")" 2>/dev/null || true
+            local _lw=0; local _lock_ok=0
+            while ! mkdir "$_lock_dir" 2>/dev/null; do
+              sleep 0.5; _lw=$((_lw + 1))
+              [ "$_lw" -ge 10 ] && break
+            done
+            [ -d "$_lock_dir" ] && _lock_ok=1
+            local tmp_reg; tmp_reg=$(mktemp)
+            jq --arg name "$worker_name" --arg pid "$new_pane" --arg target "${_new_target:-}" \
+              --arg sess "${TARGET_SESSION:-w}" --arg win "$worker_window" \
+              '.[$name].pane_id = $pid | .[$name].pane_target = $target | .[$name].tmux_session = $sess | .[$name].window = $win | .[$name].session_id = ""' \
+              "$_proj_registry" > "$tmp_reg" 2>/dev/null && mv "$tmp_reg" "$_proj_registry" || rm -f "$tmp_reg"
+            [ "$_lock_ok" -eq 1 ] && rmdir "$_lock_dir" 2>/dev/null || true
+          fi
+          # Also update legacy pane-registry for backward compat
+          local tmp_reg2; tmp_reg2=$(mktemp)
           local _proj_slug; _proj_slug=$(basename "$PROJECT_ROOT")
-          local _wk="${_proj_slug}:${worker_name}"
-          local tmp_reg; tmp_reg=$(mktemp)
           jq --arg pid "$new_pane" --arg name "$worker_name" --arg target "${_new_target:-}" \
             --arg sess "${TARGET_SESSION:-w}" --arg now "$_now" --arg win "$worker_window" \
-            --arg proj "$PROJECT_ROOT" --arg wk "$_wk" \
-            '.panes[$pid] = {worker: $name, role: "worker", pane_target: $target, tmux_session: $sess, session_id: "", parent_pane: null, registered_at: $now, window: $win} |
-             .[$pid] = {harness: ("worker/" + $name), session_name: $name, display: $name, task: "worker", pane_target: $target, project_root: $proj, tmux_session: $sess, window: $win}' \
-            "$PANE_REGISTRY" > "$tmp_reg" 2>/dev/null && mv "$tmp_reg" "$PANE_REGISTRY" || rm -f "$tmp_reg"
+            --arg proj "$PROJECT_ROOT" \
+            '.[$pid] = {harness: ("worker/" + $name), session_name: $name, display: $name, task: "worker", pane_target: $target, project_root: $proj, tmux_session: $sess, window: $win}' \
+            "$PANE_REGISTRY" > "$tmp_reg2" 2>/dev/null && mv "$tmp_reg2" "$PANE_REGISTRY" || rm -f "$tmp_reg2"
 
           # Launch Claude in new pane
           local worker_dir="$PROJECT_ROOT/.claude/workers/$worker_name"
@@ -779,12 +837,22 @@ if [ "$MODE" = "status" ]; then
 fi
 
 run_once() {
-  local registry="$PANE_REGISTRY"
-  [ ! -f "$registry" ] && return
+  # Check workers from project registry.json (primary source)
+  local proj_registry="$PROJECT_ROOT/.claude/workers/registry.json"
+  if [ -f "$proj_registry" ]; then
+    while IFS= read -r pane_id; do
+      [ -z "$pane_id" ] || [ "$pane_id" = "null" ] && continue
+      check_agent "$pane_id" 2>/dev/null || true
+    done < <(jq -r 'to_entries[] | select(.key != "_config") | .value.pane_id // empty' "$proj_registry" 2>/dev/null || true)
+  fi
 
-  while IFS= read -r pane_id; do
-    check_agent "$pane_id" 2>/dev/null || true
-  done < <(jq -r 'keys[]' "$registry" 2>/dev/null || true)
+  # Also check legacy pane-registry for non-worker harnesses
+  local registry="$PANE_REGISTRY"
+  if [ -f "$registry" ] && [ "$(jq 'length' "$registry" 2>/dev/null)" != "0" ]; then
+    while IFS= read -r pane_id; do
+      check_agent "$pane_id" 2>/dev/null || true
+    done < <(jq -r 'keys[]' "$registry" 2>/dev/null || true)
+  fi
 }
 
 if [ "$MODE" = "once" ]; then
