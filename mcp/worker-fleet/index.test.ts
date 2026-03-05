@@ -501,6 +501,26 @@ describe("generateSeedContent", () => {
     const seed = generateSeedContent();
     expect(seed).not.toContain("smart_commit");
   });
+
+  test("does not include register_pane (replaced by heartbeat)", () => {
+    const seed = generateSeedContent();
+    expect(seed).not.toContain("register_pane()");
+  });
+
+  test("includes heartbeat in cycle pattern and tool table", () => {
+    const seed = generateSeedContent();
+    expect(seed).toContain("heartbeat(");
+    expect(seed).toContain("auto-registers");
+  });
+
+  test("cycle pattern has heartbeat as step 1 before read_inbox", () => {
+    const seed = generateSeedContent();
+    const hbIdx = seed.indexOf("Heartbeat");
+    const inboxIdx = seed.indexOf("Drain inbox");
+    expect(hbIdx).toBeGreaterThan(-1);
+    expect(inboxIdx).toBeGreaterThan(-1);
+    expect(hbIdx).toBeLessThan(inboxIdx);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

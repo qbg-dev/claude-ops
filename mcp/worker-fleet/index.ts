@@ -7,7 +7,7 @@
  *   Tasks (3):      create_task, update_task, list_tasks
  *   State (2):      get_worker_state, update_state
  *   Fleet (1):      fleet_status
- *   Lifecycle (4):  recycle, spawn_child, register_pane, check_config
+ *   Lifecycle (4):  recycle, spawn_child, heartbeat, check_config
  *   Management (1): create_worker
  *
  * Task CRUD and inbox are native TS (no shell subprocess).
@@ -760,12 +760,12 @@ Then begin your cycle immediately.
 
 Every cycle follows this sequence:
 
-1. **Drain inbox** — \`read_inbox()\` — act on messages before anything else (cursor-based, no data loss)
-2. **Check tasks** — \`list_tasks(filter="pending")\` — find highest-priority unblocked work
-3. **Claim** — \`update_task(task_id="T00N", status="in_progress")\` — mark what you're working on
-4. **Do the work** — investigate, fix, test, commit, deploy, verify
-5. **Complete** — \`update_task(task_id="T00N", status="completed")\` — only after fully verified
-6. **Update state** — \`update_state("cycles_completed", N+1)\` then \`update_state("last_cycle_at", ISO)\`
+1. **Heartbeat** — \`heartbeat(cycles_completed=N)\` — auto-registers your pane + stamps cycle state in one call
+2. **Drain inbox** — \`read_inbox()\` — act on messages before anything else (cursor-based, no data loss)
+3. **Check tasks** — \`list_tasks(filter="pending")\` — find highest-priority unblocked work
+4. **Claim** — \`update_task(task_id="T00N", status="in_progress")\` — mark what you're working on
+5. **Do the work** — investigate, fix, test, commit, deploy, verify
+6. **Complete** — \`update_task(task_id="T00N", status="completed")\` — only after fully verified
 7. **Perpetual?** — if \`perpetual: true\`, sleep for \`sleep_duration\` seconds, then loop
 
 If your inbox has a message from Warren or chief-of-staff, prioritize it over your current task list.
@@ -784,7 +784,7 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 | \`fleet_status()\` | Full fleet overview (all workers) |
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
 | \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
-| \`register_pane()\` | Register this pane in registry.json (after recycle/manual launch) |
+| \`heartbeat(cycles_completed?, extra?)\` | Call at start of each cycle: auto-registers pane + stamps last_cycle_at, status, cycles_completed |
 
 These are native MCP tool calls — no bash wrappers needed.
 
@@ -861,7 +861,7 @@ function runDiagnostics(): DiagnosticIssue[] {
     // Registry entry (replaces state.json + permissions.json checks)
     const regEntry = getWorkerEntry(WORKER_NAME);
     if (!regEntry) {
-      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Run migration or call create_worker/register_pane to bootstrap entry" });
+      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Run migration or call create_worker to bootstrap entry, then heartbeat() to register" });
     } else {
       if (typeof regEntry.cycles_completed !== "number") {
         issues.push({ severity: "warning", check: "registry.cycles_completed", message: "registry entry missing 'cycles_completed' field", fix: `update_state("cycles_completed", 0)` });
@@ -919,12 +919,12 @@ function runDiagnostics(): DiagnosticIssue[] {
   if (process.env.TMUX_PANE) {
     const entry = getWorkerEntry(WORKER_NAME);
     if (!entry) {
-      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you. Call register_pane() BEFORE doing anything else.`, fix: "Call register_pane() immediately" });
+      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you. Call heartbeat() BEFORE doing anything else.`, fix: "Call heartbeat() immediately" });
     } else if (entry.pane_id !== process.env.TMUX_PANE) {
-      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json. Call register_pane() to fix.`, fix: "Call register_pane() immediately" });
+      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json. Call heartbeat() to fix.`, fix: "Call heartbeat() immediately" });
     }
   } else {
-    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — you are not registered with the fleet. Messaging, watchdog monitoring, spawn_child, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call register_pane()" });
+    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — you are not registered with the fleet. Messaging, watchdog monitoring, spawn_child, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call heartbeat()" });
   }
 
   // ── Registry linter ──
@@ -1631,7 +1631,7 @@ function _replaceMemorySection(existing: string, section: string, content: strin
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// LIFECYCLE TOOLS (4) — recycle, spawn_child, register_pane, check_config
+// LIFECYCLE TOOLS (4) — recycle, spawn_child, heartbeat, check_config
 // ═══════════════════════════════════════════════════════════════════
 
 server.registerTool(
@@ -1966,61 +1966,79 @@ rm -f "${taskFile}"
 );
 
 server.registerTool(
-  "register_pane",
-  { description: "Announce yourself to the fleet by recording your pane ID in registry.json. Call once at startup if you were launched manually or if check_config reports your pane is missing from the registry. Without this, send_message and fleet_status can't find you." },
-  async () => {
+  "heartbeat",
+  {
+    description: "Call at the start of every cycle. Auto-registers your pane in the fleet (so send_message and fleet_status can find you) and stamps your state — no separate register_pane or update_state needed. Pass cycles_completed to increment your counter. Any extra key/value goes into custom state.",
+    inputSchema: {
+      cycles_completed: z.number().optional().describe("Your current cycle count — pass N+1 at end of each cycle"),
+      status: z.string().optional().describe("Worker status (default: 'active')"),
+      extra: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Any additional custom state to persist (e.g. {pass_rate: 99, current_focus: 'fix-tests'})"),
+    },
+  },
+  async ({ cycles_completed, status, extra }) => {
     const tmuxPane = process.env.TMUX_PANE;
-    if (!tmuxPane) {
-      return { content: [{ type: "text" as const, text: "Error: TMUX_PANE env var not set. Are you running in tmux?" }], isError: true };
-    }
 
-    // Resolve pane_target from tmux
+    // Resolve pane_target + session from tmux
     let paneTarget = "";
     let tmuxSession = "";
-    try {
-      const raw = execSync(
-        `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index} #{session_name}' | awk -v id="${tmuxPane}" '$1 == id {print $2, $3}'`,
-        { encoding: "utf-8", timeout: 5000 }
-      ).trim();
-      const parts = raw.split(" ");
-      paneTarget = parts[0] || "";
-      tmuxSession = parts[1] || "";
-    } catch {}
-
-    // Verify the pane actually exists in tmux
-    if (!isPaneAlive(tmuxPane)) {
-      return { content: [{ type: "text" as const, text: `Error: Pane ${tmuxPane} is not alive in tmux. Check your TMUX_PANE env var.` }], isError: true };
+    if (tmuxPane) {
+      try {
+        const raw = execSync(
+          `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index} #{session_name}' | awk -v id="${tmuxPane}" '$1 == id {print $2, $3}'`,
+          { encoding: "utf-8", timeout: 5000 }
+        ).trim();
+        const parts = raw.split(" ");
+        paneTarget = parts[0] || "";
+        tmuxSession = parts[1] || "";
+      } catch {}
     }
 
-    // Lint: check for duplicate live panes for same worker
-    if (LINT_ENABLED) {
-      const existingEntry = getWorkerEntry(WORKER_NAME);
-      if (existingEntry?.pane_id && existingEntry.pane_id !== tmuxPane && isPaneAlive(existingEntry.pane_id)) {
-        return { content: [{ type: "text" as const, text: `Error: Worker '${WORKER_NAME}' already has a live worker pane: ${existingEntry.pane_id} (${existingEntry.pane_target}). Kill it first or use a different worker name.` }], isError: true };
-      }
-    }
+    const now = new Date().toISOString();
+    let registered = false;
 
     try {
       withRegistryLocked((registry) => {
         ensureWorkerInRegistry(registry, WORKER_NAME);
         const entry = registry[WORKER_NAME] as RegistryWorkerEntry;
-        entry.pane_id = tmuxPane;
-        entry.pane_target = paneTarget;
-        entry.tmux_session = tmuxSession;
-        entry.session_id = "";
+
+        // Auto-register pane
+        if (tmuxPane && isPaneAlive(tmuxPane)) {
+          if (entry.pane_id !== tmuxPane) {
+            entry.pane_id = tmuxPane;
+            entry.pane_target = paneTarget;
+            entry.tmux_session = tmuxSession;
+            registered = true;
+          }
+        }
+
+        // Stamp state
+        entry.status = status || "active";
+        entry.last_cycle_at = now;
+        if (cycles_completed !== undefined) entry.cycles_completed = cycles_completed;
+
+        // Extra custom fields
+        if (extra) {
+          for (const [k, v] of Object.entries(extra)) entry.custom[k] = v;
+        }
       });
     } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error writing registry: ${e.message}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
 
-    return {
-      content: [{
-        type: "text" as const,
-        text: `Registered pane ${tmuxPane} (${paneTarget}) as worker/${WORKER_NAME}\n` +
-          `Project: ${PROJECT_ROOT}\n` +
-          `Registry: ${REGISTRY_PATH}`,
-      }],
-    };
+    // Emit bus event (best-effort)
+    try {
+      const payload = JSON.stringify({ worker: WORKER_NAME, key: "heartbeat", value: now, channel: "worker-fleet-mcp" });
+      execSync(
+        `source "${CLAUDE_OPS}/lib/event-bus.sh" && bus_publish "agent.state-changed" '${payload.replace(/'/g, "'\\''")}'`,
+        { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash" }
+      );
+    } catch {}
+
+    const parts = [`Heartbeat: ${WORKER_NAME} active at ${now}`];
+    if (registered) parts.push(`pane registered: ${tmuxPane} (${paneTarget})`);
+    if (cycles_completed !== undefined) parts.push(`cycles: ${cycles_completed}`);
+    if (extra) parts.push(`custom: ${Object.keys(extra).join(", ")}`);
+    return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
   }
 );
 
