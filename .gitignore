@@ -43,3 +43,4 @@ plugins/
 *~
 node_modules/
 bun.lock
+relay-secret
