@@ -194,53 +194,27 @@ VALEOF
   info "Created placeholder pre-validate.sh"
 fi
 
-# ── Step 6: CLAUDE.md fleet section ──
-step "6/8 Appending fleet docs to CLAUDE.md..."
+# ── Step 6: CLAUDE.md fleet docs ──
+step "6/8 Installing fleet CLAUDE.md..."
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
-FLEET_MARKER="## Worker Fleet"
+UPSTREAM_CLAUDE_MD="$CLAUDE_OPS_DIR/CLAUDE.md"
 
-if [ -f "$CLAUDE_MD" ] && grep -qF "$FLEET_MARKER" "$CLAUDE_MD"; then
-  info "CLAUDE.md already has fleet section"
+if [ -f "$CLAUDE_MD" ] && grep -qF "claude-ops" "$CLAUDE_MD"; then
+  info "CLAUDE.md already has fleet docs"
 else
-  cat >> "$CLAUDE_MD" << 'CMDEOF'
-
-## Worker Fleet
-
-This project uses [claude-ops](https://github.com/qbg-dev/claude-ops) for autonomous agent fleet management.
-
-### Available Scripts
-
-Check `.claude/scripts/` before writing inline bash. Reusable scripts persist across recycles.
-
-**Shared** (all workers):
-```
-.claude/scripts/worker/deploy-to-slot.sh   # Deploy to your isolated test slot
-.claude/scripts/worker/pre-validate.sh     # TypeScript + build check before merge
-```
-
-**Worker-specific** (check `.claude/scripts/{worker-name}/`):
-Create scripts here for tasks you do repeatedly. If you do something twice, save it as a script.
-
-### Worker Conventions
-
-- Workers default to reporting to `chief-of-staff` unless `report_to` is explicitly set.
-- Pre-validate before merge requests: `bash .claude/scripts/worker/pre-validate.sh`
-- Rebase before every cycle: `git fetch origin && git rebase origin/main`
-- Workers deploy to isolated slots only — never use `scripts/deploy.sh` directly.
-
-### Fleet Tools (MCP)
-
-| Tool | Purpose |
-|------|---------|
-| `heartbeat()` | Register presence, get inbox count |
-| `read_inbox()` | Drain pending messages |
-| `send_message(to, msg)` | Message another worker |
-| `fleet_status()` | Overview of all workers |
-| `update_state(key, value)` | Persist state in registry |
-| `create_task(subject)` | Create a tracked task |
-| `update_task(id, status)` | Update task progress |
-CMDEOF
-  info "Appended fleet section to CLAUDE.md"
+  if [ -f "$UPSTREAM_CLAUDE_MD" ]; then
+    # Append upstream fleet docs to existing CLAUDE.md (or create if none)
+    if [ -f "$CLAUDE_MD" ]; then
+      echo "" >> "$CLAUDE_MD"
+      cat "$UPSTREAM_CLAUDE_MD" >> "$CLAUDE_MD"
+      info "Appended fleet docs from upstream CLAUDE.md"
+    else
+      cp "$UPSTREAM_CLAUDE_MD" "$CLAUDE_MD"
+      info "Installed fleet CLAUDE.md"
+    fi
+  else
+    warn "No upstream CLAUDE.md found at $UPSTREAM_CLAUDE_MD"
+  fi
 fi
 
 # ── Step 7: Verify hooks ──
