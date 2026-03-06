@@ -2551,10 +2551,10 @@ server.registerTool(
 server.registerTool(
   "standby",
   {
-    description: "Put a worker into standby mode — keeps it in the registry (easy to restart later) but tells the watchdog to leave it alone. The worker's pane is killed gracefully. To bring it back, use create_worker(launch=true) or launch-flat-worker.sh. Auth: self-only unless you're the mission_authority (from _config).",
+    description: "Toggle standby mode. If the worker is active → puts it in standby (pane moved to standby window, watchdog ignores it). If already in standby → wakes it up (relaunches via launch-flat-worker.sh, moved back to its registered window). Auth: self-only unless you're the mission_authority.",
     inputSchema: {
-      name: z.string().optional().describe("Worker to put in standby (default: yourself). Only mission_authority can standby other workers."),
-      reason: z.string().optional().describe("Why it's going to standby — stored in handoff.md"),
+      name: z.string().optional().describe("Worker to toggle standby (default: yourself). Only mission_authority can standby/wake other workers."),
+      reason: z.string().optional().describe("Why it's going to/coming from standby"),
     },
   },
   async ({ name, reason }) => {
@@ -2568,7 +2568,7 @@ server.registerTool(
       return {
         content: [{
           type: "text" as const,
-          text: `Only ${_sbAuth} (mission_authority) can put other workers in standby. Contact ${_sbAuth} to stand down '${targetName}'.`,
+          text: `Only ${_sbAuth} (mission_authority) can toggle standby for other workers. Contact ${_sbAuth}.`,
         }],
         isError: true,
       };
@@ -2582,12 +2582,53 @@ server.registerTool(
       };
     }
 
+    const isStandby = existing.status === "standby";
+    const tmuxSession = existing.tmux_session || "w";
+
+    if (isStandby) {
+      // ── WAKE UP: standby → active ──
+      withRegistryLocked((registry) => {
+        const entry = registry[targetName] as RegistryWorkerEntry;
+        if (entry) {
+          entry.status = "active";
+          entry.last_cycle_at = new Date().toISOString();
+        }
+      });
+
+      // Launch the worker (creates pane in correct window, injects seed)
+      const projectRoot = process.env.PROJECT_ROOT || "";
+      const launchScript = join(process.env.HOME || "", ".claude-ops", "scripts", "launch-flat-worker.sh");
+      const launchResult = spawnSync("bash", [launchScript, targetName], {
+        encoding: "utf-8",
+        env: { ...process.env, PROJECT_ROOT: projectRoot },
+        timeout: 60000,
+      });
+
+      const launchOutput = (launchResult.stdout || "").trim();
+      const launchError = (launchResult.stderr || "").trim();
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: [
+            `Worker '${targetName}' → active (woken from standby).`,
+            `  Registry: status=active`,
+            reason ? `  Reason: ${reason}` : null,
+            launchOutput ? `  Launch: ${launchOutput.split("\n").pop()}` : null,
+            launchError ? `  Warning: ${launchError.split("\n").pop()}` : null,
+          ].filter(Boolean).join("\n"),
+        }],
+      };
+    }
+
+    // ── STANDBY: active → standby ──
+
     // Write handoff.md
     if (reason) {
       try {
         const handoffPath = join(WORKERS_DIR, targetName, "handoff.md");
         const timestamp = new Date().toISOString();
-        writeFileSync(handoffPath, `# Standby\n\n**At:** ${timestamp}\n**Reason:** ${reason}\n\nWorker is in standby — registered but not running. Launch with \`bash launch-flat-worker.sh ${targetName}\` to resume.\n`);
+        writeFileSync(handoffPath, `# Standby\n\n**At:** ${timestamp}\n**Reason:** ${reason}\n\nWorker is in standby — registered but not running. Call standby(name="${targetName}") again to wake.\n`);
       } catch {}
     }
 
@@ -2611,38 +2652,35 @@ server.registerTool(
       }
     });
 
-    // Move pane to "standby" window, then gracefully exit Claude
+    // Move pane to "standby" window
     const paneId = existing.pane_id;
-    const tmuxSession = existing.tmux_session || "w";
     let moveResult = "";
 
     if (paneId) {
       try {
-        // Rename any existing "stand-by" window to "standby" (normalize hyphen)
+        // Normalize: rename "stand-by" → "standby" if exists
         spawnSync("tmux", ["rename-window", "-t", `${tmuxSession}:stand-by`, "standby"], { encoding: "utf-8" });
 
-        // Ensure "standby" window exists — create it if not
+        // Ensure "standby" window exists
         const windowCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
         const windows = (windowCheck.stdout || "").split("\n").map(w => w.trim());
         if (!windows.includes("standby")) {
           spawnSync("tmux", ["new-window", "-t", tmuxSession, "-n", "standby", "-d"], { encoding: "utf-8" });
         }
 
-        // Move the pane into the standby window
+        // Move the pane into standby window
         const moveRes = spawnSync("tmux", ["move-pane", "-s", paneId, "-t", `${tmuxSession}:standby`], { encoding: "utf-8" });
         if (moveRes.status === 0) {
-          moveResult = `\n  Pane ${paneId}: moved to ${tmuxSession}:standby`;
-          // Re-tile the standby window after move
+          moveResult = `Pane ${paneId}: moved to ${tmuxSession}:standby`;
           spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:standby`, "tiled"], { encoding: "utf-8" });
         } else {
-          moveResult = `\n  Pane ${paneId}: move failed — ${(moveRes.stderr || "").trim()}`;
+          moveResult = `Pane ${paneId}: move failed — ${(moveRes.stderr || "").trim()}`;
         }
       } catch (e: any) {
-        moveResult = `\n  Pane move error: ${e.message}`;
+        moveResult = `Pane move error: ${e.message}`;
       }
-
     } else {
-      moveResult = "\n  No active pane to move";
+      moveResult = "No active pane to move";
     }
 
     return {
@@ -2651,12 +2689,12 @@ server.registerTool(
         text: [
           `Worker '${targetName}' → standby.`,
           `  Registry: status=standby (watchdog will ignore it)`,
-          moveResult.trim() ? `  ${moveResult.trim()}` : null,
+          moveResult ? `  ${moveResult}` : null,
           reason ? `  Handoff: written to .claude/workers/${targetName}/handoff.md` : null,
           ``,
           standbyPendingWarning || null,
           ``,
-          `To resume: bash ~/.claude-ops/scripts/launch-flat-worker.sh ${targetName}`,
+          `To resume: call standby(name="${targetName}") again, or: bash ~/.claude-ops/scripts/launch-flat-worker.sh ${targetName}`,
         ].filter(Boolean).join("\n"),
       }],
     };
