@@ -226,6 +226,48 @@ _move_to_inactive() {
   _log "INACTIVE: $worker — moved pane $pane_id to $session:$inactive_win"
 }
 
+# ── Enforce window placement — move pane to its registered window ───
+_enforce_window() {
+  local worker="$1" pane_id="$2"
+
+  local target_win
+  target_win=$(jq -r --arg n "$worker" '.[$n].window // empty' "$REGISTRY" 2>/dev/null)
+  [ -z "$target_win" ] || [ "$target_win" = "null" ] && return  # no window registered
+
+  local session
+  session=$(jq -r --arg n "$worker" '.[$n].tmux_session // "w"' "$REGISTRY" 2>/dev/null)
+  [ "$session" = "null" ] && session="w"
+
+  # Get current window name for this pane
+  local actual_win
+  actual_win=$(tmux list-panes -a -F '#{pane_id} #{window_name}' 2>/dev/null \
+    | awk -v p="$pane_id" '$1==p{print $2}')
+
+  [ "$actual_win" = "$target_win" ] && return  # already correct
+
+  # Create target window if it doesn't exist
+  if ! tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null | grep -qxF "$target_win"; then
+    tmux new-window -t "$session" -n "$target_win" -d 2>/dev/null || true
+  fi
+
+  # Move the pane
+  tmux join-pane -s "$pane_id" -t "$session:$target_win" -d 2>/dev/null || {
+    _log "ENFORCE-WIN-ERR: $worker — failed to move $pane_id from $actual_win to $target_win"
+    return
+  }
+  tmux select-layout -t "$session:$target_win" tiled 2>/dev/null || true
+
+  # Update pane_target in registry
+  local new_target
+  new_target=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
+    | awk -v p="$pane_id" '$1==p{print $2}')
+  if [ -n "$new_target" ]; then
+    _registry_update_pane "$worker" "$pane_id" "$new_target"
+  fi
+
+  _log "ENFORCE-WIN: $worker — moved $pane_id from $actual_win to $target_win"
+}
+
 # ── Kill Claude process tree in a pane ─────────────────────────────
 _kill_claude_in_pane() {
   local pane_id="$1"
@@ -459,6 +501,9 @@ check_worker() {
   fi
 
   if $pane_alive; then
+    # ── Pane alive — enforce correct window placement ──
+    _enforce_window "$worker" "$pane_id"
+
     # ── Pane alive — check for graceful sleep or stuck ──
 
     # Quick check: liveness heartbeat file (touched by PostToolUse + UserPromptSubmit hooks)
