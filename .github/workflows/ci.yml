@@ -14,37 +14,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: boring
+          path: claude-ops
 
       - name: Install dependencies
         run: sudo apt-get install -y jq tmux
 
       - name: Configure git identity
         run: |
-          git config --global user.email "ci@boring.dev"
-          git config --global user.name "boring CI"
+          git config --global user.email "ci@claude-ops.dev"
+          git config --global user.name "claude-ops CI"
 
-      - name: Install boring to ~/.boring
+      - name: Install claude-ops to ~/.claude-ops
         run: |
-          mkdir -p ~/.boring
-          cp -r boring/. ~/.boring/
-          mkdir -p ~/.boring/state/locks ~/.boring/bus/side-effects
-          mkdir -p ~/.boring/harness/manifests ~/.boring/harness/reports
+          mkdir -p ~/.claude-ops
+          cp -r claude-ops/. ~/.claude-ops/
+          mkdir -p ~/.claude-ops/state/locks ~/.claude-ops/bus/side-effects
+          mkdir -p ~/.claude-ops/harness/manifests ~/.claude-ops/harness/reports
 
       - name: Run test suite
         run: |
           # Skip test suites that require local environment (project-specific harnesses,
           # manifests, control-plane.sh, tmux pane state). These pass locally but cannot
           # run on a fresh CI install.
-          BORING_SKIP_SUITES="test-registry test-progress-validator test-pane-detection test-v3-comprehensive test-v3-edge-cases test-v3-functions test-v3-migration test-v3-rearchitecture test-seed test-reflection-loop test-spawn-sweep test-permissions-json test-cycle-phase test-harness-stop test-waves" \
-          bash ~/.boring/tests/run-all.sh
+          CLAUDE_OPS_SKIP_SUITES="test-registry test-progress-validator test-pane-detection test-v3-comprehensive test-v3-edge-cases test-v3-functions test-v3-migration test-v3-rearchitecture test-seed test-reflection-loop test-spawn-sweep test-permissions-json test-cycle-phase test-harness-stop test-waves" \
+          bash ~/.claude-ops/tests/run-all.sh
 
       - name: Run minimal-harness example
         run: |
-          cd boring
+          cd claude-ops
           bash examples/minimal-harness/run.sh
 
       - name: Run multi-agent example
         run: |
-          cd boring
+          cd claude-ops
           bash examples/multi-agent/run.sh

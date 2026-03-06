@@ -11,7 +11,7 @@
 #   7. Watchdog config sanity
 #
 # Usage:
-#   bash ~/.boring/scripts/fleet-health.sh [--json] [--workers-dir /path]
+#   bash ~/.claude-ops/scripts/fleet-health.sh [--json] [--workers-dir /path]
 #   WORKERS_DIR=/path/to/.claude/workers bash fleet-health.sh
 #
 # Output:
@@ -19,7 +19,7 @@
 #   --json:  machine-readable JSON report
 set -uo pipefail
 
-source "${HOME}/.boring/lib/fleet-jq.sh"
+source "${HOME}/.claude-ops/lib/fleet-jq.sh"
 
 # ── Config ──────────────────────────────────────────────────────
 WORKERS_DIR="${WORKERS_DIR:-}"
@@ -315,7 +315,7 @@ check_watchdog_config() {
   echo ""
   echo "Watchdog Config"
 
-  local wdog="$HOME/.boring/scripts/worker-watchdog.sh"
+  local wdog="$HOME/.claude-ops/scripts/worker-watchdog.sh"
   if [ ! -f "$wdog" ]; then
     _issue "worker-watchdog.sh not found at $wdog"
     return
@@ -346,7 +346,7 @@ check_watchdog_config() {
   fi
 
   # Check launchd plist (watchdog running as daemon)
-  local plist="$HOME/Library/LaunchAgents/com.boring.harness-watchdog.plist"
+  local plist="$HOME/Library/LaunchAgents/com.claude-ops.harness-watchdog.plist"
   if [ -f "$plist" ]; then
     _ok "Watchdog launchd plist found"
   else

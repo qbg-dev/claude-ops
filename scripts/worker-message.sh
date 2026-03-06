@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/fleet-jq.sh"
 
 # Source event-bus.sh for bus_publish (gracefully degrades if unavailable)
-_BUS_LIB="${BORING_DIR:-${CLAUDE_OPS_DIR:-$HOME/.boring}}/lib/event-bus.sh"
+_BUS_LIB="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/lib/event-bus.sh"
 _BUS_AVAILABLE="false"
 if [ -f "$_BUS_LIB" ]; then
   source "$_BUS_LIB" 2>/dev/null && _BUS_AVAILABLE="true" || true

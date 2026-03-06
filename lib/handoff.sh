@@ -22,7 +22,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-source "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || HARNESS_STATE_DIR="$HOME/.boring/state"
+source "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || HARNESS_STATE_DIR="$HOME/.claude-ops/state"
 DEBUG_LOG="$(harness_logs_dir 2>/dev/null || echo "$HARNESS_STATE_DIR/logs")/handoff.log"
 HANDOFF_DEFAULT_DELAY_SEC="${HANDOFF_DEFAULT_DELAY_SEC:-3}"
 HANDOFF_DEFAULT_MODEL="${HANDOFF_DEFAULT_MODEL:-opus}"

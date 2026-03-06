@@ -5,7 +5,7 @@ set -uo pipefail
 
 source "$(dirname "$0")/helpers.sh"
 
-WORKER_TASK="$HOME/.boring/scripts/worker-task.sh"
+WORKER_TASK="$HOME/.claude-ops/scripts/worker-task.sh"
 WORKER_NAME="test-wt-$$"
 TMPDIR_TEST=$(mktemp -d)
 WORKER_DIR="$TMPDIR_TEST/.claude/workers/$WORKER_NAME"
@@ -29,7 +29,7 @@ echo '{}' > "$TASKS"
 # Create an isolated state dir with empty pane registry.
 # worker-task.sh detects worker from: (1) pane registry, (2) git branch.
 # Without isolation, the pane registry would return the current Claude session's harness.
-TEMP_STATE_DIR="$TMPDIR_TEST/.boring-state"
+TEMP_STATE_DIR="$TMPDIR_TEST/.claude-ops-state"
 mkdir -p "$TEMP_STATE_DIR/locks"
 echo '{}' > "$TEMP_STATE_DIR/pane-registry.json"
 

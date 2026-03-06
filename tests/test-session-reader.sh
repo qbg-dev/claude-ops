@@ -4,7 +4,7 @@ set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
 
-SESSION_READER="$HOME/.boring/lib/session-reader.sh"
+SESSION_READER="$HOME/.claude-ops/lib/session-reader.sh"
 FIXTURE_DIR="/tmp/test-session-reader-$$"
 mkdir -p "$FIXTURE_DIR"
 
@@ -289,7 +289,7 @@ fi
 # Create a fake activity log with a session ID matching our fixture
 FAKE_SESSION_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 FAKE_HARNESS="test-session-find-$$"
-FAKE_ACTIVITY="${HARNESS_STATE_DIR:-$HOME/.boring/state}/activity/claude_activity_${FAKE_HARNESS}.jsonl"
+FAKE_ACTIVITY="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}/activity/claude_activity_${FAKE_HARNESS}.jsonl"
 # session_find looks in $HOME/.claude/projects/
 FAKE_PROJECTS="$FIXTURE_DIR/.claude/projects/-test-slug"
 mkdir -p "$FAKE_PROJECTS"

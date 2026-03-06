@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # notify_human_agent.sh — macOS notification via terminal-notifier with full event context.
 # Called for deploy, config-change, notification, and other events warranting the human agent's attention.
-# The human agent name is configurable via BORING_HUMAN_AGENT (default: see defaults.json).
+# The human agent name is configurable via CLAUDE_OPS_HUMAN_AGENT (default: see defaults.json).
 set -euo pipefail
 
 payload=$(cat)

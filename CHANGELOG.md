@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to boring are documented here.
+All notable changes to claude-ops are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
@@ -22,14 +22,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - **oss-steward harness** — dogfooding demo: an autonomous agent manages this repo's own docs (`feat: scaffold oss-steward harness`)
 - **Notification event type** — `notification` events go through the bus as side-effects, triggering `terminal-notifier` via `notify_human_agent.sh` (`feat(bus): notification event type`)
-- **README.md + install.sh** — full pitch, quick-start, architecture diagram, feature comparison table, curl-pipe-bash installer (`feat: prepare boring for open-source release`)
+- **README.md + install.sh** — full pitch, quick-start, architecture diagram, feature comparison table, curl-pipe-bash installer (`feat: prepare claude-ops for open-source release`)
 
 ### Changed
 - **Portability fix** — all hardcoded `/Users/wz/` paths replaced with `$HOME` or dynamic resolution (`fix: remove all hardcoded /Users/wz/ paths for portability`)
 
 ### Security
 - **Tool policy gate hardened** — oss-steward permissions sandboxed to repo only + Nexus; red-team fixes applied (`security: harden tool-policy-gate + oss-steward permissions`)
-- **oss-steward permissions tightened** — write access restricted to `~/repos/boring/` only (`chore(oss-steward): tighten permissions`)
+- **oss-steward permissions tightened** — write access restricted to `~/.claude-ops/` only (`chore(oss-steward): tighten permissions`)
 
 ---
 

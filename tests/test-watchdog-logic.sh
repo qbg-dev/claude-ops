@@ -5,7 +5,7 @@
 set -uo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 TMPDIR_TEST=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR_TEST"; }
@@ -116,7 +116,7 @@ echo "── watchdog: config values ──"
 
 # Architecture: v3 uses worker-watchdog.sh (full-featured, supports flat workers)
 # harness-watchdog.sh is a simplified crash-only watchdog for legacy harnesses.
-WATCHDOG="$HOME/.boring/scripts/worker-watchdog.sh"
+WATCHDOG="$HOME/.claude-ops/scripts/worker-watchdog.sh"
 
 # STUCK_THRESHOLD_SEC must be 1200 (20 min) — configurable via env, default 1200
 THRESHOLD=$(grep 'STUCK_THRESHOLD_SEC=' "$WATCHDOG" | head -1 \
@@ -132,7 +132,7 @@ echo ""
 echo "── stop hook: tasks.json dispatch ──"
 
 # Architecture: v3 stop hook is stop-worker-dispatch.sh (not stop-harness-dispatch.sh)
-DISPATCH="$HOME/.boring/hooks/gates/stop-worker-dispatch.sh"
+DISPATCH="$HOME/.claude-ops/hooks/gates/stop-worker-dispatch.sh"
 
 # Stop hook must reference tasks.json for task-state dispatch decisions
 assert_file_contains "dispatch: references tasks.json" "$DISPATCH" "tasks.json"
@@ -173,7 +173,7 @@ assert_equals "sleep_duration: unregistered worker returns 'none'" "none" "$SLEE
 echo ""
 echo "── harness-watchdog: UTC date parsing (no TZ offset bug) ──"
 
-WATCHDOG_SH="$HOME/.boring/scripts/harness-watchdog.sh"
+WATCHDOG_SH="$HOME/.claude-ops/scripts/harness-watchdog.sh"
 
 # Test: watchdog uses 'date -j -u' (with -u flag) when parsing last_cycle_at timestamps.
 # Bug (fixed commit 3be6505): 'date -j -f "%Y-%m-%dT%H:%M:%S"' without -u treats
@@ -216,7 +216,7 @@ fi
 echo ""
 echo "── merge-trigger-watchdog: registry.json chief-of-staff lookup ──"
 
-MERGE_WD="$HOME/.boring/scripts/merge-trigger-watchdog.sh"
+MERGE_WD="$HOME/.claude-ops/scripts/merge-trigger-watchdog.sh"
 
 # Test: merge-trigger-watchdog now checks registry.json first for chief-of-staff pane.
 # Fix commit e2e32be: flat workers (chief-of-staff) are in registry.json only,
@@ -240,7 +240,7 @@ echo "── harness-watchdog: last_cycle_at stamped on respawn (kill-loop preve
 # Bug (fixed commit ff5aa08): watchdog respawned workers repeatedly without
 # updating last_cycle_at, causing a kill-loop on the next watchdog pass.
 # Fix: stamp last_cycle_at = now in registry.json immediately after launching Claude.
-WATCHDOG_SH2="$HOME/.boring/scripts/harness-watchdog.sh"
+WATCHDOG_SH2="$HOME/.claude-ops/scripts/harness-watchdog.sh"
 
 # Test: watchdog stamps last_cycle_at on respawn
 TOTAL=$((TOTAL + 1))

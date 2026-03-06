@@ -5,7 +5,7 @@ set -euo pipefail
 source "$(dirname "$0")/helpers.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 echo "── permissions.json migration ──"
 
@@ -118,9 +118,9 @@ rm -f "$TMPF"
 
 TOTAL=$((TOTAL + 1))
 YAML_REFS=$(grep -rl 'permissions\.yaml' \
-  "$HOME/.boring/lib/" \
-  "$HOME/.boring/scripts/scaffold.sh" \
-  "$HOME/.boring/templates/seed.sh.tmpl" \
+  "$HOME/.claude-ops/lib/" \
+  "$HOME/.claude-ops/scripts/scaffold.sh" \
+  "$HOME/.claude-ops/templates/seed.sh.tmpl" \
   "$PROJECT_ROOT/.claude/scripts/"*-seed.sh \
   2>/dev/null | grep -v '\.bak$' | grep -v 'archive' || true)
 if [ -z "$YAML_REFS" ]; then

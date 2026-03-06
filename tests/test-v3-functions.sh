@@ -30,11 +30,11 @@
 #  23.  locked_jq_write edge cases: missing file, empty filter, nested objects
 #
 # Usage:
-#   bash ~/.boring/tests/test-v3-functions.sh
+#   bash ~/.claude-ops/tests/test-v3-functions.sh
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git -C "$HOME/Desktop/zPersonalProjects/Wechat" rev-parse --show-toplevel 2>/dev/null)}"
 
@@ -475,7 +475,7 @@ export HARNESS_STATE_DIR="$ORIG_STATE"
 rm -rf "$TMP"
 
 # ════════════════════════════════════════════════════════════════
-# 14. harness_list_all (reads from ~/.boring/harness/manifests/)
+# 14. harness_list_all (reads from ~/.claude-ops/harness/manifests/)
 # ════════════════════════════════════════════════════════════════
 echo ""
 echo "── harness_list_all ──"
@@ -562,7 +562,7 @@ rm -rf "$TMP"
 echo ""
 echo "── event bus internals ──"
 
-source "$HOME/.boring/lib/event-bus.sh"
+source "$HOME/.claude-ops/lib/event-bus.sh"
 
 TMP=$(mktemp -d)
 export BUS_DIR="$TMP"
@@ -571,7 +571,7 @@ export BUS_SEQ_FILE="$TMP/seq.json"
 export BUS_CURSORS_DIR="$TMP/cursors"
 export BUS_DLQ_DIR="$TMP/dlq"
 export BUS_SCHEMA="$TMP/schema.json"
-export BUS_SIDE_EFFECTS_DIR="$HOME/.boring/bus/side-effects"
+export BUS_SIDE_EFFECTS_DIR="$HOME/.claude-ops/bus/side-effects"
 export EVENT_BUS_ENABLED=true
 
 _bus_ensure_dirs
@@ -682,7 +682,7 @@ rm -rf "$TMP"
 echo ""
 echo "── pane-resolve.sh ──"
 
-source "$HOME/.boring/lib/pane-resolve.sh"
+source "$HOME/.claude-ops/lib/pane-resolve.sh"
 
 # resolve_project_root with CLAUDE_PROJECT_ROOT set
 RESULT=$(CLAUDE_PROJECT_ROOT="/custom/path" resolve_project_root)

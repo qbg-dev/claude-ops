@@ -44,7 +44,7 @@ done
 
 # ── Status mode ─────────────────────────────────────────────────
 if [ "$STATUS_ONLY" = true ]; then
-  source "$HOME/.boring/lib/harness-launch.sh"
+  source "$HOME/.claude-ops/lib/harness-launch.sh"
   harness_status "$HARNESS"
   exit 0
 fi
@@ -55,7 +55,7 @@ if [ "$SEED_ONLY" = true ]; then
 fi
 
 # ── Verify manifest exists ─────────────────────────────────────
-MANIFEST="$HOME/.boring/harness/manifests/$HARNESS/manifest.json"
+MANIFEST="$HOME/.claude-ops/harness/manifests/$HARNESS/manifest.json"
 if [ ! -f "$MANIFEST" ]; then
   echo "WARNING: No manifest at $MANIFEST" >&2
   echo "  Creating one now (stop hooks need this to enforce harness behavior)..." >&2
@@ -108,7 +108,7 @@ CLAUDE_CMD=$(jq -r '.rotation.claude_command // "cdo"' "$PROGRESS")
 export CLAUDE_CMD
 
 # ── Launch via harness-launch.sh ────────────────────────────────
-source "$HOME/.boring/lib/harness-launch.sh"
+source "$HOME/.claude-ops/lib/harness-launch.sh"
 
 LAUNCH_ARGS=("$HARNESS" "$PROJECT_ROOT")
 [ "$WITH_MONITOR" = true ] && LAUNCH_ARGS+=("--monitor")

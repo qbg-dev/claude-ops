@@ -8,7 +8,7 @@
 #   - worker_inject_journal routes to worker_send
 #
 # Usage:
-#   bash ~/.boring/tests/test-v3-rearchitecture.sh
+#   bash ~/.claude-ops/tests/test-v3-rearchitecture.sh
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
@@ -21,7 +21,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd
 # ════════════════════════════════════════════════════════════════
 echo "── harness_bump_session (v3 → state.json) ──"
 
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 # Test: v3 layout (state.json exists) — bump should write to state.json
 TMP_DIR=$(mktemp -d)
@@ -77,8 +77,8 @@ rm -rf "$TMP_DIR"
 echo ""
 echo "── harness-gates (MEMORY.md mtime check) ──"
 
-GATES="$HOME/.boring/hooks/dispatch/harness-gates.sh"
-GATES_LIB="$HOME/.boring/lib/harness-gates.sh"
+GATES="$HOME/.claude-ops/hooks/dispatch/harness-gates.sh"
+GATES_LIB="$HOME/.claude-ops/lib/harness-gates.sh"
 
 # Verify both copies exist and pass syntax
 assert_file_exists "gates dispatch exists" "$GATES"
@@ -111,7 +111,7 @@ assert_equals "gates dispatch and lib are in sync" "0" "$DIFF_COUNT"
 echo ""
 echo "── harness-gc (pane-registry cleanup) ──"
 
-GC="$HOME/.boring/hooks/dispatch/harness-gc.sh"
+GC="$HOME/.claude-ops/hooks/dispatch/harness-gc.sh"
 assert_file_exists "gc script exists" "$GC"
 bash -n "$GC" 2>/dev/null
 assert_equals "gc syntax OK" "0" "$?"
@@ -151,7 +151,7 @@ rm -rf "$TMP_DIR"
 echo ""
 echo "── seed template (RECORD, no journal.md) ──"
 
-TMPL="$HOME/.boring/templates/seed.sh.tmpl"
+TMPL="$HOME/.claude-ops/templates/seed.sh.tmpl"
 assert_file_exists "seed template exists" "$TMPL"
 
 # Verify RECORD section present
@@ -205,7 +205,7 @@ assert_file_contains "hq-v2 seed is custom" "$HQ_SEED" "Custom seed"
 echo ""
 echo "── hq_send function ──"
 
-HJQ="$HOME/.boring/lib/harness-jq.sh"
+HJQ="$HOME/.claude-ops/lib/harness-jq.sh"
 assert_file_contains "hq_send defined" "$HJQ" "hq_send()"
 
 # Test function signature: FROM TO TYPE CONTENT [PRIORITY]
@@ -219,7 +219,7 @@ touch "$TMP_BUS/stream.jsonl"
 # Call hq_send in a subprocess with PROJECT_ROOT pointing to temp
 RESULT=$(PROJECT_ROOT="$TMP_DIR" bash -c "
   source '$HJQ'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   hq_send 'mod-customer' 'hq-v2' 'status' 'cycle 4 done' 'normal' 2>/dev/null
   tail -1 '$TMP_BUS/stream.jsonl' 2>/dev/null
 " 2>/dev/null || echo "{}")
@@ -245,7 +245,7 @@ rm -rf "$TMP_DIR"
 echo ""
 echo "── worker_inject_journal (v3 routing) ──"
 
-WD="$HOME/.boring/lib/worker-dispatch.sh"
+WD="$HOME/.claude-ops/lib/worker-dispatch.sh"
 assert_file_exists "worker-dispatch exists" "$WD"
 bash -n "$WD" 2>/dev/null
 assert_equals "worker-dispatch syntax OK" "0" "$?"
@@ -297,7 +297,7 @@ assert_equals "doc has 12 key invariants" "12" "$INV_COUNT"
 echo ""
 echo "── SKILL.md v3 alignment ──"
 
-SKILL="$HOME/.boring/plugins/claude-context-orchestrator/skills/agent-harness/SKILL.md"
+SKILL="$HOME/.claude-ops/plugins/claude-context-orchestrator/skills/agent-harness/SKILL.md"
 assert_file_exists "SKILL.md exists" "$SKILL"
 
 # v3 files referenced
@@ -317,7 +317,7 @@ echo ""
 echo "── no stale session-registry references ──"
 
 # Check hooks dispatch directory
-for f in "$HOME/.boring/hooks/dispatch/"*.sh; do
+for f in "$HOME/.claude-ops/hooks/dispatch/"*.sh; do
   [ -f "$f" ] || continue
   fname=$(basename "$f")
   ACTIVE_REFS=$(grep -v '^[[:space:]]*#' "$f" | grep -c 'session-registry' 2>/dev/null; true)
@@ -325,7 +325,7 @@ for f in "$HOME/.boring/hooks/dispatch/"*.sh; do
 done
 
 # Check hooks gates directory
-for f in "$HOME/.boring/hooks/gates/"*.sh; do
+for f in "$HOME/.claude-ops/hooks/gates/"*.sh; do
   [ -f "$f" ] || continue
   fname=$(basename "$f")
   ACTIVE_REFS=$(grep -v '^[[:space:]]*#' "$f" | grep -c 'session-registry' 2>/dev/null; true)
@@ -334,7 +334,7 @@ done
 
 # Check lib directory (key files only)
 for f in harness-jq.sh harness-gates.sh handoff.sh worker-dispatch.sh event-bus.sh; do
-  FILE="$HOME/.boring/lib/$f"
+  FILE="$HOME/.claude-ops/lib/$f"
   [ -f "$FILE" ] || continue
   ACTIVE_REFS=$(grep -v '^[[:space:]]*#' "$FILE" | grep -c 'session-registry' 2>/dev/null; true)
   assert_equals "$f: no session-registry refs" "0" "$ACTIVE_REFS"

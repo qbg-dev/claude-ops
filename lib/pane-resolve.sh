@@ -2,7 +2,7 @@
 # pane-resolve.sh — Shared pane + harness resolution for all hooks.
 #
 # Source this file in any hook:
-#   source "$HOME/.boring/lib/pane-resolve.sh"
+#   source "$HOME/.claude-ops/lib/pane-resolve.sh"
 #
 # Then call:
 #   resolve_pane_and_harness "$SESSION_ID"

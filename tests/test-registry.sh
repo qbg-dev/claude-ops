@@ -4,14 +4,14 @@
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 echo "── manifest registry ──"
 
 # ── Fixture setup ────────────────────────────────────────────────────────────
 FIXTURE_NAME="test-registry-fixture-$$"
 FIXTURE_PROJECT=$(mktemp -d)
-FIXTURE_MANIFEST_DIR="$HOME/.boring/harness/manifests/$FIXTURE_NAME"
+FIXTURE_MANIFEST_DIR="$HOME/.claude-ops/harness/manifests/$FIXTURE_NAME"
 
 cleanup() {
   rm -rf "$FIXTURE_MANIFEST_DIR" "$FIXTURE_PROJECT"
@@ -33,7 +33,7 @@ jq -n \
 
 # ── Test 1: Manifest directory exists ────────────────────────────────────────
 TOTAL=$((TOTAL + 1))
-if [ -d "$HOME/.boring/harness/manifests" ]; then
+if [ -d "$HOME/.claude-ops/harness/manifests" ]; then
   echo -e "  ${GREEN}PASS${RESET} harnesses directory exists"
   PASS=$((PASS + 1))
 else
@@ -101,7 +101,7 @@ assert "progress_path ends with tasks.json" "tasks.json" "$RESULT"
 
 # ── Test 8: harness_manifest returns expected path format ────────────────────
 RESULT=$(harness_manifest "my-test-harness")
-assert_equals "manifest path format" "$HOME/.boring/harness/manifests/my-test-harness/manifest.json" "$RESULT"
+assert_equals "manifest path format" "$HOME/.claude-ops/harness/manifests/my-test-harness/manifest.json" "$RESULT"
 
 # ── Test 9: harness_project_root for nonexistent harness returns empty ────────
 RESULT=$(harness_project_root "nonexistent-harness-xyz")

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 echo "── cycle-phase enforcement ──"
 
@@ -120,7 +120,7 @@ RESULT=$(
   export PROJECT_ROOT="$DIR11"
   export CYCLE_PHASE_ENFORCEMENT=true
   export CYCLE_PHASE_MIN_PROBE_SEC=60
-  source "$HOME/.boring/lib/harness-jq.sh"
+  source "$HOME/.claude-ops/lib/harness-jq.sh"
   CUR_PHASE=$(harness_cycle_phase "$PROG11")
   PHASE_ENTERED=$(harness_phase_entered_at "$PROG11")
   ACC_FILE="$DIR11/.claude/harness/test-probe/acceptance.md"

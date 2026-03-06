@@ -3,7 +3,7 @@
 # Triggered by cell-message and announcement events.
 # Reads .from field to identify sender; writes full event payload to sender's outbox.jsonl.
 set -euo pipefail
-source "$HOME/.boring/lib/bus-paths.sh"
+source "$HOME/.claude-ops/lib/bus-paths.sh"
 
 payload=$(cat)
 from=$(echo "$payload" | jq -r '.from // ""' 2>/dev/null || echo "")

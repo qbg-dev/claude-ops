@@ -19,11 +19,11 @@
 #  15. harness_bump_session concurrent safety
 #
 # Usage:
-#   bash ~/.boring/tests/test-v3-comprehensive.sh
+#   bash ~/.claude-ops/tests/test-v3-comprehensive.sh
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 FIXTURES="$(dirname "$0")/fixtures"
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -220,7 +220,7 @@ echo ""
 echo "── worker_send routing ──"
 
 # worker_send writes to outbox and returns QUEUED|target|type
-WD="$HOME/.boring/lib/worker-dispatch.sh"
+WD="$HOME/.claude-ops/lib/worker-dispatch.sh"
 TMP=$(mktemp -d)
 mkdir -p "$TMP/.claude/bus" "$TMP/.claude/harness/test-harness/agents/sidecar"
 echo '{"seq": 0}' > "$TMP/.claude/bus/seq.json"
@@ -230,8 +230,8 @@ touch "$TMP/.claude/harness/test-harness/agents/sidecar/outbox.jsonl"
 
 # worker_send context type
 RESULT=$(PROJECT_ROOT="$TMP" HARNESS="test-harness" SIDECAR_NAME="test-sidecar" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   source '$WD'
   worker_send 'my-worker' context 'test-key' 'test-value'
 " 2>/dev/null || echo "ERROR")
@@ -239,8 +239,8 @@ assert "worker_send context returns QUEUED" "QUEUED" "$RESULT"
 
 # worker_send task type
 RESULT=$(PROJECT_ROOT="$TMP" HARNESS="test-harness" SIDECAR_NAME="test-sidecar" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   source '$WD'
   worker_send 'my-worker' task 'task-1' 'do something' ''
 " 2>/dev/null || echo "ERROR")
@@ -248,8 +248,8 @@ assert "worker_send task returns QUEUED" "QUEUED" "$RESULT"
 
 # worker_send directive type
 RESULT=$(PROJECT_ROOT="$TMP" HARNESS="test-harness" SIDECAR_NAME="test-sidecar" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   source '$WD'
   worker_send 'my-worker' directive 'do this now'
 " 2>/dev/null || echo "ERROR")
@@ -257,8 +257,8 @@ assert "worker_send directive returns QUEUED" "QUEUED" "$RESULT"
 
 # Invalid type should fail
 RESULT=$(PROJECT_ROOT="$TMP" HARNESS="test-harness" SIDECAR_NAME="test-sidecar" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   source '$WD'
   worker_send 'my-worker' invalid_type 'data' 2>&1
   echo \"EXIT:\$?\"
@@ -281,8 +281,8 @@ touch "$TMP/.claude/bus/stream.jsonl"
 
 # With explicit priority
 RESULT=$(PROJECT_ROOT="$TMP" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   hq_send 'hq-v2' 'mod-customer' 'task' 'urgent fix' 'urgent' 2>/dev/null
   tail -1 '$TMP/.claude/bus/stream.jsonl' 2>/dev/null
 " 2>/dev/null || echo "{}")
@@ -291,8 +291,8 @@ assert_equals "hq_send priority=urgent" "urgent" "$PRIORITY"
 
 # Worker address with slash
 RESULT=$(PROJECT_ROOT="$TMP" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   hq_send 'mod-customer/kefu-latency' 'mod-customer' 'status' 'done' 2>/dev/null
   tail -1 '$TMP/.claude/bus/stream.jsonl' 2>/dev/null
 " 2>/dev/null || echo "{}")
@@ -301,8 +301,8 @@ assert_equals "hq_send from worker address" "mod-customer/kefu-latency" "$FROM"
 
 # Default priority is normal
 RESULT=$(PROJECT_ROOT="$TMP" bash -c "
-  source '$HOME/.boring/lib/harness-jq.sh'
-  source '$HOME/.boring/lib/event-bus.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/event-bus.sh'
   hq_send 'hq-v2' 'mod-infra' 'status' 'all ok' 2>/dev/null
   tail -1 '$TMP/.claude/bus/stream.jsonl' 2>/dev/null
 " 2>/dev/null || echo "{}")
@@ -392,7 +392,7 @@ echo ""
 echo "── bus side-effects ──"
 
 # All side-effect scripts exist and have valid bash
-SE_DIR="$HOME/.boring/bus/side-effects"
+SE_DIR="$HOME/.claude-ops/bus/side-effects"
 if [ -d "$SE_DIR" ]; then
   SE_COUNT=0
   SE_VALID=0
@@ -437,7 +437,7 @@ fi
 echo ""
 echo "── stop hook v3 compat ──"
 
-DISPATCH="$HOME/.boring/hooks/gates/stop-harness-dispatch.sh"
+DISPATCH="$HOME/.claude-ops/hooks/gates/stop-harness-dispatch.sh"
 if [ -f "$DISPATCH" ]; then
   bash -n "$DISPATCH" 2>/dev/null
   assert_equals "dispatch syntax OK" "0" "$?"
@@ -462,7 +462,7 @@ fi
 echo ""
 echo "── seed template substitution ──"
 
-TMPL="$HOME/.boring/templates/seed.sh.tmpl"
+TMPL="$HOME/.claude-ops/templates/seed.sh.tmpl"
 
 # Test with various harness names (including hyphens)
 for name in "mod-customer" "hq-v2" "service-miniapp-ux"; do
@@ -580,9 +580,9 @@ echo ""
 echo "── no unbound variable traps ──"
 
 # Key infrastructure files should not reference HARNESS_SESSION_REGISTRY
-for f in "$HOME/.boring/lib/handoff.sh" \
-         "$HOME/.boring/hooks/dispatch/harness-gc.sh" \
-         "$HOME/.boring/hooks/gates/stop-harness-dispatch.sh"; do
+for f in "$HOME/.claude-ops/lib/handoff.sh" \
+         "$HOME/.claude-ops/hooks/dispatch/harness-gc.sh" \
+         "$HOME/.claude-ops/hooks/gates/stop-harness-dispatch.sh"; do
   [ -f "$f" ] || continue
   fname=$(basename "$f")
   REFS=$(grep -c 'HARNESS_SESSION_REGISTRY' "$f" 2>/dev/null; true)

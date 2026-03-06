@@ -4,7 +4,7 @@
 
 ---
 
-I've been using Claude Code for long autonomous tasks and kept wanting something that would let agents keep working across sessions without me babysitting them. Built this: **boring**.
+I've been using Claude Code for long autonomous tasks and kept wanting something that would let agents keep working across sessions without me babysitting them. Built this: **claude-ops**.
 
 The core idea is simple: Claude Code's **Stop hook** fires every time Claude tries to end a session. If you tell it "don't stop until these tasks are done," the agent just... doesn't stop. It reads the hook output as context and keeps working. That's the whole loop—no polling, no external scheduler.
 
@@ -29,11 +29,11 @@ Task graphs are plain JSON. You can edit them mid-session to reprioritize, add t
 
 **Getting started:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qbg-dev/boring/main/install.sh | bash
-bash ~/.boring/scripts/scaffold.sh my-feature /path/to/project
+curl -fsSL https://raw.githubusercontent.com/qbg-dev/claude-ops/main/install.sh | bash
+bash ~/.claude-ops/scripts/scaffold.sh my-feature /path/to/project
 ```
 
-GitHub: https://github.com/qbg-dev/boring
-Full docs: https://github.com/qbg-dev/boring/blob/main/docs/getting-started.md
+GitHub: https://github.com/qbg-dev/claude-ops
+Full docs: https://github.com/qbg-dev/claude-ops/blob/main/docs/getting-started.md
 
 Happy to answer questions about the hook design or how the multi-agent layer works.

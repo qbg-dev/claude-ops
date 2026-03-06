@@ -12,7 +12,7 @@
 # PROJECT_ROOT is set by the caller.
 
 set -euo pipefail
-source "${HOME}/.boring/lib/fleet-jq.sh"
+source "${HOME}/.claude-ops/lib/fleet-jq.sh"
 
 PAYLOAD=$(cat)
 EVENT_TYPE=$(echo "$PAYLOAD" | jq -r '._event_type // empty')

@@ -32,8 +32,8 @@ fi
 TIMESTAMP=$(date -Iseconds)
 
 # ── Source libraries ──
-source "$HOME/.boring/lib/pane-resolve.sh" 2>/dev/null || true
-source "$HOME/.boring/lib/event-bus.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/pane-resolve.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null || true
 set +e  # event-bus.sh sets -euo pipefail; undo -e to avoid unexpected exits
 
 # ── Resolve harness ──
@@ -45,7 +45,7 @@ resolve_pane_and_harness "$SESSION_ID" 2>/dev/null || true
 # Base identity: "main" (PostToolUse session_id = top-level interactive session)
 AGENT_NAME="main"
 
-HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.boring/state}"
+HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}"
 _SESSION_DIR="$HARNESS_STATE_DIR/sessions/$SESSION_ID"
 
 # Overlay: check active subagent marker files

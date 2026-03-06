@@ -7,10 +7,10 @@
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-source "$HOME/.boring/lib/fleet-jq.sh"
-source "$HOME/.boring/lib/event-bus.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/fleet-jq.sh"
+source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null || true
 
-_log() { echo "[$(date -u +%FT%TZ)] stop-hook: $*" >> "${HOME}/.boring/state/watchdog.log" 2>/dev/null || true; }
+_log() { echo "[$(date -u +%FT%TZ)] stop-hook: $*" >> "${HOME}/.claude-ops/state/watchdog.log" 2>/dev/null || true; }
 
 INPUT=$(cat)
 

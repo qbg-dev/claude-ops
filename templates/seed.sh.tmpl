@@ -7,7 +7,7 @@ HARNESS="{{HARNESS}}"
 PROJECT_ROOT="{{PROJECT_ROOT}}"
 HARNESS_DIR="$PROJECT_ROOT/.claude/harness/${HARNESS}"
 
-HARNESS_JQ="$HOME/.boring/lib/harness-jq.sh"
+HARNESS_JQ="$HOME/.claude-ops/lib/harness-jq.sh"
 [ -f "$HARNESS_JQ" ] && source "$HARNESS_JQ"
 
 SIDECAR_DIR="$HARNESS_DIR/agents/module-manager"
@@ -149,7 +149,7 @@ Find next unblocked task → implement → verify → report → repeat.
 - **NEVER run `./scripts/deploy-prod.sh`** — it is hard-blocked from worktrees and will exit with an error
 - **When ready for prod**, notify your module manager via bus:
   ```bash
-  source ~/.boring/lib/harness-jq.sh
+  source ~/.claude-ops/lib/harness-jq.sh
   hq_send "'"$HARNESS"'/WORKER_NAME" "'"$PARENT"'" "prod-deploy-ready" "service=web commit=$(git rev-parse --short HEAD) summary=one-line description"
   ```
   Warren'"'"'s main session handles all prod deploys. Do not wait — start your next task immediately.
@@ -172,7 +172,7 @@ MM will reject completions without evidence. Run these and include output in you
 
 ### Reporting Done
 ```bash
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 hq_send "'"$HARNESS"'/WORKER_NAME" "'"$PARENT"'" "status" "T-1 done. src/foo.ts (+42/-5). Tests: 47 pass. Deployed to test. URL: https://..."
 ```'
     ROLE_RULES="- **Never modify harness structure.** Execute tasks, report to module manager.
@@ -197,7 +197,7 @@ Your job:
 
 ### Cross-Module Communication
 ```bash
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 
 # Route a bug to the right module
 hq_send "'"$HARNESS"'" "mod-ops" "regression" "Work order close flow broken: missing photo validation"
@@ -239,7 +239,7 @@ Your job:
 ### Worker Management
 ```bash
 # Discover available/running workers
-source ~/.boring/lib/worker-dispatch.sh
+source ~/.claude-ops/lib/worker-dispatch.sh
 SIDECAR_NAME='"$HARNESS"' PROJECT_ROOT='"$PROJECT_ROOT"' worker_discover
 
 # Launch a new worker (creates worktree + split pane)
@@ -249,7 +249,7 @@ bash .claude/scripts/launch-worker.sh '"$HARNESS"' <WORKER_NAME>
 SIDECAR_NAME='"$HARNESS"' PROJECT_ROOT='"$PROJECT_ROOT"' worker_health_all
 
 # Send message to a worker via event bus
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 hq_send "'"$HARNESS"'" "'"$HARNESS"'/WORKER_NAME" "directive" "Your instruction here"
 ```
 
@@ -263,7 +263,7 @@ hq_send "'"$HARNESS"'" "'"$HARNESS"'/WORKER_NAME" "directive" "Your instruction 
 - **NEVER run `./scripts/deploy-prod.sh`** — neither you nor your workers are authorized for prod
 - **When a worker sends `prod-deploy-ready`**: forward to Warren'"'"'s main session:
   ```bash
-  source ~/.boring/lib/harness-jq.sh
+  source ~/.claude-ops/lib/harness-jq.sh
   hq_send "'"$HARNESS"'" "hq-v3" "prod-deploy-ready" "module='"$HARNESS"' service=<s> commit=<sha> summary=<one line>"
   ```
   Do not deploy to prod yourself. Warren'"'"'s main session (`hq-v3` or the main Claude pane) handles all prod deploys.'
@@ -284,11 +284,11 @@ If a task is too large or you need parallel execution, you can spawn workers:
 bash .claude/scripts/launch-worker.sh '"$HARNESS"' <WORKER_NAME>
 
 # Send message to a worker via event bus
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 hq_send "'"$HARNESS"'" "'"$HARNESS"'/WORKER_NAME" "directive" "Your instruction here"
 
 # Check worker health
-source ~/.boring/lib/worker-dispatch.sh
+source ~/.claude-ops/lib/worker-dispatch.sh
 SIDECAR_NAME='"$HARNESS"' PROJECT_ROOT='"$PROJECT_ROOT"' worker_health_all
 ```
 
@@ -339,7 +339,7 @@ All inter-agent messaging goes through the event bus. **Never** write directly t
 
 \`\`\`bash
 # Send a message to another agent
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 hq_send "${HARNESS}" "TARGET_AGENT" "TYPE" "Your message content"
 # Types: status, regression, directive, task, question
 \`\`\`
@@ -362,19 +362,19 @@ $ROLE_RULES
 1. Update MEMORY.md — synthesize learnings; prune to ≤200 lines
 2. Bump cycle counter:
    \`\`\`bash
-   source ~/.boring/lib/harness-jq.sh
+   source ~/.claude-ops/lib/harness-jq.sh
    harness_bump_session .claude/harness/${HARNESS}/tasks.json
    \`\`\`
 3. Publish completions via bus (if any tasks completed):
    \`\`\`bash
-   source ~/.boring/lib/event-bus.sh
+   source ~/.claude-ops/lib/event-bus.sh
    bus_publish "task.completed" '{"harness":"${HARNESS}","task_id":"TASK_ID","summary":"one line"}'
    \`\`\`
 4. Wave protocol — complete a wave before starting the next one. After all tasks in the
    current wave are done, generate a wave report and move on. Generate wave report (after completing a wave or significant batch of tasks):
    \`\`\`bash
    # Copy the template and fill in your results
-   cp ~/.boring/templates/wave-report.html.tmpl .claude/harness/${HARNESS}/wave-N.html
+   cp ~/.claude-ops/templates/wave-report.html.tmpl .claude/harness/${HARNESS}/wave-N.html
    # report.css is already in the harness dir (generated by scaffold)
    \`\`\`
    Edit \`wave-N.html\`: fill in task entries with before/after/evidence, update the

@@ -1,6 +1,6 @@
-# Getting Started with boring
+# Getting Started with claude-ops
 
-This guide walks you through installing boring, scaffolding your first harness, and launching your first autonomous agent.
+This guide walks you through installing claude-ops, scaffolding your first harness, and launching your first autonomous agent.
 
 ## Prerequisites
 
@@ -12,12 +12,12 @@ This guide walks you through installing boring, scaffolding your first harness, 
 ## Step 1: Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qbg-dev/boring/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qbg-dev/claude-ops/main/install.sh | bash
 ```
 
 The installer:
-1. Clones the repo to `~/.boring`
-2. Adds `~/.boring/bin` to your `PATH`
+1. Clones the repo to `~/.claude-ops`
+2. Adds `~/.claude-ops/bin` to your `PATH`
 3. Registers the four Claude Code hooks in `~/.claude/settings.json`
 4. Verifies the installation
 
@@ -29,7 +29,7 @@ source ~/.zshrc  # or ~/.bash_profile / ~/.bashrc
 ### Verify
 
 ```bash
-bash ~/.boring/tests/run-all.sh
+bash ~/.claude-ops/tests/run-all.sh
 ```
 
 All tests should pass (163 tests, 10 suites).
@@ -39,7 +39,7 @@ All tests should pass (163 tests, 10 suites).
 A *harness* is a named task graph that an agent works through. Create one in your project:
 
 ```bash
-bash ~/.boring/scripts/scaffold.sh my-feature /path/to/your/project
+bash ~/.claude-ops/scripts/scaffold.sh my-feature /path/to/your/project
 ```
 
 This creates:
@@ -69,7 +69,7 @@ This creates:
 For a long-running (recurring) harness:
 
 ```bash
-bash ~/.boring/scripts/scaffold.sh --long-running monitor /path/to/project
+bash ~/.claude-ops/scripts/scaffold.sh --long-running monitor /path/to/project
 ```
 
 ## Step 3: Define Your Tasks

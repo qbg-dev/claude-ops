@@ -26,7 +26,7 @@ if [ -z "$WORKER_NAME" ]; then
 fi
 
 if [ -z "$WORKER_NAME" ]; then
-  echo "ERROR: Could not detect worker name. Provide it as argument: /boring:register <name>"
+  echo "ERROR: Could not detect worker name. Provide it as argument: /claude-ops:register <name>"
   exit 1
 fi
 ```
@@ -51,7 +51,7 @@ PANE_TARGET=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.
 
 [ ! -f "$REGISTRY" ] && { echo "ERROR: registry.json not found at $REGISTRY"; exit 1; }
 
-_LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+_LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
 mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
 _WAIT=0
 while ! mkdir "$_LOCK_DIR" 2>/dev/null; do

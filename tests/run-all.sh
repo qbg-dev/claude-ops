@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-all.sh — Run the full harness test suite.
-# Usage: bash ~/.boring/tests/run-all.sh
+# Usage: bash ~/.claude-ops/tests/run-all.sh
 set -euo pipefail
 
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,10 +26,10 @@ for test in "$TESTS_DIR"/test-*.sh; do
   NAME=$(basename "$test")
 
   # Allow CI / callers to skip environment-specific suites
-  if [[ -n "${BORING_SKIP_SUITES:-}" ]]; then
+  if [[ -n "${CLAUDE_OPS_SKIP_SUITES:-}" ]]; then
     BASENAME="${NAME%.sh}"
     SKIP=false
-    for skip_name in $BORING_SKIP_SUITES; do
+    for skip_name in $CLAUDE_OPS_SKIP_SUITES; do
       [[ "$BASENAME" == "$skip_name" ]] && SKIP=true && break
     done
     if [[ "$SKIP" == "true" ]]; then

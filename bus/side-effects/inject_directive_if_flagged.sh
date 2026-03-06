@@ -23,12 +23,12 @@ echo "" >> "$memory_path"
 echo "$content_text" >> "$memory_path"
 
 # Publish agent.memory-updated for observability (fire-and-forget)
-if [ -f "$HOME/.boring/lib/event-bus.sh" ]; then
+if [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then
   _mem_payload=$(jq -nc --arg agent "$to" --arg src "directive" --arg file "$memory_path" --arg sender "$sender" \
     '{agent:$agent, source:$src, file:$file, trigger_from:$sender}' 2>/dev/null || true)
   if [ -n "$_mem_payload" ]; then
     (PROJECT_ROOT="$pr" BUS_DIR="$pr/.claude/bus" \
-      bash -c "source '$HOME/.boring/lib/event-bus.sh' && bus_publish 'agent.memory-updated' '$_mem_payload'" 2>/dev/null || true) &
+      bash -c "source '$HOME/.claude-ops/lib/event-bus.sh' && bus_publish 'agent.memory-updated' '$_mem_payload'" 2>/dev/null || true) &
     disown 2>/dev/null || true
   fi
 fi

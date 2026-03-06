@@ -56,7 +56,7 @@ if [ -z "$SESSION_ID" ]; then
 fi
 
 # Lock + write to registry.json
-_LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+_LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
 mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
 _WAIT=0
 while ! mkdir "$_LOCK_DIR" 2>/dev/null; do

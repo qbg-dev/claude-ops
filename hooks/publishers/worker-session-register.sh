@@ -38,7 +38,7 @@ EXISTING=$(jq -r --arg n "$WORKER_NAME" '.[$n].session_id // ""' "$REGISTRY" 2>/
 [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ] && [ "$EXISTING" != "" ] && exit 0
 
 # Write session_id to registry.json
-_LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+_LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
 mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
 _WAIT=0
 while ! mkdir "$_LOCK_DIR" 2>/dev/null; do

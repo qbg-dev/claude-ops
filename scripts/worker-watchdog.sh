@@ -18,10 +18,10 @@
 # Requirements:
 #   - PROJECT_ROOT set (or auto-detected via git)
 #   - .claude/workers/registry.json (project) or pane-registry.json (legacy) populated at startup
-#   - ~/.boring/lib/fleet-jq.sh + event-bus.sh available
+#   - ~/.claude-ops/lib/fleet-jq.sh + event-bus.sh available
 #
-# Crash-loop file: ~/.boring/state/harness-runtime/{canonical}/crash-loop
-# Crash count file: ~/.boring/state/harness-runtime/{canonical}/crash-count.json
+# Crash-loop file: ~/.claude-ops/state/harness-runtime/{canonical}/crash-loop
+# Crash count file: ~/.claude-ops/state/harness-runtime/{canonical}/crash-count.json
 
 set -euo pipefail
 
@@ -29,13 +29,13 @@ set -euo pipefail
 CHECK_INTERVAL="${WATCHDOG_CHECK_INTERVAL:-30}"
 STUCK_THRESHOLD_SEC="${WATCHDOG_STUCK_THRESHOLD:-1200}"  # 20 min no activity = stuck
 MAX_CRASHES_PER_HR="${WATCHDOG_MAX_CRASHES:-3}"
-LOG_FILE="${WATCHDOG_LOG:-${HOME}/.boring/state/watchdog.log}"
+LOG_FILE="${WATCHDOG_LOG:-${HOME}/.claude-ops/state/watchdog.log}"
 
 # git rev-parse fails if cwd is not in a repo (e.g. watchdog started by launchd from /).
 # Hardcode the default project root; override via env if needed.
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-source "${HOME}/.boring/lib/fleet-jq.sh"
-source "${HOME}/.boring/lib/event-bus.sh" 2>/dev/null || true
+source "${HOME}/.claude-ops/lib/fleet-jq.sh"
+source "${HOME}/.claude-ops/lib/event-bus.sh" 2>/dev/null || true
 
 MODE="daemon"
 [ "${1:-}" = "--once" ]   && MODE="once"
@@ -221,7 +221,7 @@ _build_claude_cmd() {
   local model
   model=$(jq -r --arg n "$worker_name" '.[$n].model // empty' "$registry" 2>/dev/null)
   [ -z "$model" ] && model=$(jq -r '.model // empty' "$cache" 2>/dev/null)
-  [ -z "$model" ] && model="sonnet"
+  [ -z "$model" ] && model="opus"
 
   # Read permission_mode from registry.json (with runtime cache fallback)
   local perm_mode
@@ -675,7 +675,7 @@ _respawn_agent() {
           # Update project registry with new pane info
           local _proj_registry="$PROJECT_ROOT/.claude/workers/registry.json"
           if [ -f "$_proj_registry" ]; then
-            local _lock_dir="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+            local _lock_dir="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
             mkdir -p "$(dirname "$_lock_dir")" 2>/dev/null || true
             local _lw=0; local _lock_ok=0
             while ! mkdir "$_lock_dir" 2>/dev/null; do
@@ -761,7 +761,7 @@ MWSEED
     # Pane dead — fall back to launch-flat-worker.sh (creates new window)
     local worker_launch="$PROJECT_ROOT/.claude/scripts/launch-flat-worker.sh"
     if [ ! -f "$worker_launch" ]; then
-      worker_launch="$HOME/.boring/scripts/launch-flat-worker.sh"
+      worker_launch="$HOME/.claude-ops/scripts/launch-flat-worker.sh"
     fi
     if [ ! -f "$worker_launch" ]; then
       _log "RESPAWN-SKIP: $canonical — launch-flat-worker.sh not found (checked project + upstream)"
@@ -788,7 +788,7 @@ MWSEED
   pane_registry_remove "$pane_id" 2>/dev/null || true
 
   # Launch new agent (harness-launch.sh handles pane creation + seed injection)
-  local launch_script="$HOME/.boring/harness/harness-launch.sh"
+  local launch_script="$HOME/.claude-ops/harness/harness-launch.sh"
   if [ -f "$launch_script" ]; then
     bash "$launch_script" "$harness_name" "$seed_script" &
     _log "RESPAWN: $canonical (reason=$reason) — launched via harness-launch.sh"

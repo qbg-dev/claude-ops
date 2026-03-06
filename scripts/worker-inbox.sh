@@ -18,7 +18,7 @@
 set -euo pipefail
 
 # ── Resolve project root ─────────────────────────────────────────
-_LIB_DIR="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/lib"
+_LIB_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/lib"
 if [ -f "$_LIB_DIR/event-bus.sh" ]; then
   source "$_LIB_DIR/event-bus.sh"
 elif [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then
@@ -33,7 +33,7 @@ WORKERS_DIR="$PROJECT_ROOT/.claude/workers"
 LATEST_FILE="$WORKERS_DIR/.outbox-latest.jsonl"
 
 # Also run a sync pass first to catch any new events
-SYNC_SCRIPT="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/scripts/worker-outbox-sync.sh"
+SYNC_SCRIPT="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/scripts/worker-outbox-sync.sh"
 [ -f "$SYNC_SCRIPT" ] && bash "$SYNC_SCRIPT" --once 2>/dev/null || true
 
 # ── Parse args ────────────────────────────────────────────────────

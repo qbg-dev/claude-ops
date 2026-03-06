@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# install.sh — Install boring to ~/.boring and register hooks.
+# install.sh — Install claude-ops to ~/.claude-ops and register hooks.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/qbg-dev/boring/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/qbg-dev/claude-ops/main/install.sh | bash
 #   bash install.sh
 #
 # What it does:
-#   1. Clones (or updates) the repo to ~/.boring
-#   2. Adds ~/.boring/bin to PATH in your shell rc file
+#   1. Clones (or updates) the repo to ~/.claude-ops
+#   2. Adds ~/.claude-ops/bin to PATH in your shell rc file
 #   3. Registers Claude Code hooks in ~/.claude/settings.json
 #   4. Verifies the installation by running a quick sanity check
 set -euo pipefail
 
-REPO_URL="${BORING_REPO:-${CLAUDE_OPS_REPO:-https://github.com/qbg-dev/boring.git}}"
-# Prefer BORING_DIR, fall back to legacy CLAUDE_OPS_DIR, default to ~/.boring
-INSTALL_DIR="${BORING_DIR:-${CLAUDE_OPS_DIR:-$HOME/.boring}}"
+REPO_URL="${CLAUDE_OPS_REPO:-${CLAUDE_OPS_REPO:-https://github.com/qbg-dev/claude-ops.git}}"
+# Prefer CLAUDE_OPS_DIR, fall back to legacy CLAUDE_OPS_DIR, default to ~/.claude-ops
+INSTALL_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
 # ── Colors ──────────────────────────────────────────────────────
@@ -24,9 +24,9 @@ else
   GREEN=''; YELLOW=''; RED=''; NC=''
 fi
 
-info()    { echo -e "${GREEN}[boring]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[boring]${NC} $*"; }
-err()     { echo -e "${RED}[boring]${NC} $*" >&2; }
+info()    { echo -e "${GREEN}[claude-ops]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[claude-ops]${NC} $*"; }
+err()     { echo -e "${RED}[claude-ops]${NC} $*" >&2; }
 die()     { err "$*"; exit 1; }
 
 # ── Prerequisite check ───────────────────────────────────────────
@@ -49,7 +49,7 @@ install_repo() {
       warn "Could not fast-forward; skipping update (local changes present?)"
     }
   else
-    info "Cloning boring to $INSTALL_DIR ..."
+    info "Cloning claude-ops to $INSTALL_DIR ..."
     git clone "$REPO_URL" "$INSTALL_DIR"
   fi
 }
@@ -57,7 +57,7 @@ install_repo() {
 # ── PATH setup ───────────────────────────────────────────────────
 setup_path() {
   local bin_dir="$INSTALL_DIR/bin"
-  local path_line='export PATH="$HOME/.boring/bin:$PATH"'
+  local path_line='export PATH="$HOME/.claude-ops/bin:$PATH"'
 
   # Detect shell rc
   local rc_file=""
@@ -74,7 +74,7 @@ setup_path() {
     return
   fi
 
-  if grep -qF ".boring/bin" "$rc_file" 2>/dev/null; then
+  if grep -qF ".claude-ops/bin" "$rc_file" 2>/dev/null; then
     info "PATH already configured in $rc_file"
   else
     echo "$path_line" >> "$rc_file"
@@ -87,10 +87,10 @@ setup_path() {
 }
 
 # ── Backwards-compat symlink ─────────────────────────────────────
-# ~/.claude-ops → ~/.boring so existing hook paths and scripts continue working
+# ~/.claude-ops → ~/.claude-ops so existing hook paths and scripts continue working
 setup_compat_symlink() {
   local legacy="$HOME/.claude-ops"
-  if [[ "$INSTALL_DIR" == "$HOME/.boring" ]]; then
+  if [[ "$INSTALL_DIR" == "$HOME/.claude-ops" ]]; then
     if [[ -L "$legacy" ]] && [[ "$(readlink "$legacy")" == "$INSTALL_DIR" ]]; then
       info "Compat symlink already in place ($legacy → $INSTALL_DIR)"
     elif [[ -d "$legacy" ]] && [[ ! -L "$legacy" ]]; then
@@ -124,10 +124,10 @@ register_hooks() {
   local updated
   updated=$(echo "$current" | jq '. + {
     "hooks": {
-      "PreToolUse": [{"hooks": [{"type": "command", "command": "bash ~/.boring/hooks/interceptors/pre-tool-context-injector.sh"}]}],
-      "PostToolUse": [{"hooks": [{"type": "command", "command": "bash ~/.boring/hooks/publishers/post-tool-publisher.sh"}]}],
-      "Stop": [{"hooks": [{"type": "command", "command": "bash ~/.boring/hooks/gates/stop-worker-dispatch.sh"}]}],
-      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "bash ~/.boring/hooks/publishers/prompt-publisher.sh"}]}]
+      "PreToolUse": [{"hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/interceptors/pre-tool-context-injector.sh"}]}],
+      "PostToolUse": [{"hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/publishers/post-tool-publisher.sh"}]}],
+      "Stop": [{"hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/gates/stop-worker-dispatch.sh"}]}],
+      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/publishers/prompt-publisher.sh"}]}]
     }
   }')
 
@@ -173,7 +173,7 @@ verify_install() {
 # ── Main ─────────────────────────────────────────────────────────
 main() {
   echo ""
-  echo "  boring installer"
+  echo "  claude-ops installer"
   echo "  ─────────────────────"
   echo ""
 
@@ -185,13 +185,13 @@ main() {
   verify_install
 
   echo ""
-  info "Done! boring is installed at $INSTALL_DIR"
+  info "Done! claude-ops is installed at $INSTALL_DIR"
   echo ""
   echo "  Next steps:"
-  echo "    scaffold:  bash ~/.boring/scripts/scaffold.sh <name> /path/to/project"
-  echo "    launch:    bash ~/.boring/scripts/harness-launch.sh <name>"
-  echo "    status:    bash ~/.boring/scripts/worker-watchdog.sh --status"
-  echo "    docs:      https://github.com/qbg-dev/boring/blob/main/docs/getting-started.md"
+  echo "    scaffold:  bash ~/.claude-ops/scripts/scaffold.sh <name> /path/to/project"
+  echo "    launch:    bash ~/.claude-ops/scripts/harness-launch.sh <name>"
+  echo "    status:    bash ~/.claude-ops/scripts/worker-watchdog.sh --status"
+  echo "    docs:      https://github.com/qbg-dev/claude-ops/blob/main/docs/getting-started.md"
   echo ""
 }
 

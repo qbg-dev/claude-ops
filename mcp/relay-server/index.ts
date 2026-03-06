@@ -6,7 +6,7 @@
  * over HTTP so remote MCP servers can route messages transparently.
  *
  * Auto-started by the worker-fleet MCP server as a subprocess.
- * Auth: Bearer token from ~/.boring/relay-secret
+ * Auth: Bearer token from ~/.claude-ops/relay-secret
  *
  * Endpoints:
  *   GET  /health                       — alive check
@@ -25,14 +25,14 @@ import { spawnSync } from "child_process";
 
 const HOME = process.env.HOME!;
 const PORT = parseInt(process.env.RELAY_PORT || "3847", 10);
-const BORING_DIR = process.env.BORING_DIR || join(HOME, ".boring");
+const CLAUDE_OPS_DIR = process.env.CLAUDE_OPS_DIR || join(HOME, ".claude-ops");
 const CLAUDE_OPS = process.env.CLAUDE_OPS_DIR || join(HOME, ".claude-ops");
 const CHECK_WORKERS_SH = join(CLAUDE_OPS, "scripts/check-flat-workers.sh");
 const WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
 
 // ── Auth ──────────────────────────────────────────────────────────────
 
-const SECRET_PATH = join(BORING_DIR, "relay-secret");
+const SECRET_PATH = join(CLAUDE_OPS_DIR, "relay-secret");
 let RELAY_SECRET = "";
 try {
   RELAY_SECRET = readFileSync(SECRET_PATH, "utf-8").trim();

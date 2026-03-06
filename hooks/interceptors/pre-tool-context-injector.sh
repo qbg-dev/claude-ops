@@ -18,7 +18,7 @@ trap 'echo "{}"; exit 0' ERR
 exec 2>/dev/null  # suppress stderr — Claude Code treats any stderr as hook error
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-[ -f "$HOME/.boring/lib/event-bus.sh" ] && source "$HOME/.boring/lib/event-bus.sh"
+[ -f "$HOME/.claude-ops/lib/event-bus.sh" ] && source "$HOME/.claude-ops/lib/event-bus.sh"
 CONTEXT_INJECTOR_MAX_MATCHES="${CONTEXT_INJECTOR_MAX_MATCHES:-3}"
 INBOX_ENABLED="${INBOX_ENABLED:-true}"
 INBOX_SCAN_WINDOW_SEC="${INBOX_SCAN_WINDOW_SEC:-1800}"
@@ -26,7 +26,7 @@ INBOX_MAX_INJECT_MESSAGES="${INBOX_MAX_INJECT_MESSAGES:-20}"
 INBOX_ACCEPTANCE_INJECT="${INBOX_ACCEPTANCE_INJECT:-true}"
 
 # Use shared pane resolution library (replaces inline fleet-jq.sh source)
-source "$HOME/.boring/lib/pane-resolve.sh"
+source "$HOME/.claude-ops/lib/pane-resolve.sh"
 
 INPUT=$(cat)
 
@@ -44,7 +44,7 @@ resolve_pane_and_harness "$SESSION_ID"
 # If the stop hook fired but the agent is still making tool calls, it means
 # the agent resumed (operator typed, bus message arrived). Remove the sentinel
 # so the watchdog does NOT rotate this agent.
-_GS_FILE="$HOME/.boring/state/sessions/$SESSION_ID/graceful-stop"
+_GS_FILE="$HOME/.claude-ops/state/sessions/$SESSION_ID/graceful-stop"
 [ -f "$_GS_FILE" ] && rm -f "$_GS_FILE" 2>/dev/null || true
 
 # Resolve injections file (policy.json -> context-injections.json, new path -> legacy)
@@ -54,7 +54,7 @@ INJECTIONS=$(harness_inject_file "$HARNESS" "$PROJECT_ROOT")
 CONTEXT=""
 if [ -n "$INJECTIONS" ] && [ -f "$INJECTIONS" ]; then
   INJECT_PREFIX=$(harness_inject_jq_prefix "$INJECTIONS")
-  CONTEXT=$(echo "$INPUT" | python3 "$HOME/.boring/lib/py/policy_match.py" \
+  CONTEXT=$(echo "$INPUT" | python3 "$HOME/.claude-ops/lib/py/policy_match.py" \
     --injections "$INJECTIONS" \
     --prefix "${INJECT_PREFIX:-.}" \
     --max "$CONTEXT_INJECTOR_MAX_MATCHES" \
@@ -104,7 +104,7 @@ if [ "$INBOX_ENABLED" = "true" ]; then
     [ "$INBOX_ACCEPTANCE_INJECT" = "true" ] && _ACCEPTANCE_FLAG="--acceptance" || _ACCEPTANCE_FLAG="--no-acceptance"
 
     export HARNESS HARNESS_DIR
-    LEGACY_CONTEXT=$(python3 "$HOME/.boring/lib/py/inbox_scan.py" \
+    LEGACY_CONTEXT=$(python3 "$HOME/.claude-ops/lib/py/inbox_scan.py" \
       --window "$INBOX_SCAN_WINDOW_SEC" \
       --max "$INBOX_MAX_INJECT_MESSAGES" \
       $_ACCEPTANCE_FLAG \

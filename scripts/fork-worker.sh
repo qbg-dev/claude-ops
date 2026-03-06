@@ -21,7 +21,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BORING_DIR="${BORING_DIR:-$HOME/.boring}"
+CLAUDE_OPS_DIR="${CLAUDE_OPS_DIR:-$HOME/.claude-ops}"
 
 PARENT_PANE="${1:-}"
 PARENT_SESSION="${2:-}"

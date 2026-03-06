@@ -14,13 +14,13 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BORING="${BORING_DIR:-$HOME/.boring}"
+CLAUDE_OPS="${CLAUDE_OPS_DIR:-$HOME/.claude-ops}"
 SEED_SCRIPT="$PROJECT_ROOT/.claude/scripts/test-watcher-seed.sh"
 WINDOW="${1:-}"
 
 if [ ! -f "$SEED_SCRIPT" ]; then
   echo "ERROR: seed script not found: $SEED_SCRIPT" >&2
-  echo "Run: bash $BORING/scripts/scaffold.sh --long-running test-watcher $PROJECT_ROOT" >&2
+  echo "Run: bash $CLAUDE_OPS/scripts/scaffold.sh --long-running test-watcher $PROJECT_ROOT" >&2
   exit 1
 fi
 

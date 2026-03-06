@@ -61,19 +61,19 @@ assert_equals "permission mode is default" "default" "$permission_mode"
 
 # ── Test: missing manifest returns error (no fallback to bypassPermissions) ──
 # Simulate spawn_sweep_agent refusing to start without manifest
-MISS_ERR=$(source "$HOME/.boring/lib/spawn-sweep-agent.sh" 2>/dev/null; SPAWN_SWEEP_PERMISSIONS_DIR="$TMPDIR_TEST/permissions"; spawn_sweep_agent "nonexistent-sweep" "/tmp" "/dev/null" 2>&1 || true)
+MISS_ERR=$(source "$HOME/.claude-ops/lib/spawn-sweep-agent.sh" 2>/dev/null; SPAWN_SWEEP_PERMISSIONS_DIR="$TMPDIR_TEST/permissions"; spawn_sweep_agent "nonexistent-sweep" "/tmp" "/dev/null" 2>&1 || true)
 assert "missing manifest returns error" "ERROR" "$MISS_ERR"
 
 # ── Test: config no longer has bypassPermissions as default ──
-BYPASS_COUNT=$(grep -c "SPAWN_SWEEP_PERMISSION_MODE=bypassPermissions" "$HOME/.boring/control-plane.conf" || true)
+BYPASS_COUNT=$(grep -c "SPAWN_SWEEP_PERMISSION_MODE=bypassPermissions" "$HOME/.claude-ops/control-plane.conf" || true)
 assert_equals "no bypassPermissions in config" "0" "$BYPASS_COUNT"
 
 # ── Test: config has METRICS_MAX_SIZE_BYTES ──
 assert_file_contains "config has METRICS_MAX_SIZE_BYTES" \
-  "$HOME/.boring/control-plane.conf" "METRICS_MAX_SIZE_BYTES"
+  "$HOME/.claude-ops/control-plane.conf" "METRICS_MAX_SIZE_BYTES"
 
 # ── Test: config has SWEEP_LOG_MAX_SIZE_BYTES ──
 assert_file_contains "config has SWEEP_LOG_MAX_SIZE_BYTES" \
-  "$HOME/.boring/control-plane.conf" "SWEEP_LOG_MAX_SIZE_BYTES"
+  "$HOME/.claude-ops/control-plane.conf" "SWEEP_LOG_MAX_SIZE_BYTES"
 
 test_summary

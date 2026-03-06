@@ -12,8 +12,8 @@ PROJECT_ROOT_TEST="$TMPDIR"
 
 cleanup() {
   rm -rf "$TMPDIR"
-  rm -rf "$HOME/.boring/harness/manifests/$WORKER_NAME"
-  rm -rf "$HOME/.boring/harness/manifests/$SIDECAR_NAME_TEST"
+  rm -rf "$HOME/.claude-ops/harness/manifests/$WORKER_NAME"
+  rm -rf "$HOME/.claude-ops/harness/manifests/$SIDECAR_NAME_TEST"
 }
 trap cleanup EXIT
 
@@ -126,8 +126,8 @@ cat > "$TMPDIR/.claude/harness/$SIDECAR_NAME_TEST/progress.json" <<JSON
 JSON
 
 # Create manifests for resolution
-mkdir -p "$HOME/.boring/harness/manifests/worker-alpha"
-cat > "$HOME/.boring/harness/manifests/worker-alpha/manifest.json" <<JSON
+mkdir -p "$HOME/.claude-ops/harness/manifests/worker-alpha"
+cat > "$HOME/.claude-ops/harness/manifests/worker-alpha/manifest.json" <<JSON
 {
   "harness": "worker-alpha",
   "project_root": "$TMPDIR",
@@ -138,8 +138,8 @@ cat > "$HOME/.boring/harness/manifests/worker-alpha/manifest.json" <<JSON
 }
 JSON
 
-mkdir -p "$HOME/.boring/harness/manifests/$SIDECAR_NAME_TEST"
-cat > "$HOME/.boring/harness/manifests/$SIDECAR_NAME_TEST/manifest.json" <<JSON
+mkdir -p "$HOME/.claude-ops/harness/manifests/$SIDECAR_NAME_TEST"
+cat > "$HOME/.claude-ops/harness/manifests/$SIDECAR_NAME_TEST/manifest.json" <<JSON
 {
   "harness": "$SIDECAR_NAME_TEST",
   "project_root": "$TMPDIR",
@@ -153,7 +153,7 @@ JSON
 # Source the library under test
 export SIDECAR_NAME="$SIDECAR_NAME_TEST"
 export PROJECT_ROOT="$TMPDIR"
-source "$HOME/.boring/lib/worker-dispatch.sh"
+source "$HOME/.claude-ops/lib/worker-dispatch.sh"
 
 echo "── worker-dispatch.sh ──"
 

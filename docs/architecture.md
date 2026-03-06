@@ -1,12 +1,12 @@
 # Architecture
 
-boring has five core components. They're all shell scripts + JSON—no servers, no runtimes.
+claude-ops has five core components. They're all shell scripts + JSON—no servers, no runtimes.
 
 ## Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                           boring                                │
+│                           claude-ops                                │
 │                                                                     │
 │  ┌───────────────┐    ┌───────────────┐    ┌───────────────────┐   │
 │  │    Harness    │    │   Event Bus   │    │      Hooks        │   │
@@ -24,7 +24,7 @@ boring has five core components. They're all shell scripts + JSON—no servers, 
 │  │ stuck nudge   │   │  pane-registry, inbox/outbox             │   │
 │  └───────────────┘   └──────────────────────────────────────────┘   │
 │                                                                     │
-│  State: {project}/.claude/harness/  +  ~/.boring/state/        │
+│  State: {project}/.claude/harness/  +  ~/.claude-ops/state/        │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -89,7 +89,7 @@ A JSONL-based pub/sub system for inter-agent communication. Each project gets it
 | `.claude/bus/schema.json` | Event type registry with side-effect declarations |
 | `.claude/bus/cursors/{consumer}.json` | Per-consumer read position |
 | `.claude/bus/seq.json` | Global sequence counter |
-| `~/.boring/bus/side-effects/` | Side-effect scripts (one per declared effect) |
+| `~/.claude-ops/bus/side-effects/` | Side-effect scripts (one per declared effect) |
 
 ### Data flow
 
@@ -105,7 +105,7 @@ See [Event Bus](event-bus.md) for the full API.
 
 ## Component 3: Hooks
 
-Claude Code hooks are shell scripts that fire at defined lifecycle points. boring registers four:
+Claude Code hooks are shell scripts that fire at defined lifecycle points. claude-ops registers four:
 
 | Hook | Script | What it does |
 |------|--------|-------------|
@@ -143,20 +143,20 @@ If a pattern persists for >20 minutes (`STUCK_THRESHOLD_SEC=1200`), the watchdog
 
 | File | Purpose |
 |------|---------|
-| `~/.boring/state/pane-registry.json` | Maps pane IDs to harness names and session IDs |
-| `~/.boring/state/sessions/{id}/graceful-stop` | Sentinel written by Stop hook |
-| `~/.boring/state/harness-runtime/{name}/` | Per-harness runtime flags |
-| `~/.boring/state/harness-runtime/{name}/stuck-candidate` | Timestamp when stuck pattern first seen |
-| `~/.boring/state/harness-runtime/{name}/crash-count.json` | Crash timestamps (last hour) |
-| `~/.boring/state/watchdog.log` | Stop hook + watchdog log |
+| `~/.claude-ops/state/pane-registry.json` | Maps pane IDs to harness names and session IDs |
+| `~/.claude-ops/state/sessions/{id}/graceful-stop` | Sentinel written by Stop hook |
+| `~/.claude-ops/state/harness-runtime/{name}/` | Per-harness runtime flags |
+| `~/.claude-ops/state/harness-runtime/{name}/stuck-candidate` | Timestamp when stuck pattern first seen |
+| `~/.claude-ops/state/harness-runtime/{name}/crash-count.json` | Crash timestamps (last hour) |
+| `~/.claude-ops/state/watchdog.log` | Stop hook + watchdog log |
 
 ### Health check
 
 `scripts/harness-health.sh` gives a full system snapshot without needing to read individual files:
 
 ```bash
-bash ~/.boring/scripts/harness-health.sh          # colored text summary
-bash ~/.boring/scripts/harness-health.sh --json   # machine-readable
+bash ~/.claude-ops/scripts/harness-health.sh          # colored text summary
+bash ~/.claude-ops/scripts/harness-health.sh --json   # machine-readable
 ```
 
 Checks: pane registry integrity, stale `graceful-stop` markers, crash-loop flags, stuck-candidate markers, `tasks.json` validity (JSON + schema + orphaned in-progress + circular deps), `state.json` consistency, watchdog config.
@@ -197,7 +197,7 @@ Before a new flat worker begins implementation, it must create `vision.html` (a 
 
 #### Agent Types
 
-Three typed templates at `~/.boring/templates/flat-worker/types/` define different capability levels:
+Three typed templates at `~/.claude-ops/templates/flat-worker/types/` define different capability levels:
 
 | Type | Permissions | `perpetual` | Use case |
 |------|------------|-------------|----------|
@@ -211,14 +211,14 @@ Each flat worker gets a `tasks.json` flat task list (not nested under `.tasks`�
 
 ```bash
 # Worker pane (auto-detects worker name from git branch or pane registry)
-bash ~/.boring/scripts/worker-task.sh add "Fix login bug" --priority high
-bash ~/.boring/scripts/worker-task.sh add "Write tests" --after T001      # depends on T001
-bash ~/.boring/scripts/worker-task.sh add "Refresh task list" --recurring
-bash ~/.boring/scripts/worker-task.sh claim T001
-bash ~/.boring/scripts/worker-task.sh complete T001
-bash ~/.boring/scripts/worker-task.sh next          # highest-priority unclaimed unblocked task
-bash ~/.boring/scripts/worker-task.sh list --pending
-bash ~/.boring/scripts/worker-task.sh list --blocked
+bash ~/.claude-ops/scripts/worker-task.sh add "Fix login bug" --priority high
+bash ~/.claude-ops/scripts/worker-task.sh add "Write tests" --after T001      # depends on T001
+bash ~/.claude-ops/scripts/worker-task.sh add "Refresh task list" --recurring
+bash ~/.claude-ops/scripts/worker-task.sh claim T001
+bash ~/.claude-ops/scripts/worker-task.sh complete T001
+bash ~/.claude-ops/scripts/worker-task.sh next          # highest-priority unclaimed unblocked task
+bash ~/.claude-ops/scripts/worker-task.sh list --pending
+bash ~/.claude-ops/scripts/worker-task.sh list --blocked
 ```
 
 **Flat worker `tasks.json` schema** (different from harness `tasks.json`—flat keys, not nested):
@@ -266,14 +266,14 @@ Creates a worktree on `worker/{name}`, registers in pane-registry, injects a see
 | `templates/flat-worker/types/implementer/` | Implementer type (read-write, one-shot, vision gate) |
 | `templates/flat-worker/types/monitor/` | Monitor type (read-only, perpetual, reports to coordinator) |
 | `templates/flat-worker/types/coordinator/` | Coordinator type (full access, merge/deploy) |
-| `~/.boring/state/pane-registry.json` | Maps panes to harnesses (coordinator looks up workers here) |
+| `~/.claude-ops/state/pane-registry.json` | Maps panes to harnesses (coordinator looks up workers here) |
 
 ### Messaging
 
 Agents communicate via the event bus using `hq_send` (from `harness-jq.sh`):
 
 ```bash
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 hq_send "my-harness" "my-harness/worker-1" "directive" "Focus on T-3 next"
 ```
 
@@ -305,17 +305,17 @@ User seeds agent via Claude Code TUI
 
 | Location | Owned by | Lifetime |
 |----------|----------|----------|
-| `~/.boring/` | Infrastructure (this repo) | All projects |
+| `~/.claude-ops/` | Infrastructure (this repo) | All projects |
 | `{project}/.claude/harness/` | Harness files | Harness lifetime |
 | `{project}/.claude/bus/` | Event bus per project | Project lifetime |
-| `~/.boring/state/sessions/` | Per-session runtime | Session (~24h TTL) |
-| `~/.boring/state/harness-runtime/` | Per-harness runtime flags | Until deregistered |
-| `~/.boring/state/pane-registry.json` | Pane ↔ harness map | Pruned when panes die |
-| `~/.boring/harness/manifests/` | Harness registry entries | Until deregistered |
-| `~/.boring/templates/conv-monitor/` | Conv-monitor worker template | All projects |
-| `~/.boring/templates/flat-worker/.commit-template.md` | Worker commit format template | All projects |
-| `~/.boring/templates/flat-worker/types/` | Agent type templates (implementer/monitor/coordinator) | All projects |
-| `~/.boring/scripts/worker-commit.sh` | Structured commit helper | All projects |
-| `~/.boring/scripts/worker-message.sh` | Inter-worker messaging | All projects |
-| `~/.boring/scripts/scaffold-conv-monitor.sh` | Conv-monitor scaffolding | All projects |
+| `~/.claude-ops/state/sessions/` | Per-session runtime | Session (~24h TTL) |
+| `~/.claude-ops/state/harness-runtime/` | Per-harness runtime flags | Until deregistered |
+| `~/.claude-ops/state/pane-registry.json` | Pane ↔ harness map | Pruned when panes die |
+| `~/.claude-ops/harness/manifests/` | Harness registry entries | Until deregistered |
+| `~/.claude-ops/templates/conv-monitor/` | Conv-monitor worker template | All projects |
+| `~/.claude-ops/templates/flat-worker/.commit-template.md` | Worker commit format template | All projects |
+| `~/.claude-ops/templates/flat-worker/types/` | Agent type templates (implementer/monitor/coordinator) | All projects |
+| `~/.claude-ops/scripts/worker-commit.sh` | Structured commit helper | All projects |
+| `~/.claude-ops/scripts/worker-message.sh` | Inter-worker messaging | All projects |
+| `~/.claude-ops/scripts/scaffold-conv-monitor.sh` | Conv-monitor scaffolding | All projects |
 | `{project}/.claude/workers/{name}/` | Flat worker files | Worker lifetime |

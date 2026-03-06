@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # move-to-bg.sh — Move a tmux pane to "bg" session
 #
-# From keybinding:  bind b run-shell "bash ~/.boring/scripts/move-to-bg.sh '#{pane_id}'"
-# From CLI:         bash ~/.boring/scripts/move-to-bg.sh %40
-#                   bash ~/.boring/scripts/move-to-bg.sh h:3.2
+# From keybinding:  bind b run-shell "bash ~/.claude-ops/scripts/move-to-bg.sh '#{pane_id}'"
+# From CLI:         bash ~/.claude-ops/scripts/move-to-bg.sh %40
+#                   bash ~/.claude-ops/scripts/move-to-bg.sh h:3.2
 set -euo pipefail
 
 PANE="${1:?Usage: move-to-bg.sh <pane-id>}"

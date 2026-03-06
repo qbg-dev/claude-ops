@@ -28,7 +28,7 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Update registry.json with last_commit info
 if [ -f "$REGISTRY" ]; then
-  _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+  _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
   mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
   # Simple spinlock (max 5s)
   _WAIT=0
@@ -75,7 +75,7 @@ COMMIT_LOG="$MAIN_ROOT/.claude/workers/.commit-log.jsonl"
 echo "{\"worker\":\"$WORKER_NAME\",\"sha\":\"$COMMIT_SHA\",\"msg\":\"$COMMIT_MSG\",\"branch\":\"$BRANCH\",\"ts\":\"$NOW\"}" >> "$COMMIT_LOG" 2>/dev/null
 
 # Emit worker.commit bus event (side-effects handle inbox + tmux delivery)
-_BUS_LIB="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/lib/event-bus.sh"
+_BUS_LIB="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/lib/event-bus.sh"
 if [ -f "$_BUS_LIB" ]; then
   export PROJECT_ROOT="$MAIN_ROOT"
   source "$_BUS_LIB" 2>/dev/null || true

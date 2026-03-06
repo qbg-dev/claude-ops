@@ -3,14 +3,14 @@
 # fleet-pane.sh — Shared pane discovery utilities
 # ══════════════════════════════════════════════════════════════════
 # Usage:
-#   source ~/.boring/lib/fleet-pane.sh
+#   source ~/.claude-ops/lib/fleet-pane.sh
 #
 # Requires:
 #   - tmux available
 #   - pane-registry.json (sole source of truth)
 # ══════════════════════════════════════════════════════════════════
 
-HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.boring/state}"
+HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}"
 PANE_REGISTRY="${PANE_REGISTRY:-$HARNESS_STATE_DIR/pane-registry.json}"
 
 # Find the worker pane for a harness.

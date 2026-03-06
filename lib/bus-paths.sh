@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bus-paths.sh — Shared path resolution for bus side-effect scripts.
 #
-# Usage: source ~/.boring/lib/bus-paths.sh
+# Usage: source ~/.claude-ops/lib/bus-paths.sh
 #
 # Functions:
 #   resolve_agent_inbox  <agent_name> — Returns inbox.jsonl path for agent

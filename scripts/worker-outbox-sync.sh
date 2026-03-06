@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # ── Resolve project root (handle worktrees) ──────────────────────
-_LIB_DIR="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/lib"
+_LIB_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/lib"
 if [ -f "$_LIB_DIR/event-bus.sh" ]; then
   source "$_LIB_DIR/event-bus.sh"
 elif [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then

@@ -6,8 +6,8 @@ set -uo pipefail
 # Always return {} on stdout, even on error — exit 0 ensures no TUI "hook error" noise
 trap 'echo "{}"; exit 0' ERR
 
-source "$HOME/.boring/lib/pane-resolve.sh"
-source "$HOME/.boring/lib/event-bus.sh"
+source "$HOME/.claude-ops/lib/pane-resolve.sh"
+source "$HOME/.claude-ops/lib/event-bus.sh"
 
 # ── Read hook input from stdin ─────────────────────────────────────────
 INPUT=$(cat)
@@ -44,13 +44,13 @@ echo "$DEDUP_HASH" > "$DEDUP_FILE"
 # ── Cancel graceful-stop sentinel if activity resumes ──────────────────
 # If the stop hook fired but the agent gets new input (operator typing, bus message),
 # remove the sentinel so the watchdog does NOT rotate this agent.
-_GS_FILE="$HOME/.boring/state/sessions/$SESSION_ID/graceful-stop"
+_GS_FILE="$HOME/.claude-ops/state/sessions/$SESSION_ID/graceful-stop"
 if [ -f "$_GS_FILE" ]; then
   rm -f "$_GS_FILE" 2>/dev/null || true
 fi
 
 # ── Publish session.start on first prompt ──────────────────────────────
-SESSION_STARTED_MARKER="$HOME/.boring/state/sessions/$SESSION_ID/session-started"
+SESSION_STARTED_MARKER="$HOME/.claude-ops/state/sessions/$SESSION_ID/session-started"
 if [ ! -f "$SESSION_STARTED_MARKER" ]; then
   mkdir -p "$(dirname "$SESSION_STARTED_MARKER")"
   touch "$SESSION_STARTED_MARKER"

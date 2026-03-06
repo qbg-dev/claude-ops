@@ -6,7 +6,7 @@
 #
 # Usage (source in sidecar scripts or bash):
 #   export SIDECAR_NAME="mod-customer" PROJECT_ROOT="/path/to/project"
-#   source ~/.boring/lib/worker-dispatch.sh
+#   source ~/.claude-ops/lib/worker-dispatch.sh
 #   worker_discover
 #   worker_launch "miniapp-ux-v2"
 #   worker_health "miniapp-ux-v2"
@@ -21,7 +21,7 @@
 #   SIDECAR_PANE   — auto-detected if not set
 
 # ── Source dependencies ────────────────────────────────────────
-source "$HOME/.boring/lib/fleet-jq.sh"
+source "$HOME/.claude-ops/lib/fleet-jq.sh"
 
 WORKER_LAUNCH_TIMEOUT_SEC="${WORKER_LAUNCH_TIMEOUT_SEC:-90}"
 WORKER_HEALTH_CAPTURE_LINES="${WORKER_HEALTH_CAPTURE_LINES:-10}"

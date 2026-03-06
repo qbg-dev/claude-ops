@@ -10,7 +10,7 @@
 # calling process's pane. This caused /quit to be sent to the wrong agent.
 # See: https://github.com/qbg-dev/... (incident 2026-02-24)
 #
-# Run: bash ~/.boring/tests/test-pane-detection.sh
+# Run: bash ~/.claude-ops/tests/test-pane-detection.sh
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
@@ -27,37 +27,37 @@ echo "── pane detection regression ──"
 # (display-message -t $PANE -p is fine — it targets a specific pane).
 
 # Test 1: No buggy usage in harness-dispatch.sh
-HITS=$(grep -n 'tmux display-message -p' "$HOME/.boring/hooks/harness-dispatch.sh" 2>/dev/null \
+HITS=$(grep -n 'tmux display-message -p' "$HOME/.claude-ops/hooks/harness-dispatch.sh" 2>/dev/null \
   | grep -v 'display-message -t' \
   | grep -v 'WARNING\|WARN\|# .*returns\|Do NOT use' || true)
 assert_empty "harness-dispatch.sh: no bare display-message -p" "$HITS"
 
 # Test 2: No buggy usage in report-issue.sh
-HITS=$(grep -n 'tmux display-message -p' "$HOME/.boring/bin/report-issue.sh" 2>/dev/null \
+HITS=$(grep -n 'tmux display-message -p' "$HOME/.claude-ops/bin/report-issue.sh" 2>/dev/null \
   | grep -v 'display-message -t' \
   | grep -v 'WARNING\|WARN\|# .*returns\|Do NOT use' || true)
 assert_empty "report-issue.sh: no bare display-message -p" "$HITS"
 
 # Test 3: No buggy usage in monitor-agent.sh (only in warning docs)
-HITS=$(grep -n 'tmux display-message -p' "$HOME/.boring/scripts/monitor-agent.sh" 2>/dev/null \
+HITS=$(grep -n 'tmux display-message -p' "$HOME/.claude-ops/scripts/monitor-agent.sh" 2>/dev/null \
   | grep -v 'display-message -t' \
   | grep -v 'WARNING\|WARN\|Do NOT use' || true)
 assert_empty "monitor-agent.sh: no bare display-message -p" "$HITS"
 
 # Test 4: No buggy usage in scaffold templates
-HITS=$(grep -rn 'tmux display-message -p' "$HOME/.boring/templates/" 2>/dev/null \
+HITS=$(grep -rn 'tmux display-message -p' "$HOME/.claude-ops/templates/" 2>/dev/null \
   | grep -v 'display-message -t' \
   | grep -v 'WARNING\|WARN\|# .*returns\|Do NOT use' || true)
 assert_empty "templates/: no bare display-message -p" "$HITS"
 
 # Test 5: No buggy usage in any library file
-HITS=$(grep -rn 'tmux display-message -p' "$HOME/.boring/lib/" 2>/dev/null \
+HITS=$(grep -rn 'tmux display-message -p' "$HOME/.claude-ops/lib/" 2>/dev/null \
   | grep -v 'display-message -t' \
   | grep -v 'WARNING\|WARN\|# .*returns\|Do NOT use' || true)
 assert_empty "lib/: no bare display-message -p" "$HITS"
 
 # Test 6: No buggy usage in sweeps
-HITS=$(grep -rn 'tmux display-message -p' "$HOME/.boring/sweeps.d/" 2>/dev/null \
+HITS=$(grep -rn 'tmux display-message -p' "$HOME/.claude-ops/sweeps.d/" 2>/dev/null \
   | grep -v 'display-message -t' \
   | grep -v 'WARNING\|WARN\|# .*returns\|Do NOT use' || true)
 assert_empty "sweeps.d/: no bare display-message -p" "$HITS"
@@ -159,30 +159,30 @@ fi
 # Test 12: fleet-jq.sh defines hook_find_own_pane (process-tree method)
 # Architecture: v3 moved find_own_pane → hook_find_own_pane in fleet-jq.sh
 assert_file_contains "fleet-jq.sh defines hook_find_own_pane" \
-  "$HOME/.boring/lib/fleet-jq.sh" "hook_find_own_pane()"
+  "$HOME/.claude-ops/lib/fleet-jq.sh" "hook_find_own_pane()"
 
 # Test 13: fleet-jq.sh defines hook_pane_target (renamed from pane_id_to_target)
 assert_file_contains "fleet-jq.sh defines hook_pane_target" \
-  "$HOME/.boring/lib/fleet-jq.sh" "hook_pane_target()"
+  "$HOME/.claude-ops/lib/fleet-jq.sh" "hook_pane_target()"
 
 # Test 14: report-issue.sh has its own _find_own_pane (inlined)
 assert_file_contains "report-issue.sh has _find_own_pane" \
-  "$HOME/.boring/bin/report-issue.sh" "_find_own_pane()"
+  "$HOME/.claude-ops/bin/report-issue.sh" "_find_own_pane()"
 
 # Test 15: report-issue.sh has its own _pane_id_to_target (inlined)
 assert_file_contains "report-issue.sh has _pane_id_to_target" \
-  "$HOME/.boring/bin/report-issue.sh" "_pane_id_to_target()"
+  "$HOME/.claude-ops/bin/report-issue.sh" "_pane_id_to_target()"
 
 # Test 16: hook_find_own_pane in fleet-jq.sh uses process-tree, not display-message
 # Architecture: v3 uses hook_find_own_pane (in fleet-jq.sh) sourced by all hooks.
-FUNC_SRC=$(sed -n '/^hook_find_own_pane/,/^}/p' "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || echo "")
+FUNC_SRC=$(sed -n '/^hook_find_own_pane/,/^}/p' "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || echo "")
 TOTAL=$((TOTAL + 1))
 if echo "$FUNC_SRC" | grep -q 'pane_pid\|ppid' && ! echo "$FUNC_SRC" | grep -q 'display-message -p'; then
   echo -e "  ${GREEN}PASS${RESET} hook_find_own_pane uses process-tree, not display-message"
   PASS=$((PASS + 1))
 else
   echo -e "  ${RED}FAIL${RESET} hook_find_own_pane must use process-tree, not display-message -p"
-  echo "    File: $HOME/.boring/lib/fleet-jq.sh, function: hook_find_own_pane"
+  echo "    File: $HOME/.claude-ops/lib/fleet-jq.sh, function: hook_find_own_pane"
   FAIL=$((FAIL + 1))
 fi
 

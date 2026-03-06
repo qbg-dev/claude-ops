@@ -10,7 +10,7 @@
 # Bug 2 (v3 mismatch): pane-registry.json doesn't store session_id for v3 flat workers.
 #   Fix: added fallback that scans $PROJECT_ROOT/.claude/workers/registry.json.
 #
-# Run: bash ~/.boring/tests/test-session-hooks.sh
+# Run: bash ~/.claude-ops/tests/test-session-hooks.sh
 set -uo pipefail
 
 source "$(dirname "$0")/helpers.sh"
@@ -19,8 +19,8 @@ TMPDIR_TEST=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR_TEST"; }
 trap cleanup EXIT
 
-REGISTER_SH="$HOME/.boring/hooks/publishers/worker-session-register.sh"
-PRECOMPACT_SH="$HOME/.boring/scripts/pre-compact.sh"
+REGISTER_SH="$HOME/.claude-ops/hooks/publishers/worker-session-register.sh"
+PRECOMPACT_SH="$HOME/.claude-ops/scripts/pre-compact.sh"
 
 # ═══════════════════════════════════════════════════════════════════════
 # PART 1: worker-session-register.sh lock timeout safety
@@ -131,7 +131,7 @@ assert_file_contains "v3 fallback uses PROJECT_ROOT variable" \
 echo ""
 echo "── fork-worker: registry.json branch field ──"
 
-FORK_SH="$HOME/.boring/scripts/fork-worker.sh"
+FORK_SH="$HOME/.claude-ops/scripts/fork-worker.sh"
 
 # Test 12: fork-worker creates new entries with correct branch (not hardcoded chief-of-staff)
 # Bug: was hardcoded "worker/chief-of-staff" regardless of --name argument
@@ -176,7 +176,7 @@ assert_equals "fork-worker: new entry branch = worker/<name>" "worker/$CHILD_NAM
 echo ""
 echo "── send_message: registry.json direct delivery ──"
 
-MCP_TS="$HOME/.boring/mcp/worker-fleet/index.ts"
+MCP_TS="$HOME/.claude-ops/mcp/worker-fleet/index.ts"
 
 # Test 15: send_message reads pane_id from registry before falling back to worker-message.sh
 assert_file_contains "send_message: registry lookup before worker-message.sh fallback" \
@@ -216,7 +216,7 @@ assert_empty "MCP: no bare \\n embedded in send-keys text" "$BAD_PATTERN"
 echo ""
 echo "── worker-session-register: session_id written to registry.json ──"
 
-REGISTER_SH="$HOME/.boring/hooks/publishers/worker-session-register.sh"
+REGISTER_SH="$HOME/.claude-ops/hooks/publishers/worker-session-register.sh"
 
 # Test 20: writes session_id field (not pane-registry.json — v3 invariant)
 assert_file_contains "register: writes .session_id to registry.json" \

@@ -4,7 +4,7 @@
 # Extracts identity fields from progress.json into agents/{role}/identity.json.
 # Safe to run multiple times (idempotent — skips existing identity.json).
 #
-# Usage: bash ~/.boring/scripts/migrate-agent-workspaces.sh [project_root]
+# Usage: bash ~/.claude-ops/scripts/migrate-agent-workspaces.sh [project_root]
 set -euo pipefail
 
 PROJECT_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"

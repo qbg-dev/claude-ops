@@ -9,9 +9,9 @@
 # ═══════════════════════════════════════════════════════════════
 # CANONICAL PATHS — single source of truth
 # ═══════════════════════════════════════════════════════════════
-# Resolve boring install dir: BORING_DIR > legacy CLAUDE_OPS_DIR > ~/.boring (symlink handles the rest)
-_BORING_ROOT="${BORING_DIR:-${CLAUDE_OPS_DIR:-$HOME/.boring}}"
-export HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$_BORING_ROOT/state}"
+# Resolve claude-ops install dir: CLAUDE_OPS_DIR > legacy CLAUDE_OPS_DIR > ~/.claude-ops (symlink handles the rest)
+_CLAUDE_OPS_ROOT="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}"
+export HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$_CLAUDE_OPS_ROOT/state}"
 export HARNESS_LOCK_DIR="${HARNESS_LOCK_DIR:-$HARNESS_STATE_DIR/locks}"
 export PANE_REGISTRY="$HARNESS_STATE_DIR/pane-registry.json"
 mkdir -p "$HARNESS_LOCK_DIR" 2>/dev/null || true
@@ -279,12 +279,12 @@ MEOF
 
   # Publish worker.started to bus
   local bus_dir="$project_root/.claude/bus"
-  if [ -d "$bus_dir" ] && [ -f "$HOME/.boring/lib/event-bus.sh" ]; then
+  if [ -d "$bus_dir" ] && [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then
     local payload
     payload=$(jq -nc --arg m "$module" --arg w "$worker_name" --arg t "$type" --arg a "$approved_by" \
       '{module:$m, worker_name:$w, type:$t, approved_by:$a}')
     PROJECT_ROOT="$project_root" BUS_DIR="$bus_dir" \
-      bash -c "source '$HOME/.boring/lib/event-bus.sh' && bus_publish 'worker.started' '$payload'" 2>/dev/null || true
+      bash -c "source '$HOME/.claude-ops/lib/event-bus.sh' && bus_publish 'worker.started' '$payload'" 2>/dev/null || true
   fi
 }
 
@@ -405,7 +405,7 @@ hook_context() {
 # before respawning (vs a crash which the watchdog respawns immediately).
 # Usage: hook_pass
 hook_pass() {
-  local _SESSION_DIR="${CLAUDE_SESSION_DIR:-${HOME}/.boring/state/sessions/${CLAUDE_SESSION_ID:-unknown}}"
+  local _SESSION_DIR="${CLAUDE_SESSION_DIR:-${HOME}/.claude-ops/state/sessions/${CLAUDE_SESSION_ID:-unknown}}"
   mkdir -p "$_SESSION_DIR" 2>/dev/null || true
   touch "$_SESSION_DIR/graceful-stop" 2>/dev/null || true
   echo '{}'
@@ -570,7 +570,7 @@ harness_sleep_duration() {
     local file="$1" expr="$2" cache="$3"
     val=$(jq -r "$expr" "$file" 2>/dev/null)
     [ -n "$val" ] && [ "$val" != "null" ] && echo "$val" && return
-    # Fallback: read from runtime cache (in ~/.boring/state/, always accessible)
+    # Fallback: read from runtime cache (in ~/.claude-ops/state/, always accessible)
     [ -n "$cache" ] && [ -f "$cache" ] && val=$(jq -r "$expr" "$cache" 2>/dev/null)
     [ -n "$val" ] && [ "$val" != "null" ] && echo "$val" && return
     echo ""
@@ -801,9 +801,9 @@ _harness_bus_publish() {
   local project_root="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
   local bus_dir="$project_root/.claude/bus"
   [ ! -d "$bus_dir" ] && return 0
-  [ ! -f "$HOME/.boring/lib/event-bus.sh" ] && return 0
+  [ ! -f "$HOME/.claude-ops/lib/event-bus.sh" ] && return 0
   (PROJECT_ROOT="$project_root" BUS_DIR="$bus_dir" \
-    bash -c "source '$HOME/.boring/lib/event-bus.sh' && bus_publish '$event_type' '$payload'" 2>/dev/null || true) &
+    bash -c "source '$HOME/.claude-ops/lib/event-bus.sh' && bus_publish '$event_type' '$payload'" 2>/dev/null || true) &
   disown 2>/dev/null || true
 }
 
@@ -1019,7 +1019,7 @@ harness_wave_report_path() {
   local PROGRESS="$1"
   local WAVE_NUM="$2"
   local HNAME=$(harness_name "$PROGRESS")
-  echo "$HOME/.boring/harness/reports/$HNAME/wave-${WAVE_NUM}.html"
+  echo "$HOME/.claude-ops/harness/reports/$HNAME/wave-${WAVE_NUM}.html"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -1043,7 +1043,7 @@ harness_inject_wave_gates() {
 
   local HNAME
   HNAME=$(harness_name "$PROGRESS")
-  local REPORT_DIR="$HOME/.boring/harness/reports/$HNAME"
+  local REPORT_DIR="$HOME/.claude-ops/harness/reports/$HNAME"
 
   # Process each wave
   local i=0
@@ -1101,10 +1101,10 @@ harness_inject_wave_gates() {
 2. Deploy: ./scripts/deploy.sh --service static --skip-langfuse (or appropriate service)
 3. Inspect every feature from this wave in Chrome
 4. Take screenshots of each feature
-5. Copy the starter: cp ~/.boring/templates/wave-report-starter.html ~/.boring/harness/reports/${HNAME}/wave-${WAVE_ID}.html
+5. Copy the starter: cp ~/.claude-ops/templates/wave-report-starter.html ~/.claude-ops/harness/reports/${HNAME}/wave-${WAVE_ID}.html
 6. Edit the report — replace placeholder comments with real content
-7. Generate wave report HTML at ~/.boring/harness/reports/${HNAME}/wave-${WAVE_ID}.html
-8. Open the report: open ~/.boring/harness/reports/${HNAME}/wave-${WAVE_ID}.html
+7. Generate wave report HTML at ~/.claude-ops/harness/reports/${HNAME}/wave-${WAVE_ID}.html
+8. Open the report: open ~/.claude-ops/harness/reports/${HNAME}/wave-${WAVE_ID}.html
 9. Notify the operator: notify \"${HNAME} wave ${WAVE_ID} complete — report ready for review\"
 10. WAIT for the operator's confirmation before proceeding to the next wave"
 
@@ -1168,7 +1168,7 @@ harness_inject_wave_gates() {
 # Get manifest path for a harness
 harness_manifest() {
   local name="$1"
-  echo "$HOME/.boring/harness/manifests/$name/manifest.json"
+  echo "$HOME/.claude-ops/harness/manifests/$name/manifest.json"
 }
 
 # Get project root for a harness (from manifest)
@@ -1272,7 +1272,7 @@ harness_inject_jq_prefix() {
 # List all active harnesses across all projects
 # Output: name|project_root|progress_path (one per line)
 harness_list_active() {
-  for manifest in "$HOME"/.boring/harness/manifests/*/manifest.json; do
+  for manifest in "$HOME"/.claude-ops/harness/manifests/*/manifest.json; do
     [ -f "$manifest" ] || continue
     local name=$(jq -r '.harness' "$manifest" 2>/dev/null)
     local project=$(jq -r '.project_root' "$manifest" 2>/dev/null)
@@ -1288,7 +1288,7 @@ harness_list_active() {
 # List all registered harnesses (active and done)
 # Output: name|status|project_root
 harness_list_all() {
-  for manifest in "$HOME"/.boring/harness/manifests/*/manifest.json; do
+  for manifest in "$HOME"/.claude-ops/harness/manifests/*/manifest.json; do
     [ -f "$manifest" ] || continue
     local name=$(jq -r '.harness' "$manifest" 2>/dev/null)
     local project=$(jq -r '.project_root' "$manifest" 2>/dev/null)
@@ -1343,7 +1343,7 @@ hq_send() {
 
   # Publish to bus — side-effects handle inbox/outbox delivery
   PROJECT_ROOT="$project_root" BUS_DIR="$bus_dir" \
-    bash -c "source '$HOME/.boring/lib/event-bus.sh' && bus_publish 'cell-message' '$payload'" 2>/dev/null || true
+    bash -c "source '$HOME/.claude-ops/lib/event-bus.sh' && bus_publish 'cell-message' '$payload'" 2>/dev/null || true
 }
 
 

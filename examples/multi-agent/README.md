@@ -32,10 +32,10 @@ bash examples/multi-agent/run.sh
 
 ```bash
 # In coordinator's session:
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 
 # Launch a worker in a new tmux pane + git worktree
-bash ~/.boring/scripts/launch-worker.sh code-review worker-alpha
+bash ~/.claude-ops/scripts/launch-worker.sh code-review worker-alpha
 
 # Send a directive via event bus
 hq_send "code-review" "code-review/worker-alpha" "directive" \
@@ -46,7 +46,7 @@ hq_send "code-review" "code-review/worker-alpha" "directive" \
 
 ```bash
 # Worker publishes completion:
-source ~/.boring/lib/event-bus.sh
+source ~/.claude-ops/lib/event-bus.sh
 bus_publish "task.completed" '{"harness":"code-review","worker":"code-review/worker-alpha","task_id":"W-3","summary":"Found 2 auth bugs, 1 injection risk"}'
 
 # update_tasks_json.sh side-effect marks T-2 as completed in coordinator's tasks.json

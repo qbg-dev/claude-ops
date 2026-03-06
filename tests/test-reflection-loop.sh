@@ -10,11 +10,11 @@
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 FIXTURES="$(dirname "$0")/fixtures"
-HOOK="$HOME/.boring/hooks/admission/context-injector.sh"
-SWEEP="$HOME/.boring/sweeps.d/auto-reflect.sh"
+HOOK="$HOME/.claude-ops/hooks/admission/context-injector.sh"
+SWEEP="$HOME/.claude-ops/sweeps.d/auto-reflect.sh"
 
 # ═══════════════════════════════════════════════════════════════
 # Setup: isolated temp environment
@@ -191,7 +191,7 @@ fi
 echo "── harness_push_receipt ──"
 
 # Create a minimal manifest so harness functions resolve
-MANIFEST_DIR="$HOME/.boring/harness/manifests/test-push-$$"
+MANIFEST_DIR="$HOME/.claude-ops/harness/manifests/test-push-$$"
 mkdir -p "$MANIFEST_DIR"
 cat > "$MANIFEST_DIR/manifest.json" << EOF
 {
@@ -300,7 +300,7 @@ echo "── end-to-end reflection→injection ──"
 
 # Setup: create a harness with learnings in progress.json and an activity log
 E2E_HARNESS="e2e-test-$$"
-E2E_MANIFEST_DIR="$HOME/.boring/harness/manifests/$E2E_HARNESS"
+E2E_MANIFEST_DIR="$HOME/.claude-ops/harness/manifests/$E2E_HARNESS"
 mkdir -p "$E2E_MANIFEST_DIR"
 mkdir -p "$MOCK_PROJECT/.claude/harness/$E2E_HARNESS"
 
@@ -373,8 +373,8 @@ rm -rf "$E2E_MANIFEST_DIR"
 echo "── harness_push_reflections (batch) ──"
 
 BATCH_HARNESS="batch-test-$$"
-BATCH_MANIFEST_DIR="$HOME/.boring/harness/manifests/$BATCH_HARNESS"
-BATCH_DATA_DIR="$HOME/.boring/harness/data/$BATCH_HARNESS"
+BATCH_MANIFEST_DIR="$HOME/.claude-ops/harness/manifests/$BATCH_HARNESS"
+BATCH_DATA_DIR="$HOME/.claude-ops/harness/data/$BATCH_HARNESS"
 mkdir -p "$BATCH_MANIFEST_DIR" "$BATCH_DATA_DIR"
 mkdir -p "$MOCK_PROJECT/.claude/harness/$BATCH_HARNESS"
 

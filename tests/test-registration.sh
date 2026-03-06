@@ -9,7 +9,7 @@
 #   pane_registry_update: writes harness field correctly
 #   harness register: writes to BOTH registries
 #
-# Run: bash ~/.boring/tests/test-registration.sh
+# Run: bash ~/.claude-ops/tests/test-registration.sh
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
@@ -25,7 +25,7 @@ export HARNESS_LOCK_DIR="$TEST_STATE_DIR/locks"
 export PANE_REGISTRY="$TEST_STATE_DIR/pane-registry.json"
 mkdir -p "$HARNESS_LOCK_DIR"
 
-source "$HOME/.boring/lib/harness-jq.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/harness-jq.sh" 2>/dev/null || true
 
 cleanup() {
   rm -rf "$TEST_STATE_DIR"
@@ -151,7 +151,7 @@ assert_equals "Tier 0 takes precedence over Tier 1" "correct-harness" "$HARNESS"
 echo '{}' > "$PANE_REGISTRY"
 echo "{\"test-sess-ci\":\"miniapp-chat\"}" > "$HARNESS_SESSION_REGISTRY"
 RESULT=$(echo '{"session_id":"test-sess-ci","tool_name":"Write","tool_input":{"file_path":"/tmp/x.ts","content":"y"}}' \
-  | PROJECT_ROOT="$PROJECT_ROOT" bash "$HOME/.boring/hooks/admission/context-injector.sh" 2>/dev/null)
+  | PROJECT_ROOT="$PROJECT_ROOT" bash "$HOME/.claude-ops/hooks/admission/context-injector.sh" 2>/dev/null)
 # If miniapp-chat has context-injections, we should get something. If not, {} is also acceptable (harness resolved but no injections)
 assert_not_empty "context-injector resolves via Tier 2 fallback" "$RESULT"
 

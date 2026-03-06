@@ -5,7 +5,7 @@
 # and contain structured records of all conversation turns, tool use, errors, etc.
 #
 # Usage:
-#   source ~/.boring/lib/session-reader.sh
+#   source ~/.claude-ops/lib/session-reader.sh
 #   JSONL=$(session_find "my-harness")
 #   session_summary "$JSONL"
 #   session_errors "$JSONL" 50
@@ -23,7 +23,7 @@
 # ─────────────────────────────────────────────────────────────
 session_find() {
   local harness="$1"
-  local _state_dir="${HARNESS_STATE_DIR:-$HOME/.boring/state}"
+  local _state_dir="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}"
   local activity_log="${_state_dir}/activity/claude_activity_${harness}.jsonl"
   local projects_dir="$HOME/.claude/projects"
 
@@ -53,7 +53,7 @@ session_find() {
   # Strategy 2: Fallback — most recently modified JSONL in any project slug dir
   # Try to narrow by harness manifest's project root
   local project_root=""
-  local manifest="$HOME/.boring/harnesses/$harness/manifest.json"
+  local manifest="$HOME/.claude-ops/harnesses/$harness/manifest.json"
   if [ -f "$manifest" ]; then
     project_root=$(jq -r '.project_root // ""' "$manifest" 2>/dev/null)
   fi

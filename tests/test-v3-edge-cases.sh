@@ -22,11 +22,11 @@
 #  18.  Locked JQ write: concurrent writes, large JSON, malformed input
 #
 # Usage:
-#   bash ~/.boring/tests/test-v3-edge-cases.sh
+#   bash ~/.claude-ops/tests/test-v3-edge-cases.sh
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
@@ -44,10 +44,10 @@ touch "$BUS_DIR/stream.jsonl"
 export BUS_DIR EVENT_BUS_ENABLED=true BUS_STREAM="$BUS_DIR/stream.jsonl"
 export BUS_CURSORS_DIR="$BUS_DIR/cursors" BUS_DLQ_DIR="$BUS_DIR/dlq"
 export BUS_SCHEMA="$BUS_DIR/schema.json" BUS_SEQ_FILE="$BUS_DIR/seq.json"
-export BUS_SIDE_EFFECTS_DIR="$HOME/.boring/bus/side-effects"
+export BUS_SIDE_EFFECTS_DIR="$HOME/.claude-ops/bus/side-effects"
 
 # Source event-bus in current shell for direct function access
-source "$HOME/.boring/lib/event-bus.sh"
+source "$HOME/.claude-ops/lib/event-bus.sh"
 
 # 1a: Publish and verify enrichment
 bus_publish "prompt" '{"content":"hello","agent":"test-agent"}' 2>/dev/null
@@ -219,7 +219,7 @@ echo ""
 echo "── harness gates ──"
 
 # Source the gates library
-source "$HOME/.boring/lib/harness-gates.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/harness-gates.sh" 2>/dev/null || true
 
 # Gate functions use `exit 0` when blocking, so must run in subshell to capture result.
 # Return 1 = skip (gate passes), exit 0 = blocked (gate fires).
@@ -232,7 +232,7 @@ echo '{"sketch_approved":true}' > "$TMP/state.json"
 EXIT_CODE=$(
   _SESSION_DIR="$TMP/session" PROJECT_ROOT="$TMP" PHASE_SKETCH_GATE_ENABLED="true" \
   MISSION_VISION_DISPLAY_LINES=5 \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 0; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 0; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "sketch gate skips when approved" "1" "$EXIT_CODE"
 
@@ -241,7 +241,7 @@ echo '{"sketch_approved":false}' > "$TMP/state.json"
 EXIT_CODE=$(
   _SESSION_DIR="$TMP/session" PROJECT_ROOT="$TMP" PHASE_SKETCH_GATE_ENABLED="true" \
   MISSION_VISION_DISPLAY_LINES=5 \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 5; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 5; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "sketch gate skips when done_count>0" "1" "$EXIT_CODE"
 
@@ -250,7 +250,7 @@ echo '{"sketch_approved":false}' > "$TMP/state.json"
 GATE_OUTPUT=$(
   _SESSION_DIR="$TMP/session" PROJECT_ROOT="$TMP" PHASE_SKETCH_GATE_ENABLED="true" \
   MISSION_VISION_DISPLAY_LINES=5 \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 0" 2>/dev/null
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 0" 2>/dev/null
 ) || true
 # When blocking, output contains hook_block JSON with "decision": "block"
 assert "sketch gate blocks when not approved" "block" "$GATE_OUTPUT"
@@ -259,14 +259,14 @@ assert "sketch gate blocks when not approved" "block" "$GATE_OUTPUT"
 EXIT_CODE=0
 _SESSION_DIR="$TMP/session" PROJECT_ROOT="$TMP" PHASE_SKETCH_GATE_ENABLED="false" \
   MISSION_VISION_DISPLAY_LINES=5 \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 0" 2>/dev/null || EXIT_CODE=$?
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/lib/harness-gates.sh'; check_sketch_gate 'test-h' '$TMP/state.json' 'mission' '' 0" 2>/dev/null || EXIT_CODE=$?
 assert_equals "sketch gate skips when disabled" "1" "$EXIT_CODE"
 
 # Gen gate: both approved → returns 1 (skip)
 echo '{"sketch_approved":true,"generalization_approved":true}' > "$TMP/state.json"
 EXIT_CODE=$(
   PHASE_GENERALIZATION_GATE_ENABLED="true" PROJECT_ROOT="$TMP" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/lib/harness-gates.sh'; check_generalization_gate 'test-h' '$TMP/state.json' 'mission' 0; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/lib/harness-gates.sh'; check_generalization_gate 'test-h' '$TMP/state.json' 'mission' 0; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "gen gate skips when approved" "1" "$EXIT_CODE"
 
@@ -274,7 +274,7 @@ assert_equals "gen gate skips when approved" "1" "$EXIT_CODE"
 echo '{"sketch_approved":true,"generalization_approved":false}' > "$TMP/state.json"
 GATE_OUTPUT=$(
   _SESSION_DIR="$TMP/session" PHASE_GENERALIZATION_GATE_ENABLED="true" PROJECT_ROOT="$TMP" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/lib/harness-gates.sh'; check_generalization_gate 'test-h' '$TMP/state.json' 'mission' 0" 2>/dev/null
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/lib/harness-gates.sh'; check_generalization_gate 'test-h' '$TMP/state.json' 'mission' 0" 2>/dev/null
 ) || true
 assert "gen gate blocks when not approved" "block" "$GATE_OUTPUT"
 
@@ -295,7 +295,7 @@ mkdir -p "$TMP/harness-runtime/test-harness"
 # No sleeping flag → returns 1 (clear)
 EXIT_CODE=$(
   HARNESS_STATE_DIR="$TMP" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/hooks/dispatch/harness-bg-tasks.sh'; check_bg_tasks 'test-harness'; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/hooks/dispatch/harness-bg-tasks.sh'; check_bg_tasks 'test-harness'; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "no sleeping flag → clear" "1" "$EXIT_CODE"
 
@@ -303,7 +303,7 @@ assert_equals "no sleeping flag → clear" "1" "$EXIT_CODE"
 echo "test-sleep:99999:2026-02-27T00:00:00Z" > "$TMP/harness-runtime/test-harness/sleeping"
 EXIT_CODE=$(
   HARNESS_STATE_DIR="$TMP" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/hooks/dispatch/harness-bg-tasks.sh'; check_bg_tasks 'test-harness'; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/hooks/dispatch/harness-bg-tasks.sh'; check_bg_tasks 'test-harness'; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "dead pid sleeping flag → clear" "1" "$EXIT_CODE"
 # Flag should be removed
@@ -317,7 +317,7 @@ fi
 echo "" > "$TMP/harness-runtime/test-harness/sleeping"
 EXIT_CODE=$(
   HARNESS_STATE_DIR="$TMP" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/hooks/dispatch/harness-bg-tasks.sh'; check_bg_tasks 'test-harness'; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/hooks/dispatch/harness-bg-tasks.sh'; check_bg_tasks 'test-harness'; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "empty sleeping flag → clear" "1" "$EXIT_CODE"
 
@@ -338,7 +338,7 @@ mkdir -p "$TMP/session"
 echo '{"rotation":{"mode":"none"}}' > "$TMP/progress.json"
 EXIT_CODE=$(
   _SESSION_DIR="$TMP/session" HARNESS_STATE_DIR="$TMP" SESSION_ID="test-session" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/hooks/dispatch/harness-rotation.sh'; check_rotation 'test-h' '$TMP/progress.json' 'test-h'; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/hooks/dispatch/harness-rotation.sh'; check_rotation 'test-h' '$TMP/progress.json' 'test-h'; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "rotation mode=none → continue" "1" "$EXIT_CODE"
 
@@ -346,7 +346,7 @@ assert_equals "rotation mode=none → continue" "1" "$EXIT_CODE"
 echo '{}' > "$TMP/progress.json"
 EXIT_CODE=$(
   _SESSION_DIR="$TMP/session" HARNESS_STATE_DIR="$TMP" SESSION_ID="test-session" \
-  bash -c "source '$HOME/.boring/lib/harness-jq.sh'; source '$HOME/.boring/hooks/dispatch/harness-rotation.sh'; check_rotation 'test-h' '$TMP/progress.json' 'test-h'; echo \$?" 2>/dev/null | tail -1
+  bash -c "source '$HOME/.claude-ops/lib/harness-jq.sh'; source '$HOME/.claude-ops/hooks/dispatch/harness-rotation.sh'; check_rotation 'test-h' '$TMP/progress.json' 'test-h'; echo \$?" 2>/dev/null | tail -1
 ) || true
 assert_equals "no rotation key → continue" "1" "$EXIT_CODE"
 
@@ -400,7 +400,7 @@ rm -rf "$TMP"
 echo ""
 echo "── side-effect scripts ──"
 
-SE_DIR="$HOME/.boring/bus/side-effects"
+SE_DIR="$HOME/.claude-ops/bus/side-effects"
 SE_COUNT=0
 SE_SYNTAX_OK=0
 SE_EXEC_OK=0
@@ -610,7 +610,7 @@ assert_equals "all event types have side_effects" "$TYPES_COUNT" "$TYPES_WITH_SE
 MISSING_SE=0
 for se in $(jq -r '.event_types | to_entries[] | .value.side_effects[]?' "$SCHEMA" 2>/dev/null | sort -u); do
   [ -z "$se" ] && continue
-  [ -f "$HOME/.boring/bus/side-effects/${se}.sh" ] || MISSING_SE=$((MISSING_SE+1))
+  [ -f "$HOME/.claude-ops/bus/side-effects/${se}.sh" ] || MISSING_SE=$((MISSING_SE+1))
 done
 assert_equals "all schema side-effects have scripts" "0" "$MISSING_SE"
 
@@ -629,7 +629,7 @@ done
 echo ""
 echo "── seed template edge cases ──"
 
-TMPL="$HOME/.boring/templates/seed.sh.tmpl"
+TMPL="$HOME/.claude-ops/templates/seed.sh.tmpl"
 
 # Substitution with special chars in harness name (hyphens, dots)
 for name in "a-b-c" "test.module" "x"; do
@@ -670,8 +670,8 @@ touch "$TMP/.claude/bus/stream.jsonl"
 
 # Content with special characters
 RESULT=$(PROJECT_ROOT="$TMP" EVENT_BUS_ENABLED=true bash -c '
-  source "$HOME/.boring/lib/harness-jq.sh"
-  source "$HOME/.boring/lib/event-bus.sh"
+  source "$HOME/.claude-ops/lib/harness-jq.sh"
+  source "$HOME/.claude-ops/lib/event-bus.sh"
   hq_send "hq-v2" "mod-infra" "status" "SQL query: SELECT * FROM table WHERE x=1"
   tail -1 "$PROJECT_ROOT/.claude/bus/stream.jsonl"
 ' 2>/dev/null || echo "{}")
@@ -680,8 +680,8 @@ assert "hq_send handles special chars" "SQL query" "$RESULT"
 # Empty content — hq_send uses ${4:?} so empty string fails; test that it returns non-empty error
 # This is a design choice: hq_send requires non-empty content. Verify it gracefully errors.
 RESULT=$(PROJECT_ROOT="$TMP" EVENT_BUS_ENABLED=true bash -c '
-  source "$HOME/.boring/lib/harness-jq.sh"
-  source "$HOME/.boring/lib/event-bus.sh"
+  source "$HOME/.claude-ops/lib/harness-jq.sh"
+  source "$HOME/.claude-ops/lib/event-bus.sh"
   hq_send "hq-v2" "mod-customer" "status" "" 2>&1
   echo "exit:$?"
 ' 2>&1 || echo "error")
@@ -690,8 +690,8 @@ assert "hq_send rejects empty content" "CONTENT required" "$RESULT"
 # Long content (1000 chars)
 LONG_CONTENT=$(python3 -c "print('x' * 1000)")
 RESULT=$(PROJECT_ROOT="$TMP" EVENT_BUS_ENABLED=true LONG_CONTENT="$LONG_CONTENT" bash -c '
-  source "$HOME/.boring/lib/harness-jq.sh"
-  source "$HOME/.boring/lib/event-bus.sh"
+  source "$HOME/.claude-ops/lib/harness-jq.sh"
+  source "$HOME/.claude-ops/lib/event-bus.sh"
   hq_send "hq-v2" "mod-customer" "status" "$LONG_CONTENT"
   tail -1 "$PROJECT_ROOT/.claude/bus/stream.jsonl" | jq -r ".content | length"
 ' 2>/dev/null || echo "0")
@@ -782,7 +782,7 @@ echo ""
 echo "── dead reference scan ──"
 
 # No references to control-plane.conf (archived)
-for f in "$HOME/.boring/lib/"*.sh "$HOME/.boring/hooks/"*/*.sh; do
+for f in "$HOME/.claude-ops/lib/"*.sh "$HOME/.claude-ops/hooks/"*/*.sh; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
   REFS=$(grep -c 'control-plane\.conf' "$f" 2>/dev/null; true)
@@ -793,7 +793,7 @@ done
 assert_equals "control-plane.conf refs: clean" "0" "0"
 
 # No references to session-registry.json
-for f in "$HOME/.boring/lib/"*.sh "$HOME/.boring/hooks/"*/*.sh; do
+for f in "$HOME/.claude-ops/lib/"*.sh "$HOME/.claude-ops/hooks/"*/*.sh; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
   REFS=$(grep -c 'session-registry' "$f" 2>/dev/null; true)
@@ -804,7 +804,7 @@ done
 assert_equals "session-registry refs: clean" "0" "0"
 
 # No references to sweeps.d (archived)
-for f in "$HOME/.boring/lib/"*.sh; do
+for f in "$HOME/.claude-ops/lib/"*.sh; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
   REFS=$(grep -c 'sweeps\.d' "$f" 2>/dev/null; true)
@@ -822,7 +822,7 @@ echo "── library syntax check ──"
 
 LIB_COUNT=0
 LIB_OK=0
-for f in "$HOME/.boring/lib/"*.sh; do
+for f in "$HOME/.claude-ops/lib/"*.sh; do
   [ -f "$f" ] || continue
   LIB_COUNT=$((LIB_COUNT+1))
   name=$(basename "$f")
@@ -837,7 +837,7 @@ assert_equals "all $LIB_COUNT lib files valid bash" "$LIB_COUNT" "$LIB_OK"
 # All hook files: valid bash syntax
 HOOK_COUNT=0
 HOOK_OK=0
-for f in "$HOME/.boring/hooks/"*/*.sh; do
+for f in "$HOME/.claude-ops/hooks/"*/*.sh; do
   [ -f "$f" ] || continue
   HOOK_COUNT=$((HOOK_COUNT+1))
   name=$(basename "$f")

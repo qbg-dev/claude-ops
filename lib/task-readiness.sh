@@ -23,7 +23,7 @@ TASK_READINESS_REQUIRED_SECTIONS="${TASK_READINESS_REQUIRED_SECTIONS:-Evidence,R
 [ "$TASK_READINESS_ENABLED" = "true" ] || exit 0
 
 HARNESS="${HARNESS:-miniapp-chat}"
-source "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || true
 
 # Resolve files via harness-jq helpers
 BP_FILE=$(harness_rules_file "$HARNESS" "$PROJECT_ROOT" 2>/dev/null || echo "")

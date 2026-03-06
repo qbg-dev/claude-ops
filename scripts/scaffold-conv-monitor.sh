@@ -25,7 +25,7 @@ DB_PATH=""
 DOMAIN=""
 PROJECTS=""
 
-TEMPLATE_DIR="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/templates/conv-monitor"
+TEMPLATE_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/templates/conv-monitor"
 if [ ! -d "$TEMPLATE_DIR" ] && [ -d "$HOME/.claude-ops/templates/conv-monitor" ]; then
   TEMPLATE_DIR="$HOME/.claude-ops/templates/conv-monitor"
 fi
@@ -74,7 +74,7 @@ fi
 
 if [ ! -d "$TEMPLATE_DIR" ]; then
   echo "ERROR: Template directory not found: $TEMPLATE_DIR"
-  echo "Install boring/claude-ops or check CLAUDE_OPS_DIR."
+  echo "Install claude-ops/claude-ops or check CLAUDE_OPS_DIR."
   exit 1
 fi
 
@@ -130,7 +130,7 @@ echo "  Created: MEMORY.md"
 SCRIPTS_DIR="$PROJECT_ROOT/.claude/scripts"
 mkdir -p "$SCRIPTS_DIR"
 
-OPS_SCRIPTS_DIR="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/scripts"
+OPS_SCRIPTS_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/scripts"
 if [ ! -d "$OPS_SCRIPTS_DIR" ] && [ -d "$HOME/.claude-ops/scripts" ]; then
   OPS_SCRIPTS_DIR="$HOME/.claude-ops/scripts"
 fi
@@ -147,7 +147,7 @@ echo ""
 echo "Conv-monitor worker scaffolded successfully!"
 echo ""
 echo "To launch:"
-echo "  bash ~/.boring/scripts/launch-flat-worker.sh $WORKER_NAME"
+echo "  bash ~/.claude-ops/scripts/launch-flat-worker.sh $WORKER_NAME"
 echo ""
 echo "To customize:"
 echo "  - Edit $WORKER_DIR/mission.md to add project-specific queries"

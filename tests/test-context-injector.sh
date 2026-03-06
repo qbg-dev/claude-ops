@@ -5,7 +5,7 @@ set -euo pipefail
 source "$(dirname "$0")/helpers.sh"
 
 FIXTURES="$(dirname "$0")/fixtures"
-HOOK="$HOME/.boring/hooks/admission/context-injector.sh"
+HOOK="$HOME/.claude-ops/hooks/admission/context-injector.sh"
 
 # Setup: create a temp project with a context-injections file
 TMPDIR=$(mktemp -d)

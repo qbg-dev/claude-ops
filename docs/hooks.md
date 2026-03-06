@@ -1,6 +1,6 @@
 # Hooks
 
-boring registers four Claude Code hooks that fire at lifecycle points in every session. Together they form the glue between Claude's tool calls and the harness state machine.
+claude-ops registers four Claude Code hooks that fire at lifecycle points in every session. Together they form the glue between Claude's tool calls and the harness state machine.
 
 ## Hook Registration
 
@@ -10,16 +10,16 @@ boring registers four Claude Code hooks that fire at lifecycle points in every s
 {
   "hooks": {
     "PreToolUse": [{
-      "hooks": [{"type": "command", "command": "bash ~/.boring/hooks/interceptors/pre-tool-context-injector.sh"}]
+      "hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/interceptors/pre-tool-context-injector.sh"}]
     }],
     "PostToolUse": [{
-      "hooks": [{"type": "command", "command": "bash ~/.boring/hooks/publishers/post-tool-publisher.sh"}]
+      "hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/publishers/post-tool-publisher.sh"}]
     }],
     "Stop": [{
-      "hooks": [{"type": "command", "command": "bash ~/.boring/hooks/gates/stop-harness-dispatch.sh"}]
+      "hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/gates/stop-harness-dispatch.sh"}]
     }],
     "UserPromptSubmit": [{
-      "hooks": [{"type": "command", "command": "bash ~/.boring/hooks/publishers/prompt-publisher.sh"}]
+      "hooks": [{"type": "command", "command": "bash ~/.claude-ops/hooks/publishers/prompt-publisher.sh"}]
     }]
   }
 }
@@ -134,13 +134,13 @@ If an agent is stuck and you need to manually stop it:
 
 ```bash
 # Find the session ID from Claude TUI or pane registry
-touch ~/.boring/state/sessions/{session_id}/allow-stop
+touch ~/.claude-ops/state/sessions/{session_id}/allow-stop
 ```
 
 Or set a one-time stop flag:
 
 ```bash
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 touch "$(harness_runtime my-harness)/stop-flag"
 ```
 
@@ -186,7 +186,7 @@ Hooks must respond with:
 Source `lib/pane-resolve.sh` for pane and harness resolution:
 
 ```bash
-source "$HOME/.boring/lib/pane-resolve.sh"
+source "$HOME/.claude-ops/lib/pane-resolve.sh"
 
 INPUT=$(cat)
 hook_parse_input "$INPUT"          # sets $_HOOK_SESSION_ID, $_HOOK_TOOL_NAME, etc.
@@ -204,7 +204,7 @@ hook_context "Injected context"    # inject additionalContext (exit 0 with JSON)
 set -euo pipefail
 trap 'echo "{}"; exit 0' ERR
 
-source ~/.boring/lib/pane-resolve.sh
+source ~/.claude-ops/lib/pane-resolve.sh
 
 INPUT=$(cat)
 hook_parse_input "$INPUT"

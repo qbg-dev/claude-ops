@@ -57,7 +57,7 @@ beforeAll(async () => {
       ...process.env,
       RELAY_PORT: String(TEST_PORT),
       RELAY_PROJECT_ROOTS: TEST_PROJECT_DIR,
-      BORING_DIR: TEST_DIR, // so it reads our test secret
+      CLAUDE_OPS_DIR: TEST_DIR, // so it reads our test secret
       HOME: process.env.HOME!,
     },
     stdout: "pipe",

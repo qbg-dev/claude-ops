@@ -11,8 +11,8 @@
 set -euo pipefail
 source "$(dirname "$0")/helpers.sh"
 
-BORING_DIR="${BORING_DIR:-$HOME/.boring}"
-PANE_REGISTRY="${BORING_DIR}/state/pane-registry.json"
+CLAUDE_OPS_DIR="${CLAUDE_OPS_DIR:-$HOME/.claude-ops}"
+PANE_REGISTRY="${CLAUDE_OPS_DIR}/state/pane-registry.json"
 
 echo "── project scoping — static analysis ──"
 

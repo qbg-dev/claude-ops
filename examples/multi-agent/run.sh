@@ -13,8 +13,8 @@
 # Usage: bash examples/multi-agent/run.sh
 set -euo pipefail
 
-BORING="${BORING_DIR:-$HOME/.boring}"
-PROJECT_DIR="$(mktemp -d /tmp/boring-multi-XXXXXX)"
+CLAUDE_OPS="${CLAUDE_OPS_DIR:-$HOME/.claude-ops}"
+PROJECT_DIR="$(mktemp -d /tmp/claude-ops-multi-XXXXXX)"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[multi-agent]${NC} $*"; }
@@ -27,7 +27,7 @@ cd "$PROJECT_DIR" && git init -q && git commit --allow-empty -m "init" -q
 
 # ── Step 1: Scaffold coordinator ─────────────────────────────────
 info "Scaffolding coordinator harness ..."
-bash "$BORING/scripts/scaffold.sh" code-review "$PROJECT_DIR" \
+bash "$CLAUDE_OPS/scripts/scaffold.sh" code-review "$PROJECT_DIR" \
   --from-description "Coordinate parallel code review across multiple workers"
 
 # ── Step 2: Populate coordinator task graph ───────────────────────
@@ -65,9 +65,9 @@ JSON
 
 # ── Step 3: Scaffold worker harnesses ────────────────────────────
 info "Scaffolding worker harnesses ..."
-bash "$BORING/scripts/scaffold.sh" "code-review/worker-alpha" "$PROJECT_DIR" \
+bash "$CLAUDE_OPS/scripts/scaffold.sh" "code-review/worker-alpha" "$PROJECT_DIR" \
   --from-description "Review src/api/ for bugs and security issues"
-bash "$BORING/scripts/scaffold.sh" "code-review/worker-beta" "$PROJECT_DIR" \
+bash "$CLAUDE_OPS/scripts/scaffold.sh" "code-review/worker-beta" "$PROJECT_DIR" \
   --from-description "Review src/ui/ for bugs and accessibility issues"
 
 # Write worker task graphs
@@ -118,7 +118,7 @@ JSON
 
 # ── Step 4: Initialize the event bus ────────────────────────────
 info "Initializing event bus ..."
-source "$BORING/lib/event-bus.sh"
+source "$CLAUDE_OPS/lib/event-bus.sh"
 bus_publish "worker.started" '{"harness":"code-review","worker":"code-review/worker-alpha","task_id":"W-1"}' 2>/dev/null || true
 bus_publish "worker.started" '{"harness":"code-review","worker":"code-review/worker-beta","task_id":"W-1"}' 2>/dev/null || true
 

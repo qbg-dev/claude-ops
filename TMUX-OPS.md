@@ -144,7 +144,7 @@ tmux send-keys -t "$WORKER_PANE" -H 0d
 ## Monitor Agent
 
 ```bash
-bash ~/.boring/scripts/monitor-agent.sh --pane <monitor-pane> <target-pane> [interval] [mission]
+bash ~/.claude-ops/scripts/monitor-agent.sh --pane <monitor-pane> <target-pane> [interval] [mission]
 ```
 
 Launches a full Claude Code Opus session that polls the target pane every N seconds.
@@ -152,7 +152,7 @@ Detects idle/stuck agents, analyzes their output, sends signed nudges.
 Every 6 captures, fires a REFLECT event for meta-reflection.
 Sets pane titles: monitor shows `MONITOR→{target}`, target shows `MONITORED by {monitor}`.
 
-Stop: `bash ~/.boring/scripts/monitor-agent.sh --stop <target-pane>`
+Stop: `bash ~/.claude-ops/scripts/monitor-agent.sh --stop <target-pane>`
 
 **CRITICAL: `--pane` must match where the monitor session actually runs.**
 Always resolve the pane ID from within the monitor pane itself at launch time

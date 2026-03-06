@@ -6,7 +6,7 @@
 # a structured issue or feature request.
 #
 # Bug reports: stored in claude_files/agent-issues.jsonl (per-project)
-# Feature requests: stored in ~/.boring/state/feature-requests.jsonl (global)
+# Feature requests: stored in ~/.claude-ops/state/feature-requests.jsonl (global)
 #
 # Usage (bug report — default):
 #   report-issue --title "Short description" \
@@ -43,7 +43,7 @@ FILE_PATH=""
 PROJECT_ROOT=""
 GITHUB=false
 DRY_RUN=false
-GITHUB_REPO="${BORING_GITHUB_REPO:-qbg-dev/boring}"
+GITHUB_REPO="${CLAUDE_OPS_GITHUB_REPO:-qbg-dev/claude-ops}"
 
 # ── CLI parsing ────────────────────────────────────────────────
 while [ $# -gt 0 ]; do
@@ -155,7 +155,7 @@ fi
 
 # ── Resolve project root (bugs only — features are global) ───
 if [ "$REPORT_TYPE" = "bug" ] && [ -z "$PROJECT_ROOT" ]; then
-  source "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || true
+  source "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || true
   if command -v harness_list_active &>/dev/null; then
     first_active=$(harness_list_active 2>/dev/null | head -1 || true)
     if [ -n "$first_active" ]; then
@@ -201,7 +201,7 @@ else
   }
   PANE_ID=$(_find_own_pane 2>/dev/null || echo "")
   if [ -n "$PANE_ID" ]; then
-    _PANE_REGISTRY="${HARNESS_STATE_DIR:-$HOME/.boring/state}/pane-registry.json"
+    _PANE_REGISTRY="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}/pane-registry.json"
     if [ -f "$_PANE_REGISTRY" ]; then
       harness_from_meta=$(jq -r --arg pid "$PANE_ID" '.[$pid].harness // empty' "$_PANE_REGISTRY" 2>/dev/null)
       if [ -n "$harness_from_meta" ]; then
@@ -223,7 +223,7 @@ SESSION_ID="${CLAUDE_SESSION_ID:-}"
 # ── Write record ─────────────────────────────────────────────
 if [ "$REPORT_TYPE" = "feature" ]; then
   # Feature requests go to global state file
-  OUTPUT_FILE="$HOME/.boring/state/feature-requests.jsonl"
+  OUTPUT_FILE="$HOME/.claude-ops/state/feature-requests.jsonl"
   mkdir -p "$(dirname "$OUTPUT_FILE")"
 
   jq -n -c \
@@ -334,7 +334,7 @@ ${DESCRIPTION}"
     GH_BODY="${GH_BODY}
 
 ---
-*Filed automatically by boring agent*"
+*Filed automatically by claude-ops agent*"
 
     if [ "$DRY_RUN" = "true" ]; then
       echo "DRY-RUN: Would create GitHub issue on ${GITHUB_REPO}:" >&2

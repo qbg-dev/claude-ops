@@ -20,7 +20,7 @@ export PANE_REGISTRY="$TEST_STATE_DIR/pane-registry.json"
 mkdir -p "$HARNESS_LOCK_DIR"
 
 # Source library AFTER setting env vars
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 cleanup() {
   rm -rf "$TEST_STATE_DIR"
@@ -233,7 +233,7 @@ timeout 10 bash -c "
   export HARNESS_STATE_DIR='$TEST_STATE_DIR'
   export HARNESS_LOCK_DIR='$TEST_STATE_DIR/locks'
   export LOCK_MAX_ATTEMPTS=5
-  source '$HOME/.boring/lib/harness-jq.sh'
+  source '$HOME/.claude-ops/lib/harness-jq.sh'
   locked_jq_write '$STALE_JSON' 'test-stale' '.stale_broken = true' 2>/dev/null
 " 2>/dev/null
 STALE_RESULT=$(jq -r '.stale_broken // "false"' "$STALE_JSON" 2>/dev/null)
@@ -252,7 +252,7 @@ for i in $(seq 1 10); do
   (
     export HARNESS_STATE_DIR="$TEST_STATE_DIR"
     export HARNESS_LOCK_DIR="$TEST_STATE_DIR/locks"
-    source "$HOME/.boring/lib/harness-jq.sh"
+    source "$HOME/.claude-ops/lib/harness-jq.sh"
     locked_jq_write "$CONC_JSON" "concurrent" ".writer_${i} = true" 2>/dev/null
   ) &
 done
@@ -612,7 +612,7 @@ for i in $(seq 1 20); do
     export HARNESS_STATE_DIR="$TEST_STATE_DIR"
     export HARNESS_LOCK_DIR="$TEST_STATE_DIR/locks"
     export PANE_REGISTRY="$TEST_STATE_DIR/pane-registry.json"
-    source "$HOME/.boring/lib/harness-jq.sh"
+    source "$HOME/.claude-ops/lib/harness-jq.sh"
     pane_registry_update "%conc-$i" "h-$i" "t" "$i" "20" "d" 2>/dev/null
   ) &
 done

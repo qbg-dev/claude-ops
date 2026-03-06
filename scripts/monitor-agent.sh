@@ -30,7 +30,7 @@
 set -euo pipefail
 
 # --- State directory base ---
-HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.boring/state}"
+HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}"
 MONITORS_DIR="$HARNESS_STATE_DIR/monitors"
 
 # --- Stop mode ---
@@ -68,7 +68,7 @@ if [ "${1:-}" = "--stop" ]; then
   fi
   # Archive reflection receipt before cleanup
   if [ -f "$DIR/harness-name" ] && [ -f "$DIR/reflect-receipt.json" ]; then
-    source "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || true
+    source "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || true
     _HNAME=$(cat "$DIR/harness-name" 2>/dev/null || echo "")
     if [ -n "$_HNAME" ]; then
       harness_archive_reflection "$_HNAME" "$DIR/reflect-receipt.json" 2>/dev/null || true
@@ -203,7 +203,7 @@ PROMPT_FILE="$STATE_DIR/prompt.txt"
 HARNESS_NAME=""
 PROGRESS_PATH=""
 JOURNAL_PATH=""
-source "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || HARNESS_SESSION_REGISTRY="$HOME/.boring/state/session-registry.json"
+source "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || HARNESS_SESSION_REGISTRY="$HOME/.claude-ops/state/session-registry.json"
 if [ -f "$HARNESS_SESSION_REGISTRY" ]; then
   # Try to find harness for the target pane's session
   search_root="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -234,7 +234,7 @@ fi
 
 # --- Session transcript discovery ---
 SESSION_JSONL_PATH=""
-source "$HOME/.boring/lib/session-reader.sh" 2>/dev/null || true
+source "$HOME/.claude-ops/lib/session-reader.sh" 2>/dev/null || true
 if [ -n "$HARNESS_NAME" ]; then
   SESSION_JSONL_PATH=$(session_find "$HARNESS_NAME" 2>/dev/null || true)
 fi
@@ -308,7 +308,7 @@ Events include wave state (wave_progress, is_wave_boundary, current_task). Check
 1. **Wave gate tasks (\`wave-N-report\`)** — these are structural gates in progress.json with \`metadata.wave_gate: true\`. They block the next wave's tasks via \`blockedBy\`.
 2. If agent is working on wave N+1 tasks while \`wave-N-report\` is still pending → **INTERVENE IMMEDIATELY**. Send: "STOP — wave-N-report gate is pending. Complete the gate steps before proceeding."
 3. Gate steps: commit, deploy, inspect Chrome, screenshot, report HTML, open, notify, wait for the operator.
-4. Report file location: \`~/.boring/harness/reports/${HARNESS_NAME:-unknown}/wave-{N}.html\`
+4. Report file location: \`~/.claude-ops/harness/reports/${HARNESS_NAME:-unknown}/wave-{N}.html\`
 5. Only after the report exists AND the operator confirms → gate can be marked completed.
 
 ## Role 3: Evolver — Harness Maintenance
@@ -317,7 +317,7 @@ You can **read AND write** the harness. Use these exact commands:
 
 \`\`\`bash
 # Source harness functions
-source ~/.boring/lib/fleet-jq.sh
+source ~/.claude-ops/lib/fleet-jq.sh
 
 # Add a new task
 locked_jq_write "${PROGRESS_PATH}" "progress-${HARNESS_NAME}" \
@@ -376,7 +376,7 @@ NOTIFIED_FILE="${STATE_DIR}/notified_milestones"
 touch "\$NOTIFIED_FILE"
 
 # Wave gate actionable (all blockers done, gate pending)
-source ~/.boring/lib/fleet-jq.sh 2>/dev/null
+source ~/.claude-ops/lib/fleet-jq.sh 2>/dev/null
 WAVE_BOUNDARY=\$(harness_is_wave_boundary "${PROGRESS_PATH}" 2>/dev/null || echo "false")
 if [ "\$WAVE_BOUNDARY" = "true" ]; then
   WAVE_INFO=\$(harness_wave_progress "${PROGRESS_PATH}")
@@ -450,7 +450,7 @@ emit_metric() {
   local harness_name="${HARNESS_NAME:-unknown}"
   printf '{"ts":"%s","type":"%s","agent":"%s","harness":"%s"%s}\n' \
     "$ts" "$type" "$TARGET_PANE" "$harness_name" "$extra" \
-    >> "${HARNESS_METRICS_FILE:-$HOME/.boring/state/metrics.jsonl}" 2>/dev/null || true
+    >> "${HARNESS_METRICS_FILE:-$HOME/.claude-ops/state/metrics.jsonl}" 2>/dev/null || true
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -510,8 +510,8 @@ tmux send-keys -t "$MONITOR_PANE" -H 0d
   set +e +o pipefail
 
   # Source shared libraries in subshell (functions aren't inherited)
-  source "$HOME/.boring/lib/session-reader.sh" 2>/dev/null || true
-  source "$HOME/.boring/lib/fleet-jq.sh" 2>/dev/null || true
+  source "$HOME/.claude-ops/lib/session-reader.sh" 2>/dev/null || true
+  source "$HOME/.claude-ops/lib/fleet-jq.sh" 2>/dev/null || true
 
   trap 'exit 0' TERM INT
 

@@ -51,7 +51,7 @@ The change is in the *authoring voice* and the *agent's relationship to the task
 
 ## Writing a Soft-Optimization Harness
 
-Use the templates at `~/.boring/templates/harness.md.tmpl` and `goal.md.tmpl`. The scaffold (`~/.boring/scripts/scaffold.sh`) produces them automatically.
+Use the templates at `~/.claude-ops/templates/harness.md.tmpl` and `goal.md.tmpl`. The scaffold (`~/.claude-ops/scripts/scaffold.sh`) produces them automatically.
 
 Key authoring principles:
 - **Paint the picture first.** The "World We Want" section is the most important. If the agent reads nothing else, this should orient it.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # google-auth.sh — Shared Google OAuth token refresh for gmail, drive, calendar.
-# Usage: source ~/.boring/lib/google-auth.sh && TOKEN=$(google_auth gmail)
+# Usage: source ~/.claude-ops/lib/google-auth.sh && TOKEN=$(google_auth gmail)
 #
 # To set up:
 # 1. Create a Google Cloud project and enable the Gmail/Drive/Calendar APIs
@@ -17,9 +17,9 @@ google_auth() {
   local token_file refresh_token access_token expiry now margin=60
 
   case "$service" in
-    gmail)   token_file="$HOME/.boring/state/tokens/gmail.json" ;;
-    drive)   token_file="$HOME/.boring/state/tokens/drive.json" ;;
-    calendar) token_file="$HOME/.boring/state/tokens/calendar.json" ;;
+    gmail)   token_file="$HOME/.claude-ops/state/tokens/gmail.json" ;;
+    drive)   token_file="$HOME/.claude-ops/state/tokens/drive.json" ;;
+    calendar) token_file="$HOME/.claude-ops/state/tokens/calendar.json" ;;
     *) echo "Unknown service: $service" >&2; return 1 ;;
   esac
 

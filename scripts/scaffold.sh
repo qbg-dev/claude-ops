@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scaffold.sh — Create a new v3 harness with agents/module-manager/ structure.
-# Usage: bash ~/.boring/scripts/scaffold.sh [--long-running] <harness-name> [project-root]
+# Usage: bash ~/.claude-ops/scripts/scaffold.sh [--long-running] <harness-name> [project-root]
 #
 # Flags:
 #   --long-running   Harness cycles indefinitely (lifecycle: long-running)
@@ -22,7 +22,7 @@ HARNESS="${ARGS[0]:-}"
 PROJECT_ROOT="${ARGS[1]:-$(pwd)}"
 
 if [ -z "$HARNESS" ]; then
-  echo "Usage: bash ~/.boring/scripts/scaffold.sh [--long-running] <harness-name> [project-root]"
+  echo "Usage: bash ~/.claude-ops/scripts/scaffold.sh [--long-running] <harness-name> [project-root]"
   echo ""
   echo "Creates a v3 harness:"
   echo "  .claude/harness/{name}/tasks.json"
@@ -35,7 +35,7 @@ if [ -z "$HARNESS" ]; then
   exit 1
 fi
 
-TMPL_DIR="$HOME/.boring/templates"
+TMPL_DIR="$HOME/.claude-ops/templates"
 HARNESS_DIR="$PROJECT_ROOT/.claude/harness/$HARNESS"
 MM_DIR="$HARNESS_DIR/agents/module-manager"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -44,8 +44,8 @@ LIFECYCLE="bounded"
 MISSION="${DESCRIPTION:-}"
 
 mkdir -p "$HARNESS_DIR" "$PROJECT_ROOT/.claude/scripts" "$MM_DIR/memory"
-mkdir -p "$HOME/.boring/harness/reports/$HARNESS/screenshots"
-mkdir -p "$HOME/.boring/state/playwright/$HARNESS"
+mkdir -p "$HOME/.claude-ops/harness/reports/$HARNESS/screenshots"
+mkdir -p "$HOME/.claude-ops/state/playwright/$HARNESS"
 
 find_tmpl() {
   local f="$TMPL_DIR/$1"
@@ -121,7 +121,7 @@ if [ ! -f "$MM_DIR/config.json" ]; then
     '{
       name: $name,
       mission: $mission,
-      model: "sonnet",
+      model: "opus",
       lifecycle: $lifecycle,
       sleep_duration: 900,
       rotation: {max_rounds: 20, claude_command: "cds", mode: "new_session"},
@@ -155,7 +155,7 @@ fi
 if [ ! -f "$MM_DIR/permissions.json" ]; then
   cat > "$MM_DIR/permissions.json" <<'PERMEOF'
 {
-  "model": "sonnet",
+  "model": "opus",
   "permission_mode": "bypassPermissions",
   "disallowedTools": [
     "Bash(./scripts/deploy-prod*)",
@@ -205,7 +205,7 @@ if [ ! -f "$SEED_FILE" ]; then
 fi
 
 # ── Manifest ────────────────────────────────────────────────────
-mkdir -p "$HOME/.boring/harness/manifests/$HARNESS"
+mkdir -p "$HOME/.claude-ops/harness/manifests/$HARNESS"
 jq -n \
   --arg harness "$HARNESS" \
   --arg root "$PROJECT_ROOT" \
@@ -229,7 +229,7 @@ jq -n \
       mission: (".claude/harness/\($harness)/agents/module-manager/mission.md"),
       inbox: (".claude/harness/\($harness)/agents/module-manager/inbox.jsonl")
     }
-  }' > "$HOME/.boring/harness/manifests/$HARNESS/manifest.json"
+  }' > "$HOME/.claude-ops/harness/manifests/$HARNESS/manifest.json"
 
 echo ""
 echo "Done. Structure:"
@@ -252,4 +252,4 @@ echo "Next:"
 echo "  1. Edit agents/module-manager/mission.md — detailed objective + constraints"
 echo "  2. Edit tasks.json — add task graph {\"tasks\": {\"t1\": {\"status\": \"pending\", ...}}}"
 echo "  3. Edit harness.md — terrain map + key files"
-echo "  4. Launch: bash ~/.boring/scripts/harness-launch.sh $HARNESS"
+echo "  4. Launch: bash ~/.claude-ops/scripts/harness-launch.sh $HARNESS"

@@ -1,10 +1,10 @@
-# boring — Agent Bootstrap Reference
+# claude-ops — Agent Bootstrap Reference
 
-> This file is the single-file reference for setting up and using boring.
+> This file is the single-file reference for setting up and using claude-ops.
 > An agent can curl this file and immediately understand the system.
 >
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/qbg-dev/boring/main/AGENTS.md
+> curl -fsSL https://raw.githubusercontent.com/qbg-dev/claude-ops/main/AGENTS.md
 > ```
 
 ---
@@ -12,11 +12,11 @@
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qbg-dev/boring/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qbg-dev/claude-ops/main/install.sh | bash
 source ~/.zshrc  # or ~/.bash_profile
 ```
 
-This clones to `~/.boring`, adds `bin/` to PATH, and registers 4 hooks in `~/.claude/settings.json`.
+This clones to `~/.claude-ops`, adds `bin/` to PATH, and registers 4 hooks in `~/.claude/settings.json`.
 
 **Prerequisites**: git, jq, tmux, bash 4+, Claude Code.
 
@@ -44,10 +44,10 @@ This clones to `~/.boring`, adds `bin/` to PATH, and registers 4 hooks in `~/.cl
 
 ```bash
 # Bounded (stops when tasks done)
-bash ~/.boring/scripts/scaffold.sh my-feature /path/to/project
+bash ~/.claude-ops/scripts/scaffold.sh my-feature /path/to/project
 
 # Long-running (watchdog respawns after sleep)
-bash ~/.boring/scripts/scaffold.sh --long-running monitor /path/to/project
+bash ~/.claude-ops/scripts/scaffold.sh --long-running monitor /path/to/project
 ```
 
 Files created:
@@ -113,7 +113,7 @@ The Stop hook will keep the agent working until all tasks are `"completed"`.
 ## Event Bus API
 
 ```bash
-source ~/.boring/lib/event-bus.sh
+source ~/.claude-ops/lib/event-bus.sh
 
 # Publish
 bus_publish "task.completed" '{"harness":"foo","task_id":"T-1","summary":"done"}'
@@ -142,7 +142,7 @@ bus_compact
 ## Harness State API (harness-jq.sh)
 
 ```bash
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 
 TASKS=".claude/harness/my-feature/tasks.json"
 
@@ -192,7 +192,7 @@ For **long-running** harnesses:
 - Writes `graceful-stop` sentinel → `hook_pass`
 - Watchdog reads `sleep_duration` from config, respawns after that interval
 
-**Escape**: `touch ~/.boring/state/sessions/{session_id}/allow-stop`
+**Escape**: `touch ~/.claude-ops/state/sessions/{session_id}/allow-stop`
 
 ### Custom Hooks
 
@@ -201,7 +201,7 @@ For **long-running** harnesses:
 set -euo pipefail
 trap 'echo "{}"; exit 0' ERR
 
-source ~/.boring/lib/pane-resolve.sh
+source ~/.claude-ops/lib/pane-resolve.sh
 INPUT=$(cat)
 hook_parse_input "$INPUT"        # sets $_HOOK_SESSION_ID, $_HOOK_TOOL_NAME, $_HOOK_TOOL_INPUT
 resolve_pane_and_harness "$_HOOK_SESSION_ID"
@@ -218,10 +218,10 @@ hook_pass
 ## Multi-Agent Pattern
 
 ```bash
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 
 # Coordinator: launch a worker
-bash ~/.boring/scripts/launch-worker.sh my-harness worker-alpha
+bash ~/.claude-ops/scripts/launch-worker.sh my-harness worker-alpha
 
 # Send a directive
 hq_send "my-harness" "my-harness/worker-alpha" "directive" "Review src/api/, write to review-api.md"
@@ -245,16 +245,16 @@ Simpler alternative to the harness system. No module managers, no event bus. Wor
 
 ```bash
 # Launch a flat worker (from project root)
-bash ~/.boring/scripts/launch-flat-worker.sh my-worker
+bash ~/.claude-ops/scripts/launch-flat-worker.sh my-worker
 
 # Or with project override
-bash ~/.boring/scripts/launch-flat-worker.sh my-worker --project /path/to/repo
+bash ~/.claude-ops/scripts/launch-flat-worker.sh my-worker --project /path/to/repo
 
 # Check fleet status
-bash ~/.boring/scripts/check-flat-workers.sh
+bash ~/.claude-ops/scripts/check-flat-workers.sh
 
 # Scaffold a new worker from template
-cp -r ~/.boring/templates/flat-worker/ .claude/workers/my-worker/
+cp -r ~/.claude-ops/templates/flat-worker/ .claude/workers/my-worker/
 # Then edit mission.md, permissions.json
 ```
 
@@ -278,10 +278,10 @@ The Stop hook enforces this: if `vision_approved` is absent or false, it blocks 
 
 ## Agent Type Templates
 
-Three typed templates at `~/.boring/templates/flat-worker/types/`. Copy the matching type when scaffolding a new worker:
+Three typed templates at `~/.claude-ops/templates/flat-worker/types/`. Copy the matching type when scaffolding a new worker:
 
 ```bash
-cp -r ~/.boring/templates/flat-worker/types/implementer/ .claude/workers/my-worker/
+cp -r ~/.claude-ops/templates/flat-worker/types/implementer/ .claude/workers/my-worker/
 # Or: monitor / coordinator
 ```
 
@@ -308,13 +308,13 @@ A **read-only** worker that observes production and reports issues. Cannot modif
 **Escalation pattern** — at end of each cycle, if issues found:
 
 ```bash
-bash ~/.boring/scripts/worker-message.sh send chief-of-staff \
+bash ~/.claude-ops/scripts/worker-message.sh send chief-of-staff \
   "monitor CRITICAL: <summary of findings, 1 line each>"
 ```
 
 For CRITICAL findings, also emit a bus event to notify Warren directly:
 ```bash
-source ~/.boring/lib/event-bus.sh
+source ~/.claude-ops/lib/event-bus.sh
 bus_publish "notification" '{"message":"<finding>","title":"Monitor Alert"}'
 ```
 
@@ -371,11 +371,11 @@ At the end of each cycle:
 # 1. Update MEMORY.md (synthesize learnings, keep ≤200 lines)
 
 # 2. Bump session counter
-source ~/.boring/lib/harness-jq.sh
+source ~/.claude-ops/lib/harness-jq.sh
 harness_bump_session .claude/harness/{name}/tasks.json
 
 # 3. Publish completions
-source ~/.boring/lib/event-bus.sh
+source ~/.claude-ops/lib/event-bus.sh
 bus_publish "task.completed" '{"harness":"{name}","task_id":"T-N","summary":"one line"}'
 
 # 4. Git checkpoint
@@ -388,30 +388,30 @@ bus_git_checkpoint "auto: cycle N complete"
 
 | Path | Contents |
 |------|----------|
-| `~/.boring/lib/harness-jq.sh` | Task graph API |
-| `~/.boring/lib/event-bus.sh` | Event bus API |
-| `~/.boring/scripts/scaffold.sh` | Harness scaffolding |
-| `~/.boring/scripts/harness-watchdog.sh` | Watchdog daemon |
-| `~/.boring/hooks/interceptors/pre-tool-context-injector.sh` | PreToolUse hook |
-| `~/.boring/hooks/gates/stop-harness-dispatch.sh` | Stop hook |
-| `~/.boring/bus/schema.json` | Event type + side-effect registry |
-| `~/.boring/state/pane-registry.json` | Pane ↔ harness map |
-| `~/.boring/state/watchdog.log` | Stop hook + watchdog log |
+| `~/.claude-ops/lib/harness-jq.sh` | Task graph API |
+| `~/.claude-ops/lib/event-bus.sh` | Event bus API |
+| `~/.claude-ops/scripts/scaffold.sh` | Harness scaffolding |
+| `~/.claude-ops/scripts/harness-watchdog.sh` | Watchdog daemon |
+| `~/.claude-ops/hooks/interceptors/pre-tool-context-injector.sh` | PreToolUse hook |
+| `~/.claude-ops/hooks/gates/stop-harness-dispatch.sh` | Stop hook |
+| `~/.claude-ops/bus/schema.json` | Event type + side-effect registry |
+| `~/.claude-ops/state/pane-registry.json` | Pane ↔ harness map |
+| `~/.claude-ops/state/watchdog.log` | Stop hook + watchdog log |
 | `.claude/harness/{name}/tasks.json` | Task graph |
 | `.claude/harness/{name}/agents/module-manager/inbox.jsonl` | Inbound messages |
 | `.claude/harness/{name}/agents/module-manager/MEMORY.md` | Persistent memory |
 | `.claude/bus/stream.jsonl` | Event stream (project-local) |
-| `~/.boring/templates/conv-monitor/` | Conv-monitor worker template |
-| `~/.boring/templates/flat-worker/.commit-template.md` | Standardized worker commit format |
-| `~/.boring/templates/flat-worker/types/implementer/` | Implementer type template (read-write, one-shot) |
-| `~/.boring/templates/flat-worker/types/monitor/` | Monitor type template (read-only, perpetual, reports to chief-of-staff) |
-| `~/.boring/templates/flat-worker/types/coordinator/` | Coordinator type template (full access, merge/deploy) |
-| `~/.boring/scripts/scaffold-conv-monitor.sh` | Scaffold conv-monitor for a project |
-| `~/.boring/scripts/worker-commit.sh` | Structured commit helper for flat workers |
-| `~/.boring/scripts/worker-message.sh` | Inter-worker messaging (send/read) |
-| `~/.boring/scripts/worker-bus-emit.sh` | Worker → bus message emitter |
-| `~/.boring/scripts/worker-outbox-sync.sh` | Bus → per-worker outbox materializer |
-| `~/.boring/scripts/worker-inbox.sh` | Human-readable worker message summary |
+| `~/.claude-ops/templates/conv-monitor/` | Conv-monitor worker template |
+| `~/.claude-ops/templates/flat-worker/.commit-template.md` | Standardized worker commit format |
+| `~/.claude-ops/templates/flat-worker/types/implementer/` | Implementer type template (read-write, one-shot) |
+| `~/.claude-ops/templates/flat-worker/types/monitor/` | Monitor type template (read-only, perpetual, reports to chief-of-staff) |
+| `~/.claude-ops/templates/flat-worker/types/coordinator/` | Coordinator type template (full access, merge/deploy) |
+| `~/.claude-ops/scripts/scaffold-conv-monitor.sh` | Scaffold conv-monitor for a project |
+| `~/.claude-ops/scripts/worker-commit.sh` | Structured commit helper for flat workers |
+| `~/.claude-ops/scripts/worker-message.sh` | Inter-worker messaging (send/read) |
+| `~/.claude-ops/scripts/worker-bus-emit.sh` | Worker → bus message emitter |
+| `~/.claude-ops/scripts/worker-outbox-sync.sh` | Bus → per-worker outbox materializer |
+| `~/.claude-ops/scripts/worker-inbox.sh` | Human-readable worker message summary |
 
 ---
 
@@ -433,7 +433,7 @@ A production conversation anomaly monitor — a READ-ONLY flat worker that SSHes
 ### Scaffold for a New Project
 
 ```bash
-bash ~/.boring/scripts/scaffold-conv-monitor.sh \
+bash ~/.claude-ops/scripts/scaffold-conv-monitor.sh \
   --name conv-monitor \
   --host 120.77.216.196 \
   --ssh-pass 'your-ssh-password' \
@@ -451,7 +451,7 @@ This creates `.claude/workers/conv-monitor/` with:
 ### Launch
 
 ```bash
-bash ~/.boring/scripts/launch-flat-worker.sh conv-monitor
+bash ~/.claude-ops/scripts/launch-flat-worker.sh conv-monitor
 ```
 
 ### Customize
@@ -494,7 +494,7 @@ Standardized commit format and helper script for flat workers. Ensures every wor
 
 ### Commit Template
 
-Located at `~/.boring/templates/flat-worker/.commit-template.md`. Format:
+Located at `~/.claude-ops/templates/flat-worker/.commit-template.md`. Format:
 
 ```
 type(scope): short description [MISSION-ITEM]
@@ -520,7 +520,7 @@ Co-Authored-By: Claude sonnet <noreply@anthropic.com>
 
 ### worker-commit.sh
 
-Located at `~/.boring/scripts/worker-commit.sh`. Usage:
+Located at `~/.claude-ops/scripts/worker-commit.sh`. Usage:
 
 ```bash
 # Simple (auto-runs bun test + tsc)

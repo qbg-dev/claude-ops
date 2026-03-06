@@ -35,7 +35,7 @@
 set -euo pipefail
 
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_DIR="$HOME/.boring"
+SCRIPT_DIR="$HOME/.claude-ops"
 PASS=0; FAIL=0; SKIP=0
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ setup_test_env() {
   mkdir -p "$PROJECT_ROOT/.claude/harness/test-harness"
   mkdir -p "$PROJECT_ROOT/.claude/harness/other-harness"
   mkdir -p "$PROJECT_ROOT/.claude/scripts"
-  mkdir -p "$HOME/.boring/state"
+  mkdir -p "$HOME/.claude-ops/state"
 
   # Create minimal progress.json for both harnesses
   cat > "$PROJECT_ROOT/.claude/harness/test-harness/progress.json" <<'EOF'
@@ -760,14 +760,14 @@ test_scaffold_manifest_has_inbox() {
   bash "$SCRIPT_DIR/scripts/scaffold.sh" "scaffold-test" "$PROJECT_ROOT" > /dev/null 2>&1
 
   local manifest
-  manifest=$(cat "$HOME/.boring/harness/manifests/scaffold-test/manifest.json" 2>/dev/null || echo "")
+  manifest=$(cat "$HOME/.claude-ops/harness/manifests/scaffold-test/manifest.json" 2>/dev/null || echo "")
   assert_contains "$manifest" '"inbox"' "44. Scaffold manifest includes inbox"
   assert_contains "$manifest" '"outbox"' "45. Scaffold manifest includes outbox"
 
   # Cleanup scaffold artifacts
-  rm -rf "$HOME/.boring/harness/manifests/scaffold-test" 2>/dev/null || true
-  rm -rf "$HOME/.boring/harness/reports/scaffold-test" 2>/dev/null || true
-  rm -rf "$HOME/.boring/state/playwright/scaffold-test" 2>/dev/null || true
+  rm -rf "$HOME/.claude-ops/harness/manifests/scaffold-test" 2>/dev/null || true
+  rm -rf "$HOME/.claude-ops/harness/reports/scaffold-test" 2>/dev/null || true
+  rm -rf "$HOME/.claude-ops/state/playwright/scaffold-test" 2>/dev/null || true
   cleanup_test_env
 }
 
@@ -999,8 +999,8 @@ print(json.dumps({
 ")
 
   # Set up session registry
-  echo '{"test-session":"test-harness"}' > "$HOME/.boring/state/session-registry.json"
-  mkdir -p "$HOME/.boring/state/activity"
+  echo '{"test-session":"test-harness"}' > "$HOME/.claude-ops/state/session-registry.json"
+  mkdir -p "$HOME/.claude-ops/state/activity"
 
   export INBOX_FILE_EDIT_TRACKING=true
   export HARNESS="test-harness"

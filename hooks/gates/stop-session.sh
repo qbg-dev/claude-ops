@@ -22,9 +22,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-source "$HOME/.boring/lib/pane-resolve.sh"
+source "$HOME/.claude-ops/lib/pane-resolve.sh"
 
-HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.boring/state}"
+HARNESS_STATE_DIR="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}"
 STOP_CHECK_BLAST_RADIUS_THRESHOLD="${STOP_CHECK_BLAST_RADIUS_THRESHOLD:-10}"
 HARNESS_XML="$PROJECT_ROOT/.claude/repo-context.xml"
 
@@ -472,11 +472,11 @@ if [ -f "$_MEMORY_FILE" ]; then
     date +%s > "$_SESSION_START_FILE" 2>/dev/null || true
   elif [ "$_MEM_MTIME" -gt "$_START_TS" ]; then
     # MEMORY.md was modified during this session — publish observability event
-    if [ -f "$HOME/.boring/lib/event-bus.sh" ]; then
+    if [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then
       _mem_ev_payload=$(jq -nc --arg a "${_END_HARNESS:-unknown}" --arg src "agent" --arg sid "$SESSION_ID" \
         '{agent:$a, source:$src, session_id:$sid}' 2>/dev/null || true)
       if [ -n "$_mem_ev_payload" ]; then
-        (source "$HOME/.boring/lib/event-bus.sh" 2>/dev/null && \
+        (source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null && \
           bus_publish "agent.memory-updated" "$_mem_ev_payload" 2>/dev/null || true) &
         disown 2>/dev/null || true
       fi
@@ -485,7 +485,7 @@ if [ -f "$_MEMORY_FILE" ]; then
 fi
 
 if [ "${EVENT_BUS_ENABLED:-false}" = "true" ]; then
-  source "$HOME/.boring/lib/event-bus.sh" 2>/dev/null || true
+  source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null || true
   bus_publish "session-end" "$(jq -nc \
     --arg sid "$SESSION_ID" \
     --arg harness "${_END_HARNESS:-}" \

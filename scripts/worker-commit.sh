@@ -252,9 +252,9 @@ fi
 # Detect model from environment (best-effort)
 # ──────────────────────────────────────────────────────────────────────
 
-MODEL_NAME="sonnet"
+MODEL_NAME="opus"
 if [ -f "$REGISTRY" ]; then
-  _REG_MODEL=$(jq -r --arg n "$WORKER_NAME" '.[$n].model // "sonnet"' "$REGISTRY" 2>/dev/null || echo "sonnet")
+  _REG_MODEL=$(jq -r --arg n "$WORKER_NAME" '.[$n].model // "opus"' "$REGISTRY" 2>/dev/null || echo "opus")
   [ -n "$_REG_MODEL" ] && [ "$_REG_MODEL" != "null" ] && MODEL_NAME="$_REG_MODEL"
 fi
 
@@ -311,7 +311,7 @@ echo "Committed: $COMMIT_SHA on $BRANCH"
 # ──────────────────────────────────────────────────────────────────────
 
 if [ -f "$REGISTRY" ]; then
-  _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+  _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
   mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
   _WAIT=0
   while ! mkdir "$_LOCK_DIR" 2>/dev/null; do

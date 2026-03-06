@@ -3,7 +3,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/helpers.sh"
-source "$HOME/.boring/lib/harness-jq.sh"
+source "$HOME/.claude-ops/lib/harness-jq.sh"
 
 FIXTURES="$(dirname "$0")/fixtures"
 # Wave test uses its own v2 fixture directory
@@ -100,20 +100,20 @@ rm -rf "$TMP_DIR"
 
 RESULT=$(harness_wave_report_path "$WAVE_PROGRESS" 2)
 assert "wave_report_path contains wave number" "wave-2.html" "$RESULT"
-assert "wave_report_path is under reports dir" ".boring/harness/reports/" "$RESULT"
+assert "wave_report_path is under reports dir" ".claude-ops/harness/reports/" "$RESULT"
 
 # ══════════════════════════════════════════════════════
 # Wave report + final report templates exist
 # ══════════════════════════════════════════════════════
 
-assert_file_exists "wave-report.html.tmpl exists" "$HOME/.boring/templates/wave-report.html.tmpl"
-assert_file_exists "report.css exists" "$HOME/.boring/templates/report.css"
+assert_file_exists "wave-report.html.tmpl exists" "$HOME/.claude-ops/templates/wave-report.html.tmpl"
+assert_file_exists "report.css exists" "$HOME/.claude-ops/templates/report.css"
 
 # ══════════════════════════════════════════════════════
 # Seed template has Wave Protocol section
 # ══════════════════════════════════════════════════════
 
-assert_file_contains "seed.sh template has Wave Protocol" "$HOME/.boring/templates/seed.sh.tmpl" "Wave protocol"
+assert_file_contains "seed.sh template has Wave Protocol" "$HOME/.claude-ops/templates/seed.sh.tmpl" "Wave protocol"
 
 # Cleanup
 rm -f "$WAVE_PROGRESS"

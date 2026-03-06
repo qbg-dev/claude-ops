@@ -46,8 +46,8 @@ done
 COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 
 # ── Source event bus (handles worktree → main repo resolution) ───
-# Try ~/.claude-ops/lib first, then ~/.boring/lib (same place via symlink)
-_LIB_DIR="${CLAUDE_OPS_DIR:-${BORING_DIR:-$HOME/.boring}}/lib"
+# Try ~/.claude-ops/lib first, then ~/.claude-ops/lib (same place via symlink)
+_LIB_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/lib"
 if [ -f "$_LIB_DIR/event-bus.sh" ]; then
   source "$_LIB_DIR/event-bus.sh"
 elif [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then

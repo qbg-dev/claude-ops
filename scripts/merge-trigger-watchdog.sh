@@ -8,7 +8,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 TRIGGER="$PROJECT_ROOT/.claude/workers/.merge-trigger"
-PANE_REG="${HARNESS_STATE_DIR:-${HOME}/.boring/state}/pane-registry.json"
+PANE_REG="${HARNESS_STATE_DIR:-${HOME}/.claude-ops/state}/pane-registry.json"
 FLAT_REG="$PROJECT_ROOT/.claude/workers/registry.json"
 POLL_INTERVAL="${POLL_INTERVAL:-1}"
 

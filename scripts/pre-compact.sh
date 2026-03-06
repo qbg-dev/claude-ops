@@ -57,7 +57,7 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 # Override: resolve identity from pane-registry using SESSION_ID.
 # Authoritative when Claude Code runs the hook from a wrong CWD.
-PANE_REGISTRY="${HARNESS_STATE_DIR:-$HOME/.boring/state}/pane-registry.json"
+PANE_REGISTRY="${HARNESS_STATE_DIR:-$HOME/.claude-ops/state}/pane-registry.json"
 if [ -n "$SESSION_ID" ] && [ -f "$PANE_REGISTRY" ]; then
   _REG_WORKER_NAME=$(jq -r --arg sid "$SESSION_ID" \
     '[.panes | to_entries[] | select(.value.session_id == $sid)] | first | .value.worker // ""' \

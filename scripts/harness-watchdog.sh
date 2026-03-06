@@ -160,6 +160,42 @@ _check_scrollback_stuck() {
   echo 0
 }
 
+# ── Notify chief-of-staff when a non-perpetual worker has no Claude process ──
+# Debounced: only sends once per incident via a flag file.
+# Cleared when the worker is confirmed alive again.
+_notify_chief_of_staff_dead_worker() {
+  local worker="$1" state="$2" detail="${3:-}"
+  local runtime; runtime=$(_worker_runtime "$worker")
+  local flag="$runtime/cos-notified"
+
+  # Debounce — only notify once per incident
+  [ -f "$flag" ] && return
+
+  local cos_inbox="$PROJECT_ROOT/.claude/workers/chief-of-staff/inbox.jsonl"
+  [ ! -d "$(dirname "$cos_inbox")" ] && { _log "NOTIFY-COS-ERR: chief-of-staff inbox dir not found"; return; }
+
+  local ts; ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local content="Worker '${worker}' (pane ${pane_id:-unknown}) has no active Claude process — ${state}. ${detail}Consider calling \`deregister\` to remove it from the registry, or restart it manually."
+
+  jq -n \
+    --arg worker "$worker" \
+    --arg state "$state" \
+    --arg content "$content" \
+    --arg ts "$ts" \
+    '{to:"worker/chief-of-staff",from:"worker/watchdog",from_name:"watchdog",content:$content,summary:("Worker " + $worker + " offline: " + $state),msg_type:"message",channel:"worker-watchdog",_ts:$ts}' \
+    >> "$cos_inbox" 2>/dev/null || { _log "NOTIFY-COS-ERR: failed to append to inbox"; return; }
+
+  touch "$flag"
+  _log "NOTIFY-COS: $worker — dead-worker alert sent to chief-of-staff inbox ($state)"
+}
+
+# ── Clear chief-of-staff notification flag when worker is alive again ─
+_clear_cos_notified() {
+  local worker="$1"
+  local runtime; runtime=$(_worker_runtime "$worker")
+  rm -f "$runtime/cos-notified" 2>/dev/null || true
+}
+
 # ── Kill Claude process tree in a pane ─────────────────────────────
 _kill_claude_in_pane() {
   local pane_id="$1"
@@ -179,8 +215,8 @@ _build_claude_cmd() {
   local worker="$1"
   local session_id="${2:-}"
 
-  local model; model=$(jq -r --arg n "$worker" '.[$n].model // "sonnet"' "$REGISTRY" 2>/dev/null)
-  [ "$model" = "null" ] && model="sonnet"
+  local model; model=$(jq -r --arg n "$worker" '.[$n].model // "opus"' "$REGISTRY" 2>/dev/null)
+  [ "$model" = "null" ] && model="opus"
   local perm_mode; perm_mode=$(jq -r --arg n "$worker" '.[$n].permission_mode // "bypassPermissions"' "$REGISTRY" 2>/dev/null)
   [ "$perm_mode" = "null" ] && perm_mode="bypassPermissions"
   local disallowed; disallowed=$(jq -r --arg n "$worker" '.[$n].disallowed_tools // [] | join(",")' "$REGISTRY" 2>/dev/null)
@@ -220,7 +256,7 @@ _resume_in_pane() {
 
   # 4. Stamp last_cycle_at = now so next watchdog pass skips (prevents kill-loop)
   local _now_iso; _now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  local _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+  local _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
   mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
   local _WAIT=0
   while ! mkdir "$_LOCK_DIR" 2>/dev/null; do sleep 0.5; _WAIT=$((_WAIT+1)); [ "$_WAIT" -ge 10 ] && break; done
@@ -287,7 +323,7 @@ _resume_in_pane() {
 # ── Registry update helper ────────────────────────────────────────
 _registry_update_pane() {
   local worker="$1" pane_id="$2" pane_target="$3"
-  local _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.boring/state/locks}/worker-registry"
+  local _LOCK_DIR="${HARNESS_LOCK_DIR:-${HOME}/.claude-ops/state/locks}/worker-registry"
   mkdir -p "$(dirname "$_LOCK_DIR")" 2>/dev/null || true
   local _WAIT=0
   while ! mkdir "$_LOCK_DIR" 2>/dev/null; do
@@ -362,6 +398,12 @@ check_worker() {
   # Read perpetual flag early (needed to decide what to do with pane_id=null)
   local perpetual; perpetual=$(jq -r --arg n "$worker" '.[$n].perpetual // false' "$REGISTRY" 2>/dev/null)
 
+  # Skip workers in standby mode — they're intentionally dormant
+  local status; status=$(jq -r --arg n "$worker" '.[$n].status // "idle"' "$REGISTRY" 2>/dev/null)
+  if [ "$status" = "standby" ]; then
+    return
+  fi
+
   # No pane registered: launch perpetual workers, skip non-perpetual
   if [ -z "$pane_id" ]; then
     if [ "$perpetual" = "true" ]; then
@@ -396,6 +438,7 @@ check_worker() {
       # Command actively executing — not stuck, clear any stale marker
       local runtime; runtime=$(_worker_runtime "$worker")
       rm -f "$runtime/stuck-candidate" 2>/dev/null || true
+      _clear_cos_notified "$worker"
       return
     fi
 
@@ -413,7 +456,13 @@ check_worker() {
         wt_dir=$(jq -r --arg n "$worker" '.[$n].worktree // empty' "$REGISTRY" 2>/dev/null)
         _relaunch_claude "$worker" "$pane_id" "${wt_dir:-$PROJECT_ROOT}"
         return 1  # signal respawn happened (for stagger)
+      else
+        _log "BARE-SHELL-NONPERP: $worker (pane $pane_id) — no Claude TUI, notifying chief-of-staff"
+        _notify_chief_of_staff_dead_worker "$worker" "bare-shell" "Pane $pane_id exists but Claude process is not running. "
       fi
+    else
+      # Claude TUI is present — clear any stale cos-notified flag
+      _clear_cos_notified "$worker"
     fi
 
     # Check for graceful sleep (worker used recycle MCP tool or finished cycle)
@@ -476,9 +525,10 @@ check_worker() {
 
   # ── Pane is dead ──
 
-  # Non-perpetual workers: just log and skip
+  # Non-perpetual workers: notify chief-of-staff, don't respawn
   if [ "$perpetual" != "true" ]; then
-    _log "SKIP: $worker — perpetual:false, not respawning"
+    _log "DEAD-NONPERP: $worker (pane $pane_id) — not respawning, notifying chief-of-staff"
+    _notify_chief_of_staff_dead_worker "$worker" "dead pane" "Pane $pane_id no longer exists in tmux. "
     return
   fi
 

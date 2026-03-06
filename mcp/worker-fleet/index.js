@@ -19481,13 +19481,13 @@ var WORKERS_DIR = join(PROJECT_ROOT, ".claude/workers");
 function _setWorkersDir(dir) {
   WORKERS_DIR = dir;
 }
-var BORING_DIR = process.env.BORING_DIR || join(HOME, ".boring");
-var HARNESS_LOCK_DIR = join(BORING_DIR, "state/locks");
+var CLAUDE_OPS_DIR = process.env.CLAUDE_OPS_DIR || join(HOME, ".claude-ops");
+var HARNESS_LOCK_DIR = join(CLAUDE_OPS_DIR, "state/locks");
 var REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
 var WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
 var CHECK_WORKERS_SH = join(CLAUDE_OPS, "scripts/check-flat-workers.sh");
 var RELAY_PORT = parseInt(process.env.RELAY_PORT || "3847", 10);
-var RELAY_SECRET_PATH = join(BORING_DIR, "relay-secret");
+var RELAY_SECRET_PATH = join(CLAUDE_OPS_DIR, "relay-secret");
 var RELAY_SERVER_PATH = join(CLAUDE_OPS, "mcp/relay-server/index.ts");
 var REMOTE_RELAY_URL = process.env.REMOTE_RELAY_URL || "";
 var PROJECT_SLUG = basename(PROJECT_ROOT);
@@ -20687,7 +20687,7 @@ server.registerTool("update_state", { description: "Persist your own state acros
 `;
     });
     try {
-      const cacheDir = join(process.env.HOME || "/tmp", ".boring/state/harness-runtime/worker", WORKER_NAME);
+      const cacheDir = join(process.env.HOME || "/tmp", ".claude-ops/state/harness-runtime/worker", WORKER_NAME);
       if (!existsSync(cacheDir))
         mkdirSync(cacheDir, { recursive: true });
       writeFileSync(join(cacheDir, "config-cache.json"), stateJson);

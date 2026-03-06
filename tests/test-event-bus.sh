@@ -34,7 +34,7 @@ cp "$HOME/Desktop/zPersonalProjects/Wechat/.claude/bus/schema.json" "$TEST_BUS_D
 # Initialize seq.json
 echo '{"global": 0}' > "$TEST_BUS_DIR/seq.json"
 
-source "$HOME/.boring/lib/event-bus.sh"
+source "$HOME/.claude-ops/lib/event-bus.sh"
 
 # Re-export after sourcing (library sets these from BUS_DIR)
 BUS_STREAM="$TEST_BUS_DIR/stream.jsonl"
