@@ -123,7 +123,7 @@ _check_scrollback_stuck() {
   last_line=$(echo "$content" | tail -1)
   local hash_file="$runtime/scrollback-hash"
 
-  if echo "$last_line" | grep -qF 'bypass permissions' && ! echo "$last_line" | grep -qF '(running)'; then
+  if echo "$last_line" | grep -qF 'bypass permissions'; then
     # Statusline looks idle — use scrollback diff to detect actual activity
     local current_hash
     current_hash=$(echo "$content" | md5 2>/dev/null || echo "$content" | md5sum 2>/dev/null | cut -d' ' -f1)
