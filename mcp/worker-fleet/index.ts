@@ -2,13 +2,13 @@
 /**
  * worker-fleet MCP server — Tools for worker fleet coordination.
  *
- * 17 tools in 5 categories:
+ * 15 tools in 5 categories:
  *   Messaging (2):  send_message (ack system: fyi, in_reply_to), read_inbox
  *   Tasks (3):      create_task, update_task, list_tasks
  *   State (2):      get_worker_state, update_state
  *   Fleet (1):      fleet_status
- *   Lifecycle (5):  recycle, spawn_child, heartbeat, check_config, reload
- *   Management (4): create_worker, deregister, standby, rename
+ *   Lifecycle (4):  recycle, heartbeat, check_config, reload
+ *   Management (3): create_worker, deregister, standby
  *
  * Task CRUD and inbox are native TS (no shell subprocess).
  * Messaging writes inbox first (durable), then fires bus (best-effort).
@@ -23,7 +23,7 @@ import { z } from "zod";
 import {
   readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync,
   readdirSync, openSync, fstatSync, statSync, readSync, closeSync, truncateSync,
-  lstatSync, rmSync, copyFileSync, renameSync, cpSync,
+  lstatSync, rmSync, copyFileSync, cpSync,
 } from "fs";
 import { join, basename } from "path";
 import { execSync, spawnSync } from "child_process";
@@ -134,7 +134,7 @@ interface RegistryWorkerEntry {
   report_to?: string | null;
   assigned_by?: string | null;  // deprecated alias for report_to
   parent?: string | null;       // deprecated alias for report_to
-  forked_from?: string | null;  // set when spawned via spawn_child
+  forked_from?: string | null;  // set when created with fork_from_session=true
 
   // Optional commit tracking
   last_commit_sha?: string;
@@ -570,7 +570,7 @@ function writeToInbox(
   }
 }
 
-/** Resolve recipient — worker name, "parent", "children", or raw pane ID */
+/** Resolve recipient — worker name, "report", "direct_reports", or raw pane ID */
 function resolveRecipient(to: string): {
   type: "worker" | "pane" | "multi_pane";
   workerName?: string;
@@ -583,8 +583,8 @@ function resolveRecipient(to: string): {
     return { type: "pane", paneId: to };
   }
 
-  // "parent" — find who this worker reports to (report_to → assigned_by → parent → mission_authority)
-  if (to === "parent") {
+  // "report" — find who this worker reports to (report_to → assigned_by → parent → mission_authority)
+  if (to === "report") {
     try {
       const registry = readRegistry();
       const config = registry._config as RegistryConfig;
@@ -606,8 +606,8 @@ function resolveRecipient(to: string): {
     }
   }
 
-  // "children" / "reports" — find all workers who report_to this worker
-  if (to === "children" || to === "reports") {
+  // "direct_reports" — find all workers who report_to this worker
+  if (to === "direct_reports") {
     try {
       const registry = readRegistry();
       const config = registry._config as RegistryConfig;
@@ -769,9 +769,9 @@ If your inbox has a message from Warren or chief-of-staff, prioritize it over yo
 | \`update_state(key, value)\` | Update your state in registry.json + emit bus event |
 | \`fleet_status()\` | Full fleet overview (all workers) |
 | \`recycle(message?)\` | Self-recycle: write handoff, restart fresh with new context |
-| \`spawn_child(task?)\` | Fork yourself into a new pane to the right |
+| \`create_worker(name, mission, launch=true, fork_from_session=true)\` | Fork yourself into a new worker with your conversation context |
 | \`heartbeat(cycles_completed?, extra?)\` | Call at start of each cycle: auto-registers pane + stamps last_cycle_at, status, cycles_completed |
-| \`rename(new_name)\` | Self-rename: updates git branch, worktree, worker dir, and registry. Requires \`recycle()\` after to pick up new WORKER_NAME |
+| \`deregister(name)\` | Remove a worker from the registry (rename = create_worker + deregister) |
 | \`reload()\` | Hot-restart: exit + resume same session to pick up new MCP config |
 
 These are native MCP tool calls — no bash wrappers needed.
@@ -913,7 +913,7 @@ function runDiagnostics(): DiagnosticIssue[] {
       issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json. Call heartbeat() to fix.`, fix: "Call heartbeat() immediately" });
     }
   } else {
-    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — you are not registered with the fleet. Messaging, watchdog monitoring, spawn_child, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call heartbeat()" });
+    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — you are not registered with the fleet. Messaging, watchdog monitoring, and recycle will NOT work.", fix: "Launch via launch-flat-worker.sh or call heartbeat()" });
   }
 
   // ── Registry linter ──
@@ -1029,8 +1029,8 @@ const server = new McpServer({
 
 server.registerTool(
   "send_message",
-  { description: `Primary inter-worker communication. Messages require a reply by default — the recipient is reminded at recycle/standby if they haven't replied. Use fyi=true for informational messages that don't need a response. Use in_reply_to with a msg_id to acknowledge a message you received. Writes to the recipient's durable inbox (survives restarts) and delivers instantly via tmux if the pane is live. Use to="all" to broadcast fleet-wide (expensive — use sparingly). Use to="parent" to message who you report_to. Use to="reports"/"children" to message all workers who report_to you.`, inputSchema: {
-    to: z.string().describe("Worker name, 'parent', 'reports' (or 'children'), 'all' (broadcast to every worker), or raw pane ID '%NN'"),
+  { description: `Primary inter-worker communication. Messages require a reply by default — the recipient is reminded at recycle/standby if they haven't replied. Use fyi=true for informational messages that don't need a response. Use in_reply_to with a msg_id to acknowledge a message you received. Writes to the recipient's durable inbox (survives restarts) and delivers instantly via tmux if the pane is live. Use to="all" to broadcast fleet-wide (expensive — use sparingly). Use to="report" to message who you report_to. Use to="direct_reports" to message all workers who report_to you.`, inputSchema: {
+    to: z.string().describe("Worker name, 'report', 'direct_reports', 'all' (broadcast to every worker), or raw pane ID '%NN'"),
     content: z.string().describe("Message content"),
     summary: z.string().describe("Short preview (5-10 words)"),
     fyi: z.boolean().optional().describe("If true, no reply expected — informational only (default: false = reply expected)"),
@@ -1092,21 +1092,21 @@ server.registerTool(
         }
       }
       let result = successes.length > 0
-        ? `Sent to ${successes.length} children: ${successes.join(", ")}`
-        : "No live children to deliver to";
+        ? `Sent to ${successes.length} direct reports: ${successes.join(", ")}`
+        : "No live direct reports to deliver to";
       if (dead.length > 0) result += `\nDead panes (skipped): ${dead.join(", ")}`;
       if (failures.length > 0) result += `\nFailed: ${failures.join(", ")}`;
       return { content: [{ type: "text" as const, text: result }], isError: successes.length === 0 };
     }
 
-    // Raw pane ID or parent pane — tmux-only delivery (no inbox)
+    // Raw pane ID or report pane — tmux-only delivery (no inbox)
     if (resolved.type === "pane") {
       if (!isPaneAlive(resolved.paneId!)) {
         return { content: [{ type: "text" as const, text: `Error: Pane ${resolved.paneId} is dead (not found in tmux)` }], isError: true };
       }
       try {
         tmuxSendMessage(resolved.paneId!, `[msg from ${WORKER_NAME}] ${content}`);
-        const label = to === "parent" ? `parent (pane ${resolved.paneId})` : `pane ${resolved.paneId}`;
+        const label = to === "report" ? `report (pane ${resolved.paneId})` : `pane ${resolved.paneId}`;
         return { content: [{ type: "text" as const, text: `Sent to ${label} (tmux-only, no inbox)` }] };
       } catch (e: any) {
         return { content: [{ type: "text" as const, text: `Error sending to pane: ${e.message}` }], isError: true };
@@ -1550,7 +1550,7 @@ server.registerTool(
 
 server.registerTool(
   "fleet_status",
-  { description: "Snapshot of every worker's health — pane alive, status, last cycle, recent commits. Use to understand the fleet before spawning children, to check if a recipient worker is actually running before messaging, or to diagnose why something isn't responding." },
+  { description: "Snapshot of every worker's health — pane alive, status, last cycle, recent commits. Use to understand the fleet before spawning workers, to check if a recipient worker is actually running before messaging, or to diagnose why something isn't responding." },
   async () => {
     try {
       // All reads + prunes inside one lock to avoid TOCTOU race
@@ -1661,7 +1661,7 @@ function _replaceMemorySection(existing: string, section: string, content: strin
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// LIFECYCLE TOOLS (4) — recycle, spawn_child, heartbeat, check_config
+// LIFECYCLE TOOLS (4) — recycle, heartbeat, check_config, reload
 // ═══════════════════════════════════════════════════════════════════
 
 server.registerTool(
@@ -1863,154 +1863,6 @@ rm -f "${recycleScript}"
           `Seed: ${seedFile}\n` +
           `Do NOT send any more tool calls — /exit will be sent shortly.` +
           pendingWarning,
-      }],
-    };
-  }
-);
-
-server.registerTool(
-  "spawn_child",
-  { description: "Fork yourself into a new pane with a meaningful name. The child inherits your conversation context, creates its own worktree, and works independently. Use for parallel subtasks — research + implementation, testing multiple approaches, or delegating work.", inputSchema: {
-    name: z.string().describe("Meaningful kebab-case name for the child (e.g. 'swagger-audit', 'fix-pagination'). NOT auto-generated."),
-    task: z.string().optional().describe("Task/instruction to inject into the child after it starts"),
-  } },
-  async ({ name: childName, task }) => {
-    // 1. Find own pane
-    const ownPane = findOwnPane();
-    if (!ownPane) {
-      return { content: [{ type: "text" as const, text: "Error: Could not find own pane in registry. Are you running in tmux?" }], isError: true };
-    }
-
-    // 2. Get session ID from pane-map
-    const sessionId = getSessionId(ownPane.paneId);
-    if (!sessionId) {
-      return { content: [{ type: "text" as const, text: `Error: No session ID found for pane ${ownPane.paneId}. Statusline may not have mapped it yet — wait a few seconds and retry.` }], isError: true };
-    }
-
-    // 3. Get model and construct flags
-    const model = getWorkerModel();
-    const workerDir = join(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
-    const extraFlags = `--model ${model} --dangerously-skip-permissions --add-dir ${workerDir}`;
-
-    // 4. Split pane to the right (horizontal split)
-    let childPaneId: string;
-    try {
-      const splitResult = execSync(
-        `tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}'`,
-        { encoding: "utf-8", timeout: 5000 }
-      ).trim();
-      childPaneId = splitResult;
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error splitting pane: ${e.message}` }], isError: true };
-    }
-
-    if (!childPaneId || !childPaneId.startsWith("%")) {
-      return { content: [{ type: "text" as const, text: `Error: unexpected child pane ID: ${childPaneId}` }], isError: true };
-    }
-
-    // 5. Register child in registry.json (flat org — report_to + forked_from)
-    const childWorkerName = childName;
-    try {
-      let childPaneTarget = "";
-      try {
-        childPaneTarget = execSync(
-          `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`,
-          { encoding: "utf-8", timeout: 5000 }
-        ).trim();
-      } catch {}
-
-      // Create worker dir for the child
-      const childWorkerDir = join(WORKERS_DIR, childWorkerName);
-      if (!existsSync(childWorkerDir)) {
-        mkdirSync(childWorkerDir, { recursive: true });
-      }
-
-      withRegistryLocked((registry) => {
-        ensureWorkerInRegistry(registry, childWorkerName);
-        const childEntry = registry[childWorkerName] as RegistryWorkerEntry;
-        childEntry.pane_id = childPaneId;
-        childEntry.pane_target = childPaneTarget;
-        childEntry.report_to = WORKER_NAME;
-        childEntry.forked_from = WORKER_NAME;
-        childEntry.model = getWorkerModel();
-        childEntry.tmux_session = ownPane.paneTarget?.split(":")[0] || "w";
-      });
-    } catch (e: any) {
-      // Non-fatal — child can still work without registration
-    }
-
-    // 6. Create worktree for isolated code
-    const projectName = PROJECT_ROOT.split("/").pop()!;
-    const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${childWorkerName}`);
-    const childBranch = `worker/${childWorkerName}`;
-    let worktreeReady = false;
-    try {
-      if (!existsSync(worktreeDir)) {
-        // Create branch if needed
-        try { execSync(`git -C "${PROJECT_ROOT}" branch "${childBranch}" HEAD 2>/dev/null`, { timeout: 5000 }); } catch {}
-        execSync(`git -C "${PROJECT_ROOT}" worktree add "${worktreeDir}" "${childBranch}"`, { encoding: "utf-8", timeout: 10000 });
-      }
-      worktreeReady = true;
-    } catch {}
-
-    // 6b. Copy session data to new worktree's project dir (so claude can launch from there)
-    if (worktreeReady && sessionId) {
-      try {
-        const parentSlug = PROJECT_ROOT.replace(/\//g, "-");
-        const newSlug = worktreeDir.replace(/\//g, "-");
-        const parentProj = join(HOME, ".claude/projects", parentSlug);
-        const newProj = join(HOME, ".claude/projects", newSlug);
-        mkdirSync(newProj, { recursive: true });
-        const jsonlSrc = join(parentProj, `${sessionId}.jsonl`);
-        if (existsSync(jsonlSrc)) copyFileSync(jsonlSrc, join(newProj, `${sessionId}.jsonl`));
-        const subdirSrc = join(parentProj, sessionId);
-        if (existsSync(subdirSrc)) cpSync(subdirSrc, join(newProj, sessionId), { recursive: true });
-      } catch {} // non-fatal — fork will start fresh if copy fails
-    }
-
-    // 7. Build task prompt — prepend worktree setup instructions
-    const setupPrefix = worktreeReady
-      ? `You are worker "${childWorkerName}". Your isolated worktree is at ${worktreeDir}.\n\n`
-      : `You are worker "${childWorkerName}". Create your worktree first: git worktree add ${worktreeDir} worker/${childWorkerName}\n\n`;
-    const fullTask = task ? setupPrefix + task : setupPrefix + "Awaiting instructions.";
-    const taskFile = `/tmp/child-task-${childWorkerName}-${Date.now()}.txt`;
-    writeFileSync(taskFile, fullTask);
-
-    // Fork command — pipe task via stdin at launch so it's the first message.
-    // fork-worker.sh uses --cwd to launch from the worktree dir.
-    const cwdFlag = worktreeReady ? ` --cwd ${worktreeDir}` : "";
-    const forkCmd = `bash ${join(CLAUDE_OPS, "scripts/fork-worker.sh")} ${ownPane.paneId} ${sessionId} --name ${childWorkerName} --no-worktree${cwdFlag} ${extraFlags}`;
-    const launchCmd = `cat ${taskFile} | ${forkCmd}`;
-
-    // Spawn script: small delay for pane to be ready, then launch with piped stdin
-    const spawnScript = `/tmp/spawn-child-${WORKER_NAME}-${Date.now()}.sh`;
-    writeFileSync(spawnScript, `#!/bin/bash
-# Auto-generated spawn script for ${childWorkerName} (child of ${WORKER_NAME})
-CHILD_PANE="${childPaneId}"
-TASK_FILE="${taskFile}"
-sleep 1
-# Pipe task via stdin at launch — reliable, no TUI paste timing issues
-tmux send-keys -t "$CHILD_PANE" "${launchCmd}" && tmux send-keys -t "$CHILD_PANE" -H 0d
-rm -f "$TASK_FILE" "${spawnScript}"
-`);
-
-    // 8. Spawn in background
-    try {
-      execSync(`nohup bash "${spawnScript}" > /tmp/spawn-child-${childWorkerName}.log 2>&1 &`, {
-        shell: "/bin/bash", timeout: 5000,
-      });
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error spawning child launcher: ${e.message}` }], isError: true };
-    }
-
-    const taskMsg = task ? `\nTask: "${task.slice(0, 80)}${task.length > 80 ? "..." : ""}"` : "";
-    return {
-      content: [{
-        type: "text" as const,
-        text: `Spawned "${childWorkerName}" in pane ${childPaneId} (split right of ${ownPane.paneTarget}).\n` +
-          `Worktree: ${worktreeReady ? worktreeDir : "NOT CREATED (manual setup needed)"}\n` +
-          `Session fork from: ${sessionId}\n` +
-          `Model: ${model}${taskMsg}`,
       }],
     };
   }
@@ -2324,7 +2176,7 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
 
 server.registerTool(
   "create_worker",
-  { description: "Spin up a new persistent worker with its own mission, memory, and task list. Use when you've identified a domain of work that warrants a dedicated agent — ongoing monitoring, specialized repair, continuous optimization. Set launch=true to start it immediately in a new tmux pane.", inputSchema: {
+  { description: "Spin up a new persistent worker with its own mission, memory, and task list. Use when you've identified a domain of work that warrants a dedicated agent — ongoing monitoring, specialized repair, continuous optimization. Set launch=true to start it immediately. Set fork_from_session=true to fork your current conversation context (inherits what you know). Set placement to control where the pane appears.", inputSchema: {
     name: z.string().describe("Worker name in kebab-case (e.g. 'chatbot-fix')"),
     mission: z.string().describe("Full mission.md content (markdown)"),
     model: z.enum(["sonnet", "opus", "haiku"]).optional().describe("LLM model (default: opus)"),
@@ -2336,9 +2188,18 @@ server.registerTool(
     permission_mode: z.string().optional().describe("Claude permission mode (default: bypassPermissions)"),
     launch: z.boolean().optional().describe("Auto-launch in tmux after creation (default: false)"),
     tasks: z.string().optional().describe("JSON array of tasks: [{subject, description?, priority?}]"),
+    fork_from_session: z.boolean().optional().describe("Fork the caller's Claude session so the new worker inherits conversation context (default: false). Requires launch=true."),
+    direct_report: z.boolean().optional().describe("Set report_to to the calling worker instead of mission_authority (default: false)"),
+    placement: z.enum(["window", "beside", "new-window"]).optional().describe("Where to place the pane: 'window' (join named window group, default), 'beside' (split next to caller), 'new-window' (fresh named window)"),
   } },
-  async ({ name, mission, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, assigned_by, permission_mode, launch, tasks: tasksJson }) => {
+  async ({ name, mission, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, assigned_by, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report, placement }) => {
     try {
+      // Change 4: Enforce unique worker names
+      const existingRegistry = readRegistry();
+      if (existingRegistry[name] && name !== "_config") {
+        return { content: [{ type: "text" as const, text: `Error: Worker '${name}' already exists in registry. Choose a unique name.` }], isError: true };
+      }
+
       // Parse tasks JSON if provided
       let taskEntries: Array<{ subject: string; description?: string; priority?: string }> = [];
       if (tasksJson) {
@@ -2372,11 +2233,21 @@ server.registerTool(
         }
       }
 
+      // Validate fork_from_session requires launch
+      if (fork_from_session && !launch) {
+        return { content: [{ type: "text" as const, text: `Error: fork_from_session=true requires launch=true` }], isError: true };
+      }
+
       // Create files
       const result = createWorkerFiles({ name, mission, model, perpetual, sleep_duration, disallowed_tools: disallowedTools, window: windowGroup, assigned_by, permission_mode, taskEntries });
       if (!result.ok) {
         return { content: [{ type: "text" as const, text: `Error: ${result.error}` }], isError: true };
       }
+
+      // Determine report_to
+      const reportTo = direct_report
+        ? WORKER_NAME
+        : (assigned_by || WORKER_NAME || "chief-of-staff");
 
       // Register in unified registry
       const { state, permissions, taskIds, model: selectedModel, perpetual: isPerpetual } = result as Required<CreateWorkerResult>;
@@ -2390,40 +2261,284 @@ server.registerTool(
         entry.perpetual = state.perpetual || false;
         entry.sleep_duration = state.sleep_duration || 1800;
         entry.cycles_completed = state.cycles_completed || 0;
-        // Window group
         if (permissions.window) {
           entry.window = permissions.window;
         }
-        // report_to: explicit param > calling worker > chief-of-staff
-        if (permissions.assigned_by) {
-          entry.report_to = permissions.assigned_by;
-        } else if (!entry.report_to && !entry.assigned_by) {
-          entry.report_to = WORKER_NAME || "chief-of-staff";
+        entry.report_to = reportTo;
+        if (fork_from_session) {
+          entry.forked_from = WORKER_NAME;
         }
       });
+
+      // Create worktree for the new worker
+      const projectName = PROJECT_ROOT.split("/").pop()!;
+      const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
+      const workerBranch = `worker/${name}`;
+      let worktreeReady = false;
+      try {
+        if (!existsSync(worktreeDir)) {
+          try { execSync(`git -C "${PROJECT_ROOT}" branch "${workerBranch}" HEAD 2>/dev/null`, { timeout: 5000 }); } catch {}
+          execSync(`git -C "${PROJECT_ROOT}" worktree add "${worktreeDir}" "${workerBranch}"`, { encoding: "utf-8", timeout: 10000 });
+        }
+        worktreeReady = true;
+      } catch {}
 
       // Optional launch
       let launchInfo = "";
       if (launch) {
-        const launchScript = join(CLAUDE_OPS, "scripts/launch-flat-worker.sh");
-        if (!existsSync(launchScript)) {
-          launchInfo = `\n  Launch: FAILED — script not found: ${launchScript}`;
-        } else {
-          const launchArgs = [launchScript, name, "--project", PROJECT_ROOT];
-          if (permissions.window) {
-            launchArgs.push("--window", permissions.window);
-          }
-          const launchResult = spawnSync("bash", launchArgs, {
-            encoding: "utf-8",
-            timeout: 120_000,
-            env: { ...process.env, PROJECT_ROOT },
-          });
-          if (launchResult.status === 0) {
-            const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
-            const paneId = paneMatch ? paneMatch[1] : "unknown";
-            launchInfo = `\n  Launched: pane ${paneId}`;
+        const effectivePlacement = placement || "window";
+
+        if (fork_from_session) {
+          // ── Fork path: inherit caller's conversation context ──
+          const ownPane = findOwnPane();
+          if (!ownPane) {
+            launchInfo = `\n  Launch: FAILED — could not find own pane (not in tmux?)`;
           } else {
-            launchInfo = `\n  Launch: FAILED (exit ${launchResult.status}) — ${(launchResult.stderr || "").slice(0, 200)}`;
+            const sessionId = getSessionId(ownPane.paneId);
+            if (!sessionId) {
+              launchInfo = `\n  Launch: FAILED — no session ID for pane ${ownPane.paneId}`;
+            } else {
+              // Copy session data to new worktree's project dir
+              if (worktreeReady) {
+                try {
+                  const parentSlug = PROJECT_ROOT.replace(/\//g, "-");
+                  const newSlug = worktreeDir.replace(/\//g, "-");
+                  const parentProj = join(HOME, ".claude/projects", parentSlug);
+                  const newProj = join(HOME, ".claude/projects", newSlug);
+                  mkdirSync(newProj, { recursive: true });
+                  const jsonlSrc = join(parentProj, `${sessionId}.jsonl`);
+                  if (existsSync(jsonlSrc)) copyFileSync(jsonlSrc, join(newProj, `${sessionId}.jsonl`));
+                  const subdirSrc = join(parentProj, sessionId);
+                  if (existsSync(subdirSrc)) cpSync(subdirSrc, join(newProj, sessionId), { recursive: true });
+                } catch {} // non-fatal
+              }
+
+              // Create pane based on placement
+              let childPaneId: string | null = null;
+              try {
+                if (effectivePlacement === "beside") {
+                  childPaneId = execSync(
+                    `tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`,
+                    { encoding: "utf-8", timeout: 5000 }
+                  ).trim();
+                } else if (effectivePlacement === "new-window") {
+                  const tmuxSession = ownPane.paneTarget?.split(":")[0] || "w";
+                  childPaneId = execSync(
+                    `tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`,
+                    { encoding: "utf-8", timeout: 5000 }
+                  ).trim();
+                } else {
+                  // "window" placement — split in named window group
+                  const tmuxSession = ownPane.paneTarget?.split(":")[0] || "w";
+                  const winName = windowGroup || "workers";
+                  // Check if window exists, create if not
+                  const winCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
+                  const windows = (winCheck.stdout || "").split("\n").map(w => w.trim());
+                  if (!windows.includes(winName)) {
+                    childPaneId = execSync(
+                      `tmux new-window -t "${tmuxSession}" -n "${winName}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`,
+                      { encoding: "utf-8", timeout: 5000 }
+                    ).trim();
+                  } else {
+                    childPaneId = execSync(
+                      `tmux split-window -t "${tmuxSession}:${winName}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`,
+                      { encoding: "utf-8", timeout: 5000 }
+                    ).trim();
+                    spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:${winName}`, "tiled"], { encoding: "utf-8" });
+                  }
+                }
+              } catch (e: any) {
+                launchInfo = `\n  Launch: FAILED — pane creation error: ${e.message}`;
+              }
+
+              if (childPaneId && childPaneId.startsWith("%")) {
+                // Register pane in registry
+                try {
+                  let childPaneTarget = "";
+                  try {
+                    childPaneTarget = execSync(
+                      `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`,
+                      { encoding: "utf-8", timeout: 5000 }
+                    ).trim();
+                  } catch {}
+                  withRegistryLocked((registry) => {
+                    const entry = registry[name] as RegistryWorkerEntry;
+                    if (entry) {
+                      entry.pane_id = childPaneId;
+                      entry.pane_target = childPaneTarget;
+                      entry.tmux_session = childPaneTarget?.split(":")[0] || "w";
+                    }
+                  });
+                } catch {}
+
+                // Build fork launch command
+                const workerModel = selectedModel || "opus";
+                const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
+                const extraFlags = `--model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
+                const cwdFlag = worktreeReady ? ` --cwd ${worktreeDir}` : "";
+                const forkCmd = `bash ${join(CLAUDE_OPS, "scripts/fork-worker.sh")} ${ownPane.paneId} ${sessionId} --name ${name} --no-worktree${cwdFlag} ${extraFlags}`;
+
+                // Build task prompt
+                const setupPrefix = worktreeReady
+                  ? `You are worker "${name}". Your isolated worktree is at ${worktreeDir}.\n\n`
+                  : `You are worker "${name}". Create your worktree first: git worktree add ${worktreeDir} worker/${name}\n\n`;
+                const taskText = mission.slice(0, 500);
+                const fullTask = setupPrefix + taskText;
+                const taskFile = `/tmp/create-worker-task-${name}-${Date.now()}.txt`;
+                writeFileSync(taskFile, fullTask);
+                const launchCmd = `cat ${taskFile} | ${forkCmd}`;
+
+                const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
+                writeFileSync(spawnScript, `#!/bin/bash
+sleep 1
+tmux send-keys -t "${childPaneId}" "${launchCmd}" && tmux send-keys -t "${childPaneId}" -H 0d
+rm -f "${taskFile}" "${spawnScript}"
+`);
+                try {
+                  execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, {
+                    shell: "/bin/bash", timeout: 5000,
+                  });
+                  launchInfo = `\n  Launched (fork): pane ${childPaneId} (forked from ${sessionId})`;
+                } catch (e: any) {
+                  launchInfo = `\n  Launch: FAILED — spawn error: ${e.message}`;
+                }
+              } else if (!launchInfo) {
+                launchInfo = `\n  Launch: FAILED — unexpected pane ID: ${childPaneId}`;
+              }
+            }
+          }
+        } else if (effectivePlacement === "beside") {
+          // ── Fresh session, beside caller ──
+          const ownPane = findOwnPane();
+          if (!ownPane) {
+            launchInfo = `\n  Launch: FAILED — could not find own pane for beside placement`;
+          } else {
+            try {
+              const childPaneId = execSync(
+                `tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`,
+                { encoding: "utf-8", timeout: 5000 }
+              ).trim();
+              if (childPaneId && childPaneId.startsWith("%")) {
+                // Register pane
+                try {
+                  let childPaneTarget = "";
+                  try {
+                    childPaneTarget = execSync(
+                      `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`,
+                      { encoding: "utf-8", timeout: 5000 }
+                    ).trim();
+                  } catch {}
+                  withRegistryLocked((registry) => {
+                    const entry = registry[name] as RegistryWorkerEntry;
+                    if (entry) {
+                      entry.pane_id = childPaneId;
+                      entry.pane_target = childPaneTarget;
+                      entry.tmux_session = childPaneTarget?.split(":")[0] || "w";
+                    }
+                  });
+                } catch {}
+
+                // Launch fresh session beside caller
+                const workerModel = selectedModel || "opus";
+                const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
+                const launchCmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
+                const seedFile = `/tmp/seed-${name}-${Date.now()}.txt`;
+                const seedText = `You are worker "${name}". Your isolated worktree is at ${worktreeReady ? worktreeDir : "(create it)"}.\nRead ${join(WORKERS_DIR, name, "mission.md")} now and begin work.`;
+                writeFileSync(seedFile, seedText);
+
+                const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
+                writeFileSync(spawnScript, `#!/bin/bash
+sleep 1
+tmux send-keys -t "${childPaneId}" "cd ${worktreeReady ? worktreeDir : PROJECT_ROOT}" && tmux send-keys -t "${childPaneId}" -H 0d
+sleep 0.5
+tmux send-keys -t "${childPaneId}" "cat ${seedFile} | ${launchCmd}" && tmux send-keys -t "${childPaneId}" -H 0d
+rm -f "${seedFile}" "${spawnScript}"
+`);
+                execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, {
+                  shell: "/bin/bash", timeout: 5000,
+                });
+                launchInfo = `\n  Launched (beside): pane ${childPaneId}`;
+              } else {
+                launchInfo = `\n  Launch: FAILED — unexpected pane ID: ${childPaneId}`;
+              }
+            } catch (e: any) {
+              launchInfo = `\n  Launch: FAILED — split error: ${e.message}`;
+            }
+          }
+        } else if (effectivePlacement === "new-window") {
+          // ── Fresh session, new named window ──
+          const ownPane = findOwnPane();
+          const tmuxSession = ownPane?.paneTarget?.split(":")[0] || "w";
+          try {
+            const childPaneId = execSync(
+              `tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`,
+              { encoding: "utf-8", timeout: 5000 }
+            ).trim();
+            if (childPaneId && childPaneId.startsWith("%")) {
+              try {
+                let childPaneTarget = "";
+                try {
+                  childPaneTarget = execSync(
+                    `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`,
+                    { encoding: "utf-8", timeout: 5000 }
+                  ).trim();
+                } catch {}
+                withRegistryLocked((registry) => {
+                  const entry = registry[name] as RegistryWorkerEntry;
+                  if (entry) {
+                    entry.pane_id = childPaneId;
+                    entry.pane_target = childPaneTarget;
+                    entry.tmux_session = tmuxSession;
+                  }
+                });
+              } catch {}
+
+              // Use launch-flat-worker.sh logic via seed
+              const workerModel = selectedModel || "opus";
+              const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
+              const launchCmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
+              const seedFile = `/tmp/seed-${name}-${Date.now()}.txt`;
+              const seedText = `You are worker "${name}". Your isolated worktree is at ${worktreeReady ? worktreeDir : "(create it)"}.\nRead ${join(WORKERS_DIR, name, "mission.md")} now and begin work.`;
+              writeFileSync(seedFile, seedText);
+
+              const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
+              writeFileSync(spawnScript, `#!/bin/bash
+sleep 1
+tmux send-keys -t "${childPaneId}" "cat ${seedFile} | ${launchCmd}" && tmux send-keys -t "${childPaneId}" -H 0d
+rm -f "${seedFile}" "${spawnScript}"
+`);
+              execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, {
+                shell: "/bin/bash", timeout: 5000,
+              });
+              launchInfo = `\n  Launched (new-window): pane ${childPaneId}`;
+            } else {
+              launchInfo = `\n  Launch: FAILED — unexpected pane ID: ${childPaneId}`;
+            }
+          } catch (e: any) {
+            launchInfo = `\n  Launch: FAILED — new-window error: ${e.message}`;
+          }
+        } else {
+          // ── Default "window" placement: delegate to launch-flat-worker.sh ──
+          const launchScript = join(CLAUDE_OPS, "scripts/launch-flat-worker.sh");
+          if (!existsSync(launchScript)) {
+            launchInfo = `\n  Launch: FAILED — script not found: ${launchScript}`;
+          } else {
+            const launchArgs = [launchScript, name, "--project", PROJECT_ROOT];
+            if (permissions.window) {
+              launchArgs.push("--window", permissions.window);
+            }
+            const launchResult = spawnSync("bash", launchArgs, {
+              encoding: "utf-8",
+              timeout: 120_000,
+              env: { ...process.env, PROJECT_ROOT },
+            });
+            if (launchResult.status === 0) {
+              const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
+              const paneId = paneMatch ? paneMatch[1] : "unknown";
+              launchInfo = `\n  Launched: pane ${paneId}`;
+            } else {
+              launchInfo = `\n  Launch: FAILED (exit ${launchResult.status}) — ${(launchResult.stderr || "").slice(0, 200)}`;
+            }
           }
         }
       } else {
@@ -2440,9 +2555,11 @@ server.registerTool(
         `  Dir: .claude/workers/${name}/`,
         `  Model: ${selectedModel} | Perpetual: ${isPerpetual}`,
         permissions.window ? `  Window: ${permissions.window}` : null,
-        `  Reports to: ${permissions.assigned_by || WORKER_NAME || "chief-of-staff"}`,
+        `  Reports to: ${reportTo}`,
+        fork_from_session ? `  Forked from: ${WORKER_NAME}` : null,
         permissions.disallowedTools.length > 0 ? `  Disallowed: ${permissions.disallowedTools.length} rules` : `  Disallowed: none (full access)`,
         `  Tasks: ${taskSummary}`,
+        worktreeReady ? `  Worktree: ${worktreeDir}` : `  Worktree: NOT CREATED (manual setup needed)`,
         launchInfo.trim() ? `  ${launchInfo.trim()}` : null,
       ].filter(Boolean).join("\n");
 
@@ -2628,128 +2745,6 @@ server.registerTool(
           `To fully clean up when ready:`,
           `  git worktree remove ${preservedWorktree}`,
           `  rm -rf .claude/workers/${targetName}/`,
-        ].join("\n"),
-      }],
-    };
-  }
-);
-
-server.registerTool(
-  "rename",
-  {
-    description: "Rename this worker. Updates registry key, git branch, git worktree path, worker dir, and session project dir. After rename, you MUST call recycle() — WORKER_NAME is baked into the MCP process at launch. Self-only; chief-of-staff can rename any worker.",
-    inputSchema: {
-      new_name: z.string().describe("New kebab-case name for this worker (e.g. 'bi-optimizer-v2')"),
-      target: z.string().optional().describe("Worker to rename (default: yourself). Only chief-of-staff may rename others."),
-    },
-  },
-  async ({ new_name, target }) => {
-    const oldName = target || WORKER_NAME;
-
-    // Auth: self-only or chief-of-staff
-    if (oldName !== WORKER_NAME && WORKER_NAME !== "chief-of-staff") {
-      return { content: [{ type: "text" as const, text: `Only chief-of-staff can rename other workers. You are '${WORKER_NAME}'.` }], isError: true };
-    }
-
-    // Validate new name
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(new_name)) {
-      return { content: [{ type: "text" as const, text: `Invalid name '${new_name}'. Must be kebab-case (a-z, 0-9, hyphens, no leading/trailing hyphens).` }], isError: true };
-    }
-    if (new_name === oldName) {
-      return { content: [{ type: "text" as const, text: `Already named '${oldName}'.` }], isError: true };
-    }
-    if (new_name === "_config") {
-      return { content: [{ type: "text" as const, text: `Reserved name.` }], isError: true };
-    }
-
-    // Check old exists, new doesn't
-    const oldEntry = getWorkerEntry(oldName);
-    if (!oldEntry) {
-      return { content: [{ type: "text" as const, text: `Worker '${oldName}' not found in registry.` }], isError: true };
-    }
-    if (getWorkerEntry(new_name)) {
-      return { content: [{ type: "text" as const, text: `Worker '${new_name}' already exists in registry.` }], isError: true };
-    }
-
-    const projectName = basename(PROJECT_ROOT);
-    const oldBranch = `worker/${oldName}`;
-    const newBranch = `worker/${new_name}`;
-    const oldWorktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${oldName}`);
-    const newWorktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${new_name}`);
-    const oldWorkerDir = join(WORKERS_DIR, oldName);
-    const newWorkerDir = join(WORKERS_DIR, new_name);
-    const steps: string[] = [];
-    const rollback: (() => void)[] = [];
-
-    try {
-      // 1. Rename git branch
-      try {
-        execSync(`git -C "${PROJECT_ROOT}" branch -m "${oldBranch}" "${newBranch}"`, { timeout: 10000 });
-        steps.push(`Git branch: ${oldBranch} -> ${newBranch}`);
-        rollback.push(() => { try { execSync(`git -C "${PROJECT_ROOT}" branch -m "${newBranch}" "${oldBranch}"`, { timeout: 10000 }); } catch {} });
-      } catch (e: any) {
-        // Branch may not exist (ok) or already renamed
-        steps.push(`Git branch rename skipped: ${e.message?.split("\n")[0]}`);
-      }
-
-      // 2. Move git worktree
-      if (existsSync(oldWorktreeDir)) {
-        execSync(`git -C "${PROJECT_ROOT}" worktree move "${oldWorktreeDir}" "${newWorktreeDir}"`, { timeout: 15000 });
-        steps.push(`Worktree: ${oldWorktreeDir} -> ${newWorktreeDir}`);
-        rollback.push(() => { try { execSync(`git -C "${PROJECT_ROOT}" worktree move "${newWorktreeDir}" "${oldWorktreeDir}"`, { timeout: 15000 }); } catch {} });
-      } else {
-        steps.push(`Worktree move skipped: ${oldWorktreeDir} not found`);
-      }
-
-      // 3. Move worker dir
-      if (existsSync(oldWorkerDir)) {
-        renameSync(oldWorkerDir, newWorkerDir);
-        steps.push(`Worker dir: ${oldName}/ -> ${new_name}/`);
-        rollback.push(() => { try { renameSync(newWorkerDir, oldWorkerDir); } catch {} });
-      }
-
-      // 4. Copy session project dir
-      const oldSlug = oldWorktreeDir.replace(/\//g, "-");
-      const newSlug = newWorktreeDir.replace(/\//g, "-");
-      const oldProjDir = join(HOME, ".claude/projects", oldSlug);
-      const newProjDir = join(HOME, ".claude/projects", newSlug);
-      if (existsSync(oldProjDir)) {
-        try {
-          cpSync(oldProjDir, newProjDir, { recursive: true });
-          steps.push(`Session dir: copied to ${newSlug}`);
-        } catch {
-          steps.push(`Session dir copy failed (non-fatal)`);
-        }
-      }
-
-      // 5. Update registry (atomic, last step)
-      withRegistryLocked((registry) => {
-        const entry = registry[oldName] as RegistryWorkerEntry;
-        if (!entry) return;
-        registry[new_name] = { ...entry };
-        const newEntry = registry[new_name] as RegistryWorkerEntry;
-        newEntry.branch = newBranch;
-        newEntry.worktree = existsSync(newWorktreeDir) ? newWorktreeDir : entry.worktree;
-        newEntry.mission_file = `.claude/workers/${new_name}/mission.md`;
-        delete registry[oldName];
-      });
-      steps.push(`Registry: ${oldName} -> ${new_name}`);
-
-    } catch (e: any) {
-      // Rollback on failure
-      for (const fn of rollback.reverse()) fn();
-      return { content: [{ type: "text" as const, text: `Rename failed (rolled back): ${e.message}\nCompleted steps before failure:\n${steps.join("\n")}` }], isError: true };
-    }
-
-    return {
-      content: [{
-        type: "text" as const,
-        text: [
-          `Renamed '${oldName}' -> '${new_name}'.`,
-          ``,
-          ...steps.map(s => `  ${s}`),
-          ``,
-          `WORKER_NAME is baked at launch — call recycle() now for the new name to take effect.`,
         ].join("\n"),
       }],
     };
