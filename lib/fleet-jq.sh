@@ -271,9 +271,6 @@ MEOF
       > "$worker_dir/state.json"
   fi
 
-  # MEMORY.md
-  [ ! -f "$worker_dir/MEMORY.md" ] && echo "# Memory" > "$worker_dir/MEMORY.md"
-
   # inbox.jsonl + outbox.jsonl
   touch "$worker_dir/inbox.jsonl" "$worker_dir/outbox.jsonl" 2>/dev/null
 

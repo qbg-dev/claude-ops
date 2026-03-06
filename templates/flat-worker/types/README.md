@@ -57,5 +57,5 @@ Workers can recycle themselves (graceful respawn via watchdog) and pass context 
 Both are cleared by the next instance after absorption. The self-recycle flow:
 1. Write handoff.md (and optionally handoff/ files)
 2. Update state.json (cycles_completed++, last_cycle_at)
-3. Update MEMORY.md with durable learnings
+3. Save durable learnings to auto-memory
 4. `/exit` → watchdog respawns after `sleep_duration` seconds

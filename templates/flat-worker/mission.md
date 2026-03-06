@@ -12,7 +12,7 @@
 LOOP FOREVER:
   1. Test each issue above
   2. For PARTIAL/FAIL items: investigate root cause -> fix -> deploy -> verify
-  3. Update state.json + MEMORY.md with results
+  3. Update state.json + save findings to auto-memory
   4. Graceful stop — watchdog respawns after sleep_duration seconds
 ```
 
@@ -38,6 +38,17 @@ Suggested cadences:
 
 ## Key Source Files
 <!-- Map the files this worker needs to understand -->
+
+## 三省吾身 (Cycle Self-Examination)
+
+> 曾子曰："吾日三省吾身：为人谋而不忠乎？与朋友交而不信乎？传不习乎？"
+
+After every cycle, before stopping, save 3 lines to auto-memory:
+1. **为人谋而不忠乎** (Was I faithful to my mission?): {{REFLECTION_1}}
+2. **与朋友交而不信乎** (Was I trustworthy to my collaborators?): {{REFLECTION_2}}
+3. **传不习乎** (Did I practice what I learned?): {{REFLECTION_3}}
+
+When a reflection reveals a convention, gotcha, or pattern worth sharing, include a `doc_updates` section in your merge request.
 
 ## Deploy Protocol
 

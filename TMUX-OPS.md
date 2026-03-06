@@ -126,8 +126,8 @@ cat > "$SEED_FILE" << WSEED
 You are worker ${WORKER} for module ${MODULE}.
 Working in worktree: ${WORKTREE_DIR} (branch: ${BRANCH})
 Harness files at: ${PROJECT_ROOT}/.claude/harness/${MODULE}/
-Read: mission.md, state.json, inbox.jsonl, MEMORY.md
-Commit to YOUR branch. After each task: update state.json + MEMORY.md.
+Read: mission.md, state.json, inbox.jsonl
+Commit to YOUR branch. After each task: update state.json + save learnings to auto-memory.
 WSEED
 tmux load-buffer "$SEED_FILE"
 tmux paste-buffer -t "$WORKER_PANE"
