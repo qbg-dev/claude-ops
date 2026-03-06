@@ -2698,14 +2698,42 @@ server.registerTool(
       };
     }
 
-    // Write reason to handoff.md if provided
+    // Require HANDOFF.md before deregistration
+    const handoffPath = join(WORKERS_DIR, targetName, "HANDOFF.md");
+    let hasHandoff = false;
+    try { hasHandoff = existsSync(handoffPath) && readFileSync(handoffPath, "utf-8").trim().length > 50; } catch {}
+    if (!hasHandoff) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: [
+            `⚠️ HANDOFF.md required before deregistering '${targetName}'.`,
+            ``,
+            `Before unregistering, write a HANDOFF.md at:`,
+            `  .claude/workers/${targetName}/HANDOFF.md`,
+            ``,
+            `Include:`,
+            `  - Generalizable learnings (patterns, gotchas, conventions discovered)`,
+            `  - Business process details specific to this domain`,
+            `  - Important repo/architecture details you learned`,
+            `  - Any unfinished work or known issues`,
+            `  - Recommendations for whoever picks this up next`,
+            ``,
+            `Then call deregister again.`,
+          ].join("\n"),
+        }],
+        isError: true,
+      };
+    }
+
+    // Append deregistration metadata to handoff
     if (reason) {
       try {
-        const handoffPath = join(WORKERS_DIR, targetName, "handoff.md");
         const timestamp = new Date().toISOString();
-        writeFileSync(handoffPath, `# Deregistered\n\n**By:** ${WORKER_NAME}\n**At:** ${timestamp}\n**Reason:** ${reason}\n`);
+        const appendix = `\n\n---\n## Deregistered\n\n**By:** ${WORKER_NAME}\n**At:** ${timestamp}\n**Reason:** ${reason}\n`;
+        appendFileSync(handoffPath, appendix);
       } catch {
-        // Best-effort — don't block deregistration if handoff write fails
+        // Best-effort
       }
     }
 

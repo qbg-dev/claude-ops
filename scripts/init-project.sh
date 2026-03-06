@@ -12,8 +12,10 @@
 #   3. Creates .mcp.json wiring worker-fleet MCP server
 #   4. Creates initial registry.json with _config
 #   5. Sets up shared worker scripts
-#   6. Runs hook lint to verify
-#   7. Optionally launches chief-of-staff worker
+#   6. Installs fleet CLAUDE.md
+#   7. Verifies hooks installation
+#   8. Sets up statusline (session tracking, spending, worker display)
+#   9. Optionally launches chief-of-staff worker
 set -euo pipefail
 
 CLAUDE_OPS_DIR="${CLAUDE_OPS_DIR:-$HOME/.claude-ops}"
@@ -66,7 +68,7 @@ echo "  Path:    $PROJECT_DIR"
 echo ""
 
 # ── Step 1: Git repo ──
-step "1/8 Checking git repo..."
+step "1/9 Checking git repo..."
 if [ -d "$PROJECT_DIR/.git" ]; then
   info "Already a git repo"
 else
@@ -81,14 +83,14 @@ MAIN_BRANCH=$(git -C "$PROJECT_DIR" branch --show-current)
 info "Main branch: $MAIN_BRANCH"
 
 # ── Step 2: .claude/ directory structure ──
-step "2/8 Creating .claude/ structure..."
+step "2/9 Creating .claude/ structure..."
 mkdir -p "$PROJECT_DIR/.claude/workers"
 mkdir -p "$PROJECT_DIR/.claude/scripts/worker"
 mkdir -p "$PROJECT_DIR/.claude/hooks"
 info ".claude/ structure created"
 
 # ── Step 3: .mcp.json ──
-step "3/8 Setting up MCP configuration..."
+step "3/9 Setting up MCP configuration..."
 MCP_FILE="$PROJECT_DIR/.mcp.json"
 if [ -f "$MCP_FILE" ]; then
   # Check if worker-fleet is already configured
@@ -127,7 +129,7 @@ MCPEOF
 fi
 
 # ── Step 4: Registry ──
-step "4/8 Creating worker registry..."
+step "4/9 Creating worker registry..."
 REGISTRY="$PROJECT_DIR/.claude/workers/registry.json"
 if [ -f "$REGISTRY" ]; then
   info "Registry already exists"
@@ -147,7 +149,7 @@ REGEOF
 fi
 
 # ── Step 5: Shared scripts ──
-step "5/8 Setting up shared worker scripts..."
+step "5/9 Setting up shared worker scripts..."
 
 # Copy shared worker scripts from claude-ops templates if they exist
 SHARED_SCRIPTS_SRC="$CLAUDE_OPS_DIR/templates/flat-worker/scripts"
@@ -195,7 +197,7 @@ VALEOF
 fi
 
 # ── Step 6: CLAUDE.md fleet docs ──
-step "6/8 Installing fleet CLAUDE.md..."
+step "6/9 Installing fleet CLAUDE.md..."
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 UPSTREAM_CLAUDE_MD="$CLAUDE_OPS_DIR/CLAUDE.md"
 
@@ -218,16 +220,43 @@ else
 fi
 
 # ── Step 7: Verify hooks ──
-step "7/8 Verifying hooks installation..."
+step "7/9 Verifying hooks installation..."
 if bash "$CLAUDE_OPS_DIR/scripts/lint-hooks.sh" --quiet 2>/dev/null; then
   info "Hooks OK"
 else
   warn "Some hooks may be missing — run: bash ~/.claude-ops/scripts/setup-hooks.sh"
 fi
 
-# ── Step 7: Chief of Staff ──
+# ── Step 8: Statusline ──
+step "8/9 Setting up statusline..."
+STATUSLINE_SRC="$CLAUDE_OPS_DIR/scripts/statusline-command.sh"
+STATUSLINE_DST="$HOME/.claude/statusline-command.sh"
+if [ -f "$STATUSLINE_SRC" ]; then
+  if [ -L "$STATUSLINE_DST" ]; then
+    LINK_TARGET=$(readlink "$STATUSLINE_DST")
+    if [ "$LINK_TARGET" = "$STATUSLINE_SRC" ]; then
+      info "Statusline already symlinked to claude-ops"
+    else
+      warn "Statusline symlinked to: $LINK_TARGET (not claude-ops)"
+      warn "To use the claude-ops statusline: ln -sf $STATUSLINE_SRC $STATUSLINE_DST"
+    fi
+  elif [ -f "$STATUSLINE_DST" ]; then
+    warn "Existing statusline found at $STATUSLINE_DST (not managed by claude-ops)"
+    warn "claude-ops statusline: $STATUSLINE_SRC"
+    warn "Features: session ID tracking, spending tracker, worker registry display"
+    warn "To merge: launch a Claude Code session and ask it to merge the two scripts"
+    warn "To replace: ln -sf $STATUSLINE_SRC $STATUSLINE_DST"
+  else
+    ln -s "$STATUSLINE_SRC" "$STATUSLINE_DST"
+    info "Statusline symlinked: $STATUSLINE_DST → $STATUSLINE_SRC"
+  fi
+else
+  warn "No statusline script found at $STATUSLINE_SRC"
+fi
+
+# ── Step 9: Chief of Staff ──
 if [ "$LAUNCH_COS" = true ]; then
-  step "8/8 Setting up chief-of-staff worker..."
+  step "9/9 Setting up chief-of-staff worker..."
 
   COS_DIR="$PROJECT_DIR/.claude/workers/chief-of-staff"
   mkdir -p "$COS_DIR"
@@ -281,7 +310,7 @@ COSEOF
   echo "    bash ~/.claude-ops/scripts/launch-flat-worker.sh chief-of-staff"
   echo ""
 else
-  step "8/8 Skipping chief-of-staff (use --with-chief-of-staff to create)"
+  step "9/9 Skipping chief-of-staff (use --with-chief-of-staff to create)"
 fi
 
 # ── Initial commit ──

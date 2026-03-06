@@ -21707,16 +21707,48 @@ server.registerTool("deregister", {
       isError: true
     };
   }
+  const handoffPath = join(WORKERS_DIR, targetName, "HANDOFF.md");
+  let hasHandoff = false;
+  try {
+    hasHandoff = existsSync(handoffPath) && readFileSync(handoffPath, "utf-8").trim().length > 50;
+  } catch {}
+  if (!hasHandoff) {
+    return {
+      content: [{
+        type: "text",
+        text: [
+          `\u26A0\uFE0F HANDOFF.md required before deregistering '${targetName}'.`,
+          ``,
+          `Before unregistering, write a HANDOFF.md at:`,
+          `  .claude/workers/${targetName}/HANDOFF.md`,
+          ``,
+          `Include:`,
+          `  - Generalizable learnings (patterns, gotchas, conventions discovered)`,
+          `  - Business process details specific to this domain`,
+          `  - Important repo/architecture details you learned`,
+          `  - Any unfinished work or known issues`,
+          `  - Recommendations for whoever picks this up next`,
+          ``,
+          `Then call deregister again.`
+        ].join(`
+`)
+      }],
+      isError: true
+    };
+  }
   if (reason) {
     try {
-      const handoffPath = join(WORKERS_DIR, targetName, "handoff.md");
       const timestamp = new Date().toISOString();
-      writeFileSync(handoffPath, `# Deregistered
+      const appendix = `
+
+---
+## Deregistered
 
 **By:** ${WORKER_NAME}
 **At:** ${timestamp}
 **Reason:** ${reason}
-`);
+`;
+      appendFileSync(handoffPath, appendix);
     } catch {}
   }
   const preservedWorktree = existing.worktree || "(none registered)";
