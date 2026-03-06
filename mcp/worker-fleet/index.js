@@ -1791,6 +1791,53 @@ server.registerTool("create_worker", { description: "Spin up a new persistent wo
   placement: z.enum(["window", "beside", "new-window"]).optional().describe("Where to place the pane: 'window' (join named window group, default), 'beside' (split next to caller), 'new-window' (fresh named window)")
 } }, async ({ name, mission, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, assigned_by, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report, placement }) => {
   try {
+    let createPane = function(pl, cwd) {
+      const ownPane = findOwnPane();
+      const tmuxSession = ownPane?.paneTarget?.split(":")[0] || "w";
+      if (pl === "beside") {
+        if (!ownPane)
+          return null;
+        return execSync(`tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+      }
+      if (pl === "new-window") {
+        return execSync(`tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+      }
+      const winName = windowGroup || "workers";
+      const winCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
+      const windows = (winCheck.stdout || "").split(`
+`).map((w) => w.trim());
+      if (!windows.includes(winName)) {
+        return execSync(`tmux new-window -t "${tmuxSession}" -n "${winName}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+      }
+      const paneId = execSync(`tmux split-window -t "${tmuxSession}:${winName}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+      spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:${winName}`, "tiled"], { encoding: "utf-8" });
+      return paneId;
+    }, registerPane = function(paneId) {
+      let paneTarget = "";
+      try {
+        paneTarget = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${paneId}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
+      } catch {}
+      withRegistryLocked((registry) => {
+        const entry = registry[name];
+        if (entry) {
+          entry.pane_id = paneId;
+          entry.pane_target = paneTarget;
+          entry.tmux_session = paneTarget?.split(":")[0] || "w";
+        }
+      });
+    }, spawnInPane = function(paneId, cmd, label, cleanupFiles = []) {
+      const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
+      const rmCmd = cleanupFiles.length > 0 ? `
+rm -f ${cleanupFiles.map((f) => `"${f}"`).join(" ")} "${spawnScript}"` : `
+rm -f "${spawnScript}"`;
+      writeFileSync(spawnScript, `#!/bin/bash
+sleep 1
+tmux send-keys -t "${paneId}" "${cmd}" && tmux send-keys -t "${paneId}" -H 0d${rmCmd}
+`);
+      execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, { shell: "/bin/bash", timeout: 5000 });
+      return `
+  Launched (${label}): pane ${paneId}`;
+    };
     const existingRegistry = readRegistry();
     if (existingRegistry[name] && name !== "_config") {
       return { content: [{ type: "text", text: `Error: Worker '${name}' already exists in registry. Choose a unique name.` }], isError: true };
@@ -1867,219 +1914,67 @@ server.registerTool("create_worker", { description: "Spin up a new persistent wo
     let launchInfo = "";
     if (launch) {
       const effectivePlacement = placement || "window";
+      const cwd = worktreeReady ? worktreeDir : PROJECT_ROOT;
       if (fork_from_session) {
         const ownPane = findOwnPane();
+        const sessionId = ownPane ? getSessionId(ownPane.paneId) : null;
         if (!ownPane) {
           launchInfo = `
   Launch: FAILED — could not find own pane (not in tmux?)`;
-        } else {
-          const sessionId = getSessionId(ownPane.paneId);
-          if (!sessionId) {
-            launchInfo = `
+        } else if (!sessionId) {
+          launchInfo = `
   Launch: FAILED — no session ID for pane ${ownPane.paneId}`;
-          } else {
-            if (worktreeReady) {
-              try {
-                const parentSlug = PROJECT_ROOT.replace(/\//g, "-");
-                const newSlug = worktreeDir.replace(/\//g, "-");
-                const parentProj = join(HOME, ".claude/projects", parentSlug);
-                const newProj = join(HOME, ".claude/projects", newSlug);
-                mkdirSync(newProj, { recursive: true });
-                const jsonlSrc = join(parentProj, `${sessionId}.jsonl`);
-                if (existsSync(jsonlSrc))
-                  copyFileSync(jsonlSrc, join(newProj, `${sessionId}.jsonl`));
-                const subdirSrc = join(parentProj, sessionId);
-                if (existsSync(subdirSrc))
-                  cpSync(subdirSrc, join(newProj, sessionId), { recursive: true });
-              } catch {}
-            }
-            let childPaneId = null;
+        } else {
+          if (worktreeReady) {
             try {
-              if (effectivePlacement === "beside") {
-                childPaneId = execSync(`tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-              } else if (effectivePlacement === "new-window") {
-                const tmuxSession = ownPane.paneTarget?.split(":")[0] || "w";
-                childPaneId = execSync(`tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-              } else {
-                const tmuxSession = ownPane.paneTarget?.split(":")[0] || "w";
-                const winName = windowGroup || "workers";
-                const winCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
-                const windows = (winCheck.stdout || "").split(`
-`).map((w) => w.trim());
-                if (!windows.includes(winName)) {
-                  childPaneId = execSync(`tmux new-window -t "${tmuxSession}" -n "${winName}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-                } else {
-                  childPaneId = execSync(`tmux split-window -t "${tmuxSession}:${winName}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-                  spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:${winName}`, "tiled"], { encoding: "utf-8" });
-                }
-              }
-            } catch (e) {
+              const parentSlug = PROJECT_ROOT.replace(/\//g, "-");
+              const newSlug = worktreeDir.replace(/\//g, "-");
+              const parentProj = join(HOME, ".claude/projects", parentSlug);
+              const newProj = join(HOME, ".claude/projects", newSlug);
+              mkdirSync(newProj, { recursive: true });
+              const jsonlSrc = join(parentProj, `${sessionId}.jsonl`);
+              if (existsSync(jsonlSrc))
+                copyFileSync(jsonlSrc, join(newProj, `${sessionId}.jsonl`));
+              const subdirSrc = join(parentProj, sessionId);
+              if (existsSync(subdirSrc))
+                cpSync(subdirSrc, join(newProj, sessionId), { recursive: true });
+            } catch {}
+          }
+          try {
+            const childPaneId = createPane(effectivePlacement, cwd);
+            if (!childPaneId?.startsWith("%")) {
               launchInfo = `
-  Launch: FAILED — pane creation error: ${e.message}`;
-            }
-            if (childPaneId && childPaneId.startsWith("%")) {
-              try {
-                let childPaneTarget = "";
-                try {
-                  childPaneTarget = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
-                } catch {}
-                withRegistryLocked((registry) => {
-                  const entry = registry[name];
-                  if (entry) {
-                    entry.pane_id = childPaneId;
-                    entry.pane_target = childPaneTarget;
-                    entry.tmux_session = childPaneTarget?.split(":")[0] || "w";
-                  }
-                });
-              } catch {}
+  Launch: FAILED — pane creation returned: ${childPaneId}`;
+            } else {
+              registerPane(childPaneId);
               const workerModel = selectedModel || "opus";
               const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
               const extraFlags = `--model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
               const cwdFlag = worktreeReady ? ` --cwd ${worktreeDir}` : "";
               const forkCmd = `bash ${join(CLAUDE_OPS, "scripts/fork-worker.sh")} ${ownPane.paneId} ${sessionId} --name ${name} --no-worktree${cwdFlag} ${extraFlags}`;
+              const taskFile = `/tmp/create-worker-task-${name}-${Date.now()}.txt`;
               const setupPrefix = worktreeReady ? `You are worker "${name}". Your isolated worktree is at ${worktreeDir}.
 
 ` : `You are worker "${name}". Create your worktree first: git worktree add ${worktreeDir} worker/${name}
 
 `;
-              const taskText = mission.slice(0, 500);
-              const fullTask = setupPrefix + taskText;
-              const taskFile = `/tmp/create-worker-task-${name}-${Date.now()}.txt`;
-              writeFileSync(taskFile, fullTask);
-              const launchCmd = `cat ${taskFile} | ${forkCmd}`;
-              const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
-              writeFileSync(spawnScript, `#!/bin/bash
-sleep 1
-tmux send-keys -t "${childPaneId}" "${launchCmd}" && tmux send-keys -t "${childPaneId}" -H 0d
-rm -f "${taskFile}" "${spawnScript}"
-`);
-              try {
-                execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, {
-                  shell: "/bin/bash",
-                  timeout: 5000
-                });
-                launchInfo = `
-  Launched (fork): pane ${childPaneId} (forked from ${sessionId})`;
-              } catch (e) {
-                launchInfo = `
-  Launch: FAILED — spawn error: ${e.message}`;
-              }
-            } else if (!launchInfo) {
-              launchInfo = `
-  Launch: FAILED — unexpected pane ID: ${childPaneId}`;
-            }
-          }
-        }
-      } else if (effectivePlacement === "beside") {
-        const ownPane = findOwnPane();
-        if (!ownPane) {
-          launchInfo = `
-  Launch: FAILED — could not find own pane for beside placement`;
-        } else {
-          try {
-            const childPaneId = execSync(`tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-            if (childPaneId && childPaneId.startsWith("%")) {
-              try {
-                let childPaneTarget = "";
-                try {
-                  childPaneTarget = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
-                } catch {}
-                withRegistryLocked((registry) => {
-                  const entry = registry[name];
-                  if (entry) {
-                    entry.pane_id = childPaneId;
-                    entry.pane_target = childPaneTarget;
-                    entry.tmux_session = childPaneTarget?.split(":")[0] || "w";
-                  }
-                });
-              } catch {}
-              const workerModel = selectedModel || "opus";
-              const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
-              const launchCmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
-              const seedFile = `/tmp/seed-${name}-${Date.now()}.txt`;
-              const seedText = `You are worker "${name}". Your isolated worktree is at ${worktreeReady ? worktreeDir : "(create it)"}.
-Read ${join(WORKERS_DIR, name, "mission.md")} now and begin work.`;
-              writeFileSync(seedFile, seedText);
-              const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
-              writeFileSync(spawnScript, `#!/bin/bash
-sleep 1
-tmux send-keys -t "${childPaneId}" "cd ${worktreeReady ? worktreeDir : PROJECT_ROOT}" && tmux send-keys -t "${childPaneId}" -H 0d
-sleep 0.5
-tmux send-keys -t "${childPaneId}" "cat ${seedFile} | ${launchCmd}" && tmux send-keys -t "${childPaneId}" -H 0d
-rm -f "${seedFile}" "${spawnScript}"
-`);
-              execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, {
-                shell: "/bin/bash",
-                timeout: 5000
-              });
-              launchInfo = `
-  Launched (beside): pane ${childPaneId}`;
-            } else {
-              launchInfo = `
-  Launch: FAILED — unexpected pane ID: ${childPaneId}`;
+              writeFileSync(taskFile, setupPrefix + mission.slice(0, 500));
+              launchInfo = spawnInPane(childPaneId, `cat ${taskFile} | ${forkCmd}`, `fork from ${sessionId}`, [taskFile]);
             }
           } catch (e) {
             launchInfo = `
-  Launch: FAILED — split error: ${e.message}`;
+  Launch: FAILED — ${e.message}`;
           }
         }
-      } else if (effectivePlacement === "new-window") {
-        const ownPane = findOwnPane();
-        const tmuxSession = ownPane?.paneTarget?.split(":")[0] || "w";
-        try {
-          const childPaneId = execSync(`tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${worktreeReady ? worktreeDir : PROJECT_ROOT}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-          if (childPaneId && childPaneId.startsWith("%")) {
-            try {
-              let childPaneTarget = "";
-              try {
-                childPaneTarget = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${childPaneId}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
-              } catch {}
-              withRegistryLocked((registry) => {
-                const entry = registry[name];
-                if (entry) {
-                  entry.pane_id = childPaneId;
-                  entry.pane_target = childPaneTarget;
-                  entry.tmux_session = tmuxSession;
-                }
-              });
-            } catch {}
-            const workerModel = selectedModel || "opus";
-            const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
-            const launchCmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
-            const seedFile = `/tmp/seed-${name}-${Date.now()}.txt`;
-            const seedText = `You are worker "${name}". Your isolated worktree is at ${worktreeReady ? worktreeDir : "(create it)"}.
-Read ${join(WORKERS_DIR, name, "mission.md")} now and begin work.`;
-            writeFileSync(seedFile, seedText);
-            const spawnScript = `/tmp/spawn-worker-${name}-${Date.now()}.sh`;
-            writeFileSync(spawnScript, `#!/bin/bash
-sleep 1
-tmux send-keys -t "${childPaneId}" "cat ${seedFile} | ${launchCmd}" && tmux send-keys -t "${childPaneId}" -H 0d
-rm -f "${seedFile}" "${spawnScript}"
-`);
-            execSync(`nohup bash "${spawnScript}" > /tmp/spawn-worker-${name}.log 2>&1 &`, {
-              shell: "/bin/bash",
-              timeout: 5000
-            });
-            launchInfo = `
-  Launched (new-window): pane ${childPaneId}`;
-          } else {
-            launchInfo = `
-  Launch: FAILED — unexpected pane ID: ${childPaneId}`;
-          }
-        } catch (e) {
-          launchInfo = `
-  Launch: FAILED — new-window error: ${e.message}`;
-        }
-      } else {
+      } else if (effectivePlacement === "window" && !fork_from_session) {
         const launchScript = join(CLAUDE_OPS, "scripts/launch-flat-worker.sh");
         if (!existsSync(launchScript)) {
           launchInfo = `
   Launch: FAILED — script not found: ${launchScript}`;
         } else {
           const launchArgs = [launchScript, name, "--project", PROJECT_ROOT];
-          if (permissions.window) {
+          if (permissions.window)
             launchArgs.push("--window", permissions.window);
-          }
           const launchResult = spawnSync("bash", launchArgs, {
             encoding: "utf-8",
             timeout: 120000,
@@ -2087,13 +1982,32 @@ rm -f "${seedFile}" "${spawnScript}"
           });
           if (launchResult.status === 0) {
             const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
-            const paneId = paneMatch ? paneMatch[1] : "unknown";
             launchInfo = `
-  Launched: pane ${paneId}`;
+  Launched: pane ${paneMatch ? paneMatch[1] : "unknown"}`;
           } else {
             launchInfo = `
   Launch: FAILED (exit ${launchResult.status}) — ${(launchResult.stderr || "").slice(0, 200)}`;
           }
+        }
+      } else {
+        try {
+          const childPaneId = createPane(effectivePlacement, cwd);
+          if (!childPaneId?.startsWith("%")) {
+            launchInfo = `
+  Launch: FAILED — pane creation returned: ${childPaneId}`;
+          } else {
+            registerPane(childPaneId);
+            const workerModel = selectedModel || "opus";
+            const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
+            const claudeCmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`;
+            const seedFile = `/tmp/seed-${name}-${Date.now()}.txt`;
+            writeFileSync(seedFile, `You are worker "${name}". Your isolated worktree is at ${worktreeReady ? worktreeDir : "(create it)"}.
+Read ${join(WORKERS_DIR, name, "mission.md")} now and begin work.`);
+            launchInfo = spawnInPane(childPaneId, `cat ${seedFile} | ${claudeCmd}`, effectivePlacement, [seedFile]);
+          }
+        } catch (e) {
+          launchInfo = `
+  Launch: FAILED — ${e.message}`;
         }
       }
     } else {
