@@ -22,6 +22,7 @@ import { resolve, join } from "path";
 const PROJECT_ROOT =
   process.env.PROJECT_ROOT || resolve(import.meta.dir, "../../..");
 const CODEX_BIN = process.env.CODEX_BIN || "codex";
+const CODEX_MODEL = process.env.CODEX_MODEL || "gpt-5.4";
 const LOG_FILE = process.env.CHECK_LOG || "/tmp/check-your-work.log";
 
 // ── Logging ─────────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ log(`check-your-work MCP server starting`);
 log(`PROJECT_ROOT: ${PROJECT_ROOT}`);
 log(`MAIN_PROJECT: ${MAIN_PROJECT}`);
 log(`CODEX_BIN: ${CODEX_BIN}`);
+log(`CODEX_MODEL: ${CODEX_MODEL}`);
 log(`Log file: ${LOG_FILE} — tail -f ${LOG_FILE} to watch`);
 
 // ── Context builder ─────────────────────────────────────────────────────────
@@ -121,7 +123,7 @@ async function runCodexReview(args: {
   title?: string;
   timeout?: number;
 }): Promise<string> {
-  const cmdArgs = ["review", "--commit", args.commitSha];
+  const cmdArgs = ["review", "-c", `model="${CODEX_MODEL}"`, "--commit", args.commitSha];
 
   if (args.title) {
     cmdArgs.push("--title", args.title);
