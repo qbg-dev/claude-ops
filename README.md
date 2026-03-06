@@ -49,7 +49,7 @@ Or create workers from any running worker: `create_worker(name: "my-worker", mis
 | **Watchdog** | Respawns workers on stop/crash, detects stuck | `scripts/worker-watchdog.sh` |
 | **Git hooks** | Auto-notify merger, add trailers | `scripts/worker-post-commit-hook.sh` |
 | **Permission sandbox** | `disallowed_tools` in registry enforced at launch | `scripts/launch-flat-worker.sh` |
-| **Worker types** | implementer / monitor / coordinator templates | `templates/flat-worker/types/` |
+| **Worker types** | implementer / optimizer / monitor / coordinator | `templates/flat-worker/types/` |
 | **Seed generation** | Builds the initial prompt from mission + memory + inbox | `mcp/worker-fleet/index.ts:generateSeedContent()` |
 
 ## Communication Model

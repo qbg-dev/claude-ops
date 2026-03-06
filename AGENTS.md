@@ -106,9 +106,10 @@ Templates at `~/.claude-ops/templates/flat-worker/types/`:
 
 | Type | `perpetual` | Key permissions | Use case |
 |------|------------|----------------|----------|
-| **implementer** | false | Read-write, no push/force-push | Feature work, bug fixes |
-| **monitor** | true | Read-only (no Edit/Write) | Production observation |
-| **coordinator** | true | Full + merge + deploy | Branch management, triage |
+| **implementer** | false | Read-write, no push | Task-backlog-driven fixes and features |
+| **optimizer** | true | Read-write, no push | Eval-driven: run evals, fix worst gaps, prove improvement |
+| **monitor** | true | Read-only (no Edit/Write) | Watch for anomalies, report to coordinator |
+| **coordinator** | true | Full + merge + deploy | Merge branches, deploy prod, triage reports |
 
 ---
 
