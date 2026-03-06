@@ -1001,7 +1001,18 @@ function withStartupDiagnostics(result: { content: { type: "text"; text: string 
 /** Append pending reply reminder to any tool response (called on most tool handlers) */
 function withPendingReminder(result: { content: { type: "text"; text: string }[] }): typeof result {
   const cursor = readInboxCursor(WORKER_NAME);
-  const pending = cursor?.pending_replies || [];
+  let pending = cursor?.pending_replies || [];
+  if (pending.length === 0) return result;
+
+  // Auto-prune pending replies from workers that no longer exist
+  const before = pending.length;
+  pending = pending.filter(p => {
+    const senderDir = join(WORKERS_DIR, p.from_name);
+    return existsSync(senderDir);
+  });
+  if (pending.length !== before) {
+    writeInboxCursor(WORKER_NAME, cursor!.offset, pending);
+  }
   if (pending.length === 0) return result;
 
   const suffix = `\n\n⚠ ${pending.length} PENDING REPLY(S):\n` +
