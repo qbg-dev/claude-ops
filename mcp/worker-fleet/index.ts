@@ -14,7 +14,7 @@
  * Messaging writes inbox first (durable), then fires bus (best-effort).
  *
  * Runtime: bun run ~/.claude-ops/mcp/worker-fleet/index.ts (stdio transport)
- * Identity: auto-detected from WORKER_NAME env, git branch, or fallback "operator"
+ * Identity: auto-detected from WORKER_NAME env or git branch (worker/* → name)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -26,7 +26,7 @@ import {
   lstatSync, rmSync,
 } from "fs";
 import { join, basename } from "path";
-import { execSync, spawnSync, spawn, type ChildProcess } from "child_process";
+import { execSync, spawnSync } from "child_process";
 
 // ── Configuration ────────────────────────────────────────────────────
 const HOME = process.env.HOME!;
@@ -46,81 +46,6 @@ const REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
 const WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
 const CHECK_WORKERS_SH = join(CLAUDE_OPS, "scripts/check-flat-workers.sh");
 
-
-// ── Relay Configuration ──────────────────────────────────────────────
-const RELAY_PORT = parseInt(process.env.RELAY_PORT || "3847", 10);
-const RELAY_SECRET_PATH = join(BORING_DIR, "relay-secret");
-const RELAY_SERVER_PATH = join(CLAUDE_OPS, "mcp/relay-server/index.ts");
-const REMOTE_RELAY_URL = process.env.REMOTE_RELAY_URL || "";
-const PROJECT_SLUG = basename(PROJECT_ROOT);
-
-let _relaySecret = "";
-try { _relaySecret = readFileSync(RELAY_SECRET_PATH, "utf-8").trim(); } catch {}
-
-let _relayProcess: ChildProcess | null = null;
-
-/** Start local relay server as a detached subprocess (idempotent) */
-function startRelayServer(): void {
-  if (_relayProcess && _relayProcess.exitCode === null) return; // already running
-
-  // Check if relay is already listening (pass auth since /health requires it)
-  const check = spawnSync("curl", [
-    "-sf", "--max-time", "1",
-    "-H", `Authorization: Bearer ${_relaySecret}`,
-    `http://localhost:${RELAY_PORT}/health`,
-  ], { timeout: 3000, encoding: "utf-8" });
-  if (check.status === 0) return; // already running (maybe from another MCP instance)
-
-  if (!existsSync(RELAY_SERVER_PATH)) return;
-  if (!_relaySecret) return;
-
-  const bunPath = process.env.BUN_PATH || join(HOME, ".bun/bin/bun");
-  _relayProcess = spawn(bunPath, ["run", RELAY_SERVER_PATH], {
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      RELAY_PORT: String(RELAY_PORT),
-      RELAY_PROJECT_ROOTS: PROJECT_ROOT,
-    },
-  });
-  _relayProcess.unref();
-}
-
-/** Fetch from remote relay with auth + timeout. Returns null on any failure. */
-async function relayFetch(
-  method: string,
-  path: string,
-  body?: any,
-): Promise<any | null> {
-  if (!REMOTE_RELAY_URL || !_relaySecret) return null;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const opts: RequestInit = {
-      method,
-      headers: {
-        "Authorization": `Bearer ${_relaySecret}`,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
-    };
-    if (body && method !== "GET") {
-      opts.body = JSON.stringify(body);
-    }
-
-    const resp = await fetch(`${REMOTE_RELAY_URL}${path}`, opts);
-    clearTimeout(timeout);
-
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
-}
-
 // ── Worker Identity Detection ────────────────────────────────────────
 function detectWorkerName(): string {
   if (process.env.WORKER_NAME) return process.env.WORKER_NAME;
@@ -129,6 +54,10 @@ function detectWorkerName(): string {
       cwd: process.cwd(), encoding: "utf-8", timeout: 5000,
     }).trim();
     if (branch.startsWith("worker/")) return branch.slice("worker/".length);
+    // On main branch, derive from worktree directory name (e.g. Wechat-w-merger → merger)
+    const dirName = basename(process.cwd());
+    const match = dirName.match(/-w-(.+)$/);
+    if (match) return match[1];
   } catch {}
   return "operator";
 }
@@ -202,9 +131,11 @@ interface RegistryWorkerEntry {
   mission_file: string;
   custom: Record<string, any>;
 
-  // Flat accountability — who assigned this worker's task
-  assigned_by?: string | null;
-  parent?: string | null;      // deprecated — kept for backward compat reads
+  // Flat org — everyone reports to someone (default: chief-of-staff)
+  report_to?: string | null;
+  assigned_by?: string | null;  // deprecated alias for report_to
+  parent?: string | null;       // deprecated alias for report_to
+  forked_from?: string | null;  // set when spawned via spawn_child
 
   // Optional commit tracking
   last_commit_sha?: string;
@@ -220,6 +151,21 @@ interface ProjectRegistry {
 }
 
 const LINT_ENABLED = process.env.WORKER_FLEET_LINT !== "0";
+
+/** Resolve report_to with backward compat (assigned_by → parent → config.mission_authority) */
+function getReportTo(w: RegistryWorkerEntry, config?: RegistryConfig): string | null {
+  return w.report_to || w.assigned_by || w.parent || config?.mission_authority || null;
+}
+
+/** Check if caller has authority to update target worker's state */
+function canUpdateWorker(callerName: string, targetName: string, registry: ProjectRegistry): boolean {
+  if (callerName === targetName) return true;
+  const config = registry._config as RegistryConfig;
+  if (callerName === config?.mission_authority) return true;
+  const target = registry[targetName] as RegistryWorkerEntry | undefined;
+  if (target && getReportTo(target, config) === callerName) return true;
+  return false;
+}
 
 /** Read project registry from disk (no locking — caller handles concurrency) */
 function readRegistry(): ProjectRegistry {
@@ -362,11 +308,10 @@ function lintRegistry(registry: ProjectRegistry): DiagnosticIssue[] {
   const allWorkerNames = Object.keys(registry).filter(n => n !== "_config");
   for (const name of allWorkerNames) {
     const w = registry[name] as RegistryWorkerEntry;
-    const assignedBy = (w as any).assigned_by || (w as any).parent; // backward compat
-    if (assignedBy && !registry[assignedBy]) {
-      issues.push({ severity: "warning", check: "lint.assigned_by_missing", message: `Worker '${name}' assigned_by '${assignedBy}' doesn't exist in registry` });
+    const reportTo = getReportTo(w, registry._config as RegistryConfig);
+    if (reportTo && !registry[reportTo]) {
+      issues.push({ severity: "warning", check: "lint.report_to_missing", message: `Worker '${name}' report_to '${reportTo}' doesn't exist in registry` });
     }
-    // Legacy children arrays are ignored in flat model
   }
 
   return issues;
@@ -639,56 +584,45 @@ function resolveRecipient(to: string): {
     return { type: "pane", paneId: to };
   }
 
-  // "parent" — find assigning worker (from assigned_by field, backward compat with parent)
+  // "parent" — find who this worker reports to (report_to → assigned_by → parent → mission_authority)
   if (to === "parent") {
     try {
       const registry = readRegistry();
-      // 1. Check this worker's assigned_by field (or legacy parent)
-      const myEntry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
-      const parentName = myEntry?.assigned_by || myEntry?.parent;
-      if (parentName) {
-        const parentEntry = registry[parentName] as RegistryWorkerEntry | undefined;
-        if (parentEntry?.pane_id && isPaneAlive(parentEntry.pane_id)) {
-          if (existsSync(join(WORKERS_DIR, parentName))) {
-            return { type: "worker", workerName: parentName };
-          }
-          return { type: "pane", paneId: parentEntry.pane_id };
-        }
-        return { type: "pane", error: `Parent '${parentName}' for worker '${WORKER_NAME}' has no live pane` };
-      }
-      // 2. Fallback: use mission_authority from _config (modern equivalent of "operator")
       const config = registry._config as RegistryConfig;
-      const authorityName = config?.mission_authority;
-      if (authorityName && authorityName !== WORKER_NAME) {
-        const authEntry = registry[authorityName] as RegistryWorkerEntry | undefined;
-        if (authEntry?.pane_id && isPaneAlive(authEntry.pane_id)) {
-          if (existsSync(join(WORKERS_DIR, authorityName))) {
-            return { type: "worker", workerName: authorityName };
+      const myEntry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
+      const reportToName = myEntry ? getReportTo(myEntry, config) : config?.mission_authority;
+      if (reportToName && reportToName !== WORKER_NAME) {
+        const reportToEntry = registry[reportToName] as RegistryWorkerEntry | undefined;
+        if (reportToEntry?.pane_id && isPaneAlive(reportToEntry.pane_id)) {
+          if (existsSync(join(WORKERS_DIR, reportToName))) {
+            return { type: "worker", workerName: reportToName };
           }
-          return { type: "pane", paneId: authEntry.pane_id };
+          return { type: "pane", paneId: reportToEntry.pane_id };
         }
+        return { type: "pane", error: `'${reportToName}' (report_to for '${WORKER_NAME}') has no live pane` };
       }
-      return { type: "pane", error: `No parent found for worker '${WORKER_NAME}' (parent field not set in registry, mission_authority '${authorityName || "unset"}' has no live pane)` };
+      return { type: "pane", error: `No report_to found for worker '${WORKER_NAME}'` };
     } catch {
       return { type: "pane", error: "Failed to read registry" };
     }
   }
 
-  // "children" — find all workers assigned_by this worker
-  if (to === "children") {
+  // "children" / "reports" — find all workers who report_to this worker
+  if (to === "children" || to === "reports") {
     try {
       const registry = readRegistry();
+      const config = registry._config as RegistryConfig;
       const paneIds: string[] = [];
       for (const [name, entry] of Object.entries(registry)) {
         if (name === "_config") continue;
         const w = entry as RegistryWorkerEntry;
-        const assignedBy = w.assigned_by || w.parent;
-        if (assignedBy === WORKER_NAME && w.pane_id && isPaneAlive(w.pane_id)) {
+        const reportTo = getReportTo(w, config);
+        if (reportTo === WORKER_NAME && w.pane_id && isPaneAlive(w.pane_id)) {
           paneIds.push(w.pane_id);
         }
       }
       if (paneIds.length === 0) {
-        return { type: "multi_pane", paneIds: [], error: "No workers assigned by you have live panes" };
+        return { type: "multi_pane", paneIds: [], error: "No workers reporting to you have live panes" };
       }
       return { type: "multi_pane", paneIds };
     } catch {
@@ -1084,8 +1018,8 @@ const server = new McpServer({
 
 server.registerTool(
   "send_message",
-  { description: `Primary inter-worker communication. Messages require a reply by default — the recipient is reminded at recycle/standby if they haven't replied. Use fyi=true for informational messages that don't need a response. Use in_reply_to with a msg_id to acknowledge a message you received. Writes to the recipient's durable inbox (survives restarts) and delivers instantly via tmux if the pane is live. Use to="all" to broadcast fleet-wide (expensive — use sparingly). Use to="parent"/"children" for hierarchy traversal without knowing names.`, inputSchema: {
-    to: z.string().describe("Worker name, 'parent', 'children', 'all' (broadcast to every worker), or raw pane ID '%NN'"),
+  { description: `Primary inter-worker communication. Messages require a reply by default — the recipient is reminded at recycle/standby if they haven't replied. Use fyi=true for informational messages that don't need a response. Use in_reply_to with a msg_id to acknowledge a message you received. Writes to the recipient's durable inbox (survives restarts) and delivers instantly via tmux if the pane is live. Use to="all" to broadcast fleet-wide (expensive — use sparingly). Use to="parent" to message who you report_to. Use to="reports"/"children" to message all workers who report_to you.`, inputSchema: {
+    to: z.string().describe("Worker name, 'parent', 'reports' (or 'children'), 'all' (broadcast to every worker), or raw pane ID '%NN'"),
     content: z.string().describe("Message content"),
     summary: z.string().describe("Short preview (5-10 words)"),
     fyi: z.boolean().optional().describe("If true, no reply expected — informational only (default: false = reply expected)"),
@@ -1117,22 +1051,7 @@ server.registerTool(
         if (summary) args.push("--summary", summary);
         runScript(WORKER_MESSAGE_SH, args, { timeout: 10_000 });
       } catch {}
-      // Remote workers via relay (best-effort)
-      let remoteCount = 0;
-      try {
-        const remote = await relayFetch("GET", "/workers");
-        if (remote) {
-          for (const [proj, workers] of Object.entries(remote) as [string, string[]][]) {
-            for (const w of workers) {
-              if (w === WORKER_NAME || successes.includes(w)) continue;
-              const r = await relayFetch("POST", "/msg", { project: proj, worker: w, content, summary, from_name: WORKER_NAME });
-              if (r?.ok) remoteCount++;
-            }
-          }
-        }
-      } catch {}
-      let msg = `Broadcast to ${successes.length} local workers`;
-      if (remoteCount > 0) msg += ` + ${remoteCount} remote`;
+      let msg = `Broadcast to ${successes.length} workers`;
       if (failures.length > 0) msg += `\nFailed: ${failures.join(", ")}`;
       return { content: [{ type: "text" as const, text: msg }] };
     }
@@ -1575,19 +1494,27 @@ server.registerTool(
 
 server.registerTool(
   "update_state",
-  { description: "Persist your own state across recycles — cycle count, sleep duration, custom metrics. Call after every cycle to stamp cycles_completed and last_cycle_at. The watchdog reads last_cycle_at to detect stuck workers, so always update it.", inputSchema: {
-    key: z.string().describe("State key to update (e.g. 'status', 'cycles_completed')"),
+  { description: "Persist state across recycles — cycle count, sleep duration, custom metrics. Call after every cycle to stamp cycles_completed and last_cycle_at. The watchdog reads last_cycle_at to detect stuck workers, so always update it. Pass `worker` to update another worker's state (requires authority: you must be their report_to or the mission_authority).", inputSchema: {
+    key: z.string().describe("State key to update (e.g. 'status', 'cycles_completed'). Known keys go top-level; unknown keys go into custom."),
     value: z.union([z.string(), z.number(), z.boolean()]).describe("New value"),
+    worker: z.string().optional().describe("Target worker name (default: self). Requires authority — caller must be target's report_to or mission_authority."),
   } },
-  async ({ key, value }) => {
+  async ({ key, value, worker }) => {
     try {
+      const targetName = worker || WORKER_NAME;
+
       // Write to project registry
       let stateJson: string = "";
       withRegistryLocked((registry) => {
-        const entry = ensureWorkerInRegistry(registry, WORKER_NAME);
+        // Authorization check for cross-worker updates
+        if (targetName !== WORKER_NAME && !canUpdateWorker(WORKER_NAME, targetName, registry)) {
+          throw new Error(`Not authorized to update '${targetName}' — you are not their report_to or the mission_authority`);
+        }
+
+        const entry = ensureWorkerInRegistry(registry, targetName);
         // Allowlist of state-owned fields (prevents overwriting pane_id, branch, etc.)
         const STATE_KEYS = new Set(["status","cycles_completed","perpetual","sleep_duration","last_cycle_at",
-          "last_commit_sha","last_commit_msg","last_commit_at","issues_found","issues_fixed"]);
+          "last_commit_sha","last_commit_msg","last_commit_at","issues_found","issues_fixed","report_to"]);
         if (STATE_KEYS.has(key)) {
           (entry as any)[key] = value;
         } else {
@@ -1601,7 +1528,7 @@ server.registerTool(
         const cacheDir = join(
           process.env.HOME || "/tmp",
           ".boring/state/harness-runtime/worker",
-          WORKER_NAME
+          targetName
         );
         if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
         writeFileSync(join(cacheDir, "config-cache.json"), stateJson);
@@ -1610,7 +1537,7 @@ server.registerTool(
       // Emit bus event (best-effort)
       try {
         const payload = JSON.stringify({
-          worker: WORKER_NAME, key, value, channel: "worker-fleet-mcp",
+          worker: targetName, key, value, channel: "worker-fleet-mcp", updated_by: WORKER_NAME,
         });
         execSync(
           `source "${CLAUDE_OPS}/lib/event-bus.sh" && bus_publish "agent.state-changed" '${payload.replace(/'/g, "'\\''")}'`,
@@ -1618,7 +1545,8 @@ server.registerTool(
         );
       } catch {}
 
-      return withPendingReminder({ content: [{ type: "text" as const, text: `Updated state.${key} = ${JSON.stringify(value)}` }] });
+      const prefix = targetName !== WORKER_NAME ? `${targetName}.` : "state.";
+      return withPendingReminder({ content: [{ type: "text" as const, text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -1673,6 +1601,18 @@ server.registerTool(
       for (const [name, entry] of workerEntries) {
         const w = entry as RegistryWorkerEntry;
         output += `${name.padEnd(22)} ${String(w.status || "unknown").padEnd(10)} ${String(w.cycles_completed || 0).padEnd(8)} ${String(w.last_cycle_at || "never").padEnd(24)} ${String(w.issues_found || 0).padEnd(8)} ${String(w.issues_fixed || 0).padEnd(8)}\n`;
+      }
+
+      // Custom state for active workers
+      output += "\n=== Worker State ===\n";
+      for (const [name, entry] of workerEntries) {
+        const w = entry as RegistryWorkerEntry;
+        if (w.custom && Object.keys(w.custom).length > 0) {
+          const stateStr = Object.entries(w.custom)
+            .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
+            .join(", ");
+          output += `  ${name}: ${stateStr}\n`;
+        }
       }
 
       // Pane check
@@ -1973,7 +1913,7 @@ server.registerTool(
       return { content: [{ type: "text" as const, text: `Error: unexpected child pane ID: ${childPaneId}` }], isError: true };
     }
 
-    // 5. Register child in registry.json (flat model — assigned_by, not parent/children)
+    // 5. Register child in registry.json (flat org — report_to + forked_from)
     const childWorkerName = childName;
     try {
       let childPaneTarget = "";
@@ -1995,7 +1935,8 @@ server.registerTool(
         const childEntry = registry[childWorkerName] as RegistryWorkerEntry;
         childEntry.pane_id = childPaneId;
         childEntry.pane_target = childPaneTarget;
-        childEntry.assigned_by = WORKER_NAME;
+        childEntry.report_to = WORKER_NAME;
+        childEntry.forked_from = WORKER_NAME;
         childEntry.model = getWorkerModel();
         childEntry.tmux_session = ownPane.paneTarget?.split(":")[0] || "w";
       });
@@ -2163,18 +2104,18 @@ server.registerTool(
           blocking.push(`No pane_id in registry for '${WORKER_NAME}' even after heartbeat. Watchdog and messaging cannot reach you. Check TMUX_PANE env var and registry write permissions.`);
         }
 
-        // 4. No assigned_by — auto-fix by setting to mission_authority
-        if (!myEntry.assigned_by && !myEntry.parent) {
+        // 4. No report_to — auto-fix by setting to mission_authority
+        if (!getReportTo(myEntry, reg._config as RegistryConfig)) {
           const config = reg._config as RegistryConfig;
           const auth = config?.mission_authority || "chief-of-staff";
           try {
             withRegistryLocked((r) => {
               const e = r[WORKER_NAME] as RegistryWorkerEntry;
-              if (e && !e.assigned_by) e.assigned_by = auth;
+              if (e && !e.report_to) e.report_to = auth;
             });
-            autoFixed.push(`assigned_by auto-set to '${auth}' (mission_authority)`);
+            autoFixed.push(`report_to auto-set to '${auth}' (mission_authority)`);
           } catch {
-            blocking.push(`No assigned_by set for '${WORKER_NAME}' and auto-fix failed. Run update_state("assigned_by", "${auth}") before continuing.`);
+            blocking.push(`No report_to set for '${WORKER_NAME}' and auto-fix failed. Run update_state("report_to", "${auth}") before continuing.`);
           }
         }
       }
@@ -2429,11 +2370,11 @@ server.registerTool(
         if (permissions.window) {
           entry.window = permissions.window;
         }
-        // Assigned_by: explicit param > calling worker > chief-of-staff
+        // report_to: explicit param > calling worker > chief-of-staff
         if (permissions.assigned_by) {
-          entry.assigned_by = permissions.assigned_by;
-        } else if (!entry.assigned_by) {
-          entry.assigned_by = WORKER_NAME || "chief-of-staff";
+          entry.report_to = permissions.assigned_by;
+        } else if (!entry.report_to && !entry.assigned_by) {
+          entry.report_to = WORKER_NAME || "chief-of-staff";
         }
       });
 
@@ -2475,7 +2416,7 @@ server.registerTool(
         `  Dir: .claude/workers/${name}/`,
         `  Model: ${selectedModel} | Perpetual: ${isPerpetual}`,
         permissions.window ? `  Window: ${permissions.window}` : null,
-        `  Assigned by: ${permissions.assigned_by || WORKER_NAME || "chief-of-staff"}`,
+        `  Reports to: ${permissions.assigned_by || WORKER_NAME || "chief-of-staff"}`,
         permissions.disallowedTools.length > 0 ? `  Disallowed: ${permissions.disallowedTools.length} rules` : `  Disallowed: none (full access)`,
         `  Tasks: ${taskSummary}`,
         launchInfo.trim() ? `  ${launchInfo.trim()}` : null,
