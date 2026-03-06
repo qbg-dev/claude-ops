@@ -2212,7 +2212,7 @@ server.registerTool(
     sleep_duration: z.number().optional().describe("Seconds between cycles, only if perpetual (overrides type default if set)"),
     disallowed_tools: z.string().optional().describe("JSON array of disallowed tool patterns (default: safe git/rm guards). Example: [\"Bash(git push*)\",\"Edit\",\"Bash(*deploy*)\"]"),
     window: z.string().optional().describe("tmux window group name (e.g. 'optimizers', 'monitors'). Workers in the same group share a tiled layout."),
-    report_to: z.string().optional().describe("Who this worker reports to (default: calling worker or mission_authority)"),
+    report_to: z.string().optional().describe("Who this worker reports to (default: chief-of-staff / mission_authority). Use direct_report=true to report to calling worker instead."),
     permission_mode: z.string().optional().describe("Claude permission mode (default: bypassPermissions)"),
     launch: z.boolean().optional().describe("Auto-launch in tmux after creation (default: false)"),
     tasks: z.string().optional().describe("JSON array of tasks: [{subject, description?, priority?}]"),
@@ -2272,10 +2272,12 @@ server.registerTool(
         return { content: [{ type: "text" as const, text: `Error: ${result.error}` }], isError: true };
       }
 
-      // Determine report_to
+      // Determine report_to — default to chief-of-staff (mission_authority) unless explicit
+      const config = readRegistry()._config as RegistryConfig | undefined;
+      const missionAuthority = config?.mission_authority || "chief-of-staff";
       const reportTo = direct_report
         ? WORKER_NAME
-        : (report_to || WORKER_NAME || "chief-of-staff");
+        : (report_to || missionAuthority);
 
       // Register in unified registry
       const { state, permissions, taskIds, model: selectedModel, perpetual: isPerpetual } = result as Required<CreateWorkerResult>;

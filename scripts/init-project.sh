@@ -66,7 +66,7 @@ echo "  Path:    $PROJECT_DIR"
 echo ""
 
 # ── Step 1: Git repo ──
-step "1/7 Checking git repo..."
+step "1/8 Checking git repo..."
 if [ -d "$PROJECT_DIR/.git" ]; then
   info "Already a git repo"
 else
@@ -81,14 +81,14 @@ MAIN_BRANCH=$(git -C "$PROJECT_DIR" branch --show-current)
 info "Main branch: $MAIN_BRANCH"
 
 # ── Step 2: .claude/ directory structure ──
-step "2/7 Creating .claude/ structure..."
+step "2/8 Creating .claude/ structure..."
 mkdir -p "$PROJECT_DIR/.claude/workers"
 mkdir -p "$PROJECT_DIR/.claude/scripts/worker"
 mkdir -p "$PROJECT_DIR/.claude/hooks"
 info ".claude/ structure created"
 
 # ── Step 3: .mcp.json ──
-step "3/7 Setting up MCP configuration..."
+step "3/8 Setting up MCP configuration..."
 MCP_FILE="$PROJECT_DIR/.mcp.json"
 if [ -f "$MCP_FILE" ]; then
   # Check if worker-fleet is already configured
@@ -127,7 +127,7 @@ MCPEOF
 fi
 
 # ── Step 4: Registry ──
-step "4/7 Creating worker registry..."
+step "4/8 Creating worker registry..."
 REGISTRY="$PROJECT_DIR/.claude/workers/registry.json"
 if [ -f "$REGISTRY" ]; then
   info "Registry already exists"
@@ -147,7 +147,7 @@ REGEOF
 fi
 
 # ── Step 5: Shared scripts ──
-step "5/7 Setting up shared worker scripts..."
+step "5/8 Setting up shared worker scripts..."
 
 # Copy shared worker scripts from claude-ops templates if they exist
 SHARED_SCRIPTS_SRC="$CLAUDE_OPS_DIR/templates/flat-worker/scripts"
@@ -194,8 +194,57 @@ VALEOF
   info "Created placeholder pre-validate.sh"
 fi
 
-# ── Step 6: Verify hooks ──
-step "6/7 Verifying hooks installation..."
+# ── Step 6: CLAUDE.md fleet section ──
+step "6/8 Appending fleet docs to CLAUDE.md..."
+CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
+FLEET_MARKER="## Worker Fleet"
+
+if [ -f "$CLAUDE_MD" ] && grep -qF "$FLEET_MARKER" "$CLAUDE_MD"; then
+  info "CLAUDE.md already has fleet section"
+else
+  cat >> "$CLAUDE_MD" << 'CMDEOF'
+
+## Worker Fleet
+
+This project uses [claude-ops](https://github.com/qbg-dev/claude-ops) for autonomous agent fleet management.
+
+### Available Scripts
+
+Check `.claude/scripts/` before writing inline bash. Reusable scripts persist across recycles.
+
+**Shared** (all workers):
+```
+.claude/scripts/worker/deploy-to-slot.sh   # Deploy to your isolated test slot
+.claude/scripts/worker/pre-validate.sh     # TypeScript + build check before merge
+```
+
+**Worker-specific** (check `.claude/scripts/{worker-name}/`):
+Create scripts here for tasks you do repeatedly. If you do something twice, save it as a script.
+
+### Worker Conventions
+
+- Workers default to reporting to `chief-of-staff` unless `report_to` is explicitly set.
+- Pre-validate before merge requests: `bash .claude/scripts/worker/pre-validate.sh`
+- Rebase before every cycle: `git fetch origin && git rebase origin/main`
+- Workers deploy to isolated slots only — never use `scripts/deploy.sh` directly.
+
+### Fleet Tools (MCP)
+
+| Tool | Purpose |
+|------|---------|
+| `heartbeat()` | Register presence, get inbox count |
+| `read_inbox()` | Drain pending messages |
+| `send_message(to, msg)` | Message another worker |
+| `fleet_status()` | Overview of all workers |
+| `update_state(key, value)` | Persist state in registry |
+| `create_task(subject)` | Create a tracked task |
+| `update_task(id, status)` | Update task progress |
+CMDEOF
+  info "Appended fleet section to CLAUDE.md"
+fi
+
+# ── Step 7: Verify hooks ──
+step "7/8 Verifying hooks installation..."
 if bash "$CLAUDE_OPS_DIR/scripts/lint-hooks.sh" --quiet 2>/dev/null; then
   info "Hooks OK"
 else
@@ -204,7 +253,7 @@ fi
 
 # ── Step 7: Chief of Staff ──
 if [ "$LAUNCH_COS" = true ]; then
-  step "7/7 Setting up chief-of-staff worker..."
+  step "8/8 Setting up chief-of-staff worker..."
 
   COS_DIR="$PROJECT_DIR/.claude/workers/chief-of-staff"
   mkdir -p "$COS_DIR"
@@ -258,13 +307,13 @@ COSEOF
   echo "    bash ~/.claude-ops/scripts/launch-flat-worker.sh chief-of-staff"
   echo ""
 else
-  step "7/7 Skipping chief-of-staff (use --with-chief-of-staff to create)"
+  step "8/8 Skipping chief-of-staff (use --with-chief-of-staff to create)"
 fi
 
 # ── Initial commit ──
 cd "$PROJECT_DIR"
-if ! git diff --quiet --cached 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard .claude/ .mcp.json)" ]; then
-  git add .claude/ .mcp.json
+if ! git diff --quiet --cached 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard .claude/ .mcp.json CLAUDE.md)" ]; then
+  git add .claude/ .mcp.json CLAUDE.md
   git commit -m "chore: bootstrap claude-ops worker fleet infrastructure" 2>/dev/null || true
   info "Committed initial fleet config"
 fi
