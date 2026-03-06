@@ -217,16 +217,60 @@ if [ -n "${_main_project:-}" ]; then
   fi
 fi
 
+# ── Capture any piped stdin (from create_worker task file) ──
+_STDIN_CONTENT=""
+if [ ! -t 0 ]; then
+  _STDIN_CONTENT=$(cat)
+fi
+
 # ── Write setup prompt to temp file and pipe into Claude's stdin ──
 _SETUP_FILE="/tmp/fork-setup-${CHILD_NAME}-$$.txt"
+_WORKER_DIR="${_main_project:-.}/.claude/workers/${CHILD_NAME}"
+_MISSION_FILE="${_WORKER_DIR}/mission.md"
+_HAS_MISSION=false
+[ -f "$_MISSION_FILE" ] && [ -s "$_MISSION_FILE" ] && _HAS_MISSION=true
+
 if [ -n "${_worktree_dir:-}" ] && [ -d "$_worktree_dir" ]; then
+  _WORKTREE_LINE="You are in your worktree at: $(pwd) (branch: worker/${CHILD_NAME})."
+else
+  _WORKTREE_LINE="No worktree was created. You are working from: $(pwd)."
+fi
+
+if [ "$_HAS_MISSION" = true ]; then
   cat > "$_SETUP_FILE" <<SETUP
-You have just been forked as worker '${CHILD_NAME}'. You are in your worktree at: $(pwd). Read your mission file if it exists (.claude/workers/${CHILD_NAME}/mission.md in the main project), rebase on origin/main, and begin work.
+You have just been forked as worker '${CHILD_NAME}'. ${_WORKTREE_LINE}
+
+You have an existing mission file at ${_MISSION_FILE}. Read it now.
+
+MISSION NEGOTIATION (first round after fork):
+Before diving into work, briefly confirm with the user:
+1. State what you understand the mission to be (from the file + conversation context you inherited).
+2. Ask: "Same mission with new/continued tasks, or should I adjust the focus?"
+3. If the user redirects you, update mission.md accordingly.
+4. Then rebase on origin/main and begin your cycle.
+
+Keep this short — a few sentences, not an essay. If the user already told you what to do in the fork message, skip the question and just confirm + begin.
 SETUP
 else
   cat > "$_SETUP_FILE" <<SETUP
-You have just been forked as worker '${CHILD_NAME}'. No worktree was created. Check your mission file if it exists (.claude/workers/${CHILD_NAME}/mission.md) and begin work.
+You have just been forked as worker '${CHILD_NAME}'. ${_WORKTREE_LINE}
+
+No mission.md exists yet.
+
+MISSION NEGOTIATION (first round after fork):
+You inherited conversation context from your parent session. Before starting work:
+1. Briefly summarize what you understand the task/mission to be from the inherited context.
+2. Ask the user: "What should my mission be? I can write a mission.md once we agree."
+3. Write ${_MISSION_FILE} based on the user's answer.
+4. Then rebase on origin/main and begin your cycle.
+
+Keep this short. If the user already told you what to do in the fork message, skip the question and just confirm + write the mission + begin.
 SETUP
+fi
+
+# Append caller's context if piped via create_worker
+if [ -n "$_STDIN_CONTENT" ]; then
+  printf "\n## Context from parent:\n%s\n" "$_STDIN_CONTENT" >> "$_SETUP_FILE"
 fi
 
 # Hand off to Claude — pipe setup prompt into stdin
