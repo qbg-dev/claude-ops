@@ -20008,7 +20008,7 @@ Worktree: ${worktreeDir} (branch: ${branch})
 Worker config: ${workerDir}/
 
 Read these files NOW in this order:
-1. ${workerDir}/mission.md \u2014 your goals and tasks
+1. ${workerDir}/mission.md \u2014 your goals and tasks (you own this file \u2014 update it as your mission evolves)
 2. Call \`get_worker_state()\` \u2014 your current cycle count and status (stored in registry.json)
 3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
 
