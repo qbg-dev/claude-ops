@@ -36,8 +36,7 @@ let WORKERS_DIR = join(PROJECT_ROOT, ".claude/workers");
 
 /** For testing — override the workers directory */
 function _setWorkersDir(dir: string) { WORKERS_DIR = dir; }
-const BORING_DIR = process.env.BORING_DIR || join(HOME, ".boring");
-const HARNESS_LOCK_DIR = join(BORING_DIR, "state/locks");
+const HARNESS_LOCK_DIR = join(CLAUDE_OPS, "state/locks");
 
 /** Project-level unified registry — replaces per-worker permissions.json, state.json, and pane-registry.json */
 const REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
@@ -1124,13 +1123,6 @@ server.registerTool(
       reply_type,
     });
     if (!inboxResult.ok) {
-      // Worker not local — try remote relay
-      const remoteResult = await relayFetch("POST", "/msg", {
-        project: PROJECT_SLUG, worker: recipientName, content, summary, from_name: WORKER_NAME,
-      });
-      if (remoteResult?.ok) {
-        return { content: [{ type: "text" as const, text: `Message sent to ${recipientName} (remote)` }] };
-      }
       return { content: [{ type: "text" as const, text: `Error: ${inboxResult.error}` }], isError: true };
     }
 
@@ -1409,16 +1401,7 @@ server.registerTool(
       let totalCount = 0;
 
       for (const w of targetWorkers) {
-        let tasks = readTasks(w);
-
-        // If no local tasks and querying a specific worker, try remote
-        if (Object.keys(tasks).length === 0 && workerName !== "all") {
-          const remote = await relayFetch("GET", `/tasks/${PROJECT_SLUG}/${w}`);
-          if (remote && Object.keys(remote).length > 0) {
-            tasks = remote;
-          }
-        }
-
+        const tasks = readTasks(w);
         if (Object.keys(tasks).length === 0) continue;
 
         const entries = Object.entries(tasks) as [string, Task][];
@@ -1527,7 +1510,7 @@ server.registerTool(
       try {
         const cacheDir = join(
           process.env.HOME || "/tmp",
-          ".boring/state/harness-runtime/worker",
+          ".claude-ops/state/harness-runtime/worker",
           targetName
         );
         if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
@@ -1628,12 +1611,6 @@ server.registerTool(
       }
 
       // (dead panes were already auto-pruned inside withRegistryLocked above)
-
-      // Append remote fleet status (best-effort)
-      const remote = await relayFetch("GET", "/fleet");
-      if (remote?.output) {
-        output += "\n\n=== Remote Fleet ===\n" + remote.output;
-      }
 
       return withPendingReminder({ content: [{ type: "text" as const, text: output }] });
     } catch (e: any) {
@@ -2690,9 +2667,6 @@ rm -f "${reloadScript}"
 // ═══════════════════════════════════════════════════════════════════
 
 async function main() {
-  // Auto-start local relay server (idempotent — skips if already running)
-  startRelayServer();
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
