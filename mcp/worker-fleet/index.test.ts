@@ -892,7 +892,7 @@ describe("ensureWorkerInRegistry", () => {
     expect(entry.permission_mode).toBe("bypassPermissions");
     expect(entry.status).toBe("idle");
     expect(entry.disallowed_tools).toEqual(expect.any(Array));
-    expect(entry.custom).toEqual({});
+    expect(entry.custom).toEqual({ runtime: "claude" });
     // Entry should be in registry
     expect(registry[testName]).toBe(entry);
   });

@@ -18644,6 +18644,7 @@ class ExperimentalMcpServerTasks {
     return mcpServerInternal._createRegisteredTool(name, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 }
+
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 class McpServer {
   constructor(serverInfo, options) {
@@ -19365,7 +19366,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "process";
+import process2 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -19454,7 +19455,6 @@ class StdioServerTransport {
     });
   }
 }
-
 // index.ts
 import {
   readFileSync,
@@ -21876,7 +21876,7 @@ async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
 }
-if (import.meta.main) {
+if (__require.main == __require.module) {
   main().catch((e) => {
     console.error("worker-fleet MCP server fatal:", e);
     process.exit(1);
