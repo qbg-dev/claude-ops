@@ -59,12 +59,9 @@ fi
 
 [ ! -f "$PERMS" ] && { echo '{}'; exit 0; }
 
-# Read denyList array
-DISALLOWED=$(jq -r '.denyList // [] | .[]' "$PERMS" 2>/dev/null || true)
-[ -z "$DISALLOWED" ] && { echo '{}'; exit 0; }
-
-# Extract tool-specific arguments for matching
+# ── Extract Bash command (needed by universal gates and denyList matching) ──
 COMMAND=""
+COMMAND_NORM=""
 if [ "$TOOL_NAME" = "Bash" ]; then
   COMMAND=$(echo "$TOOL_INPUT" | jq -r '.command // ""' 2>/dev/null || echo "")
   # Normalize: strip common prefix wrappers that bypass start-of-string matching
@@ -80,7 +77,6 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     _INNER="${_INNER#\'}" ; _INNER="${_INNER%\'}"
     _NORM="$_INNER"
   fi
-  # Also match against normalized form (checked alongside raw COMMAND below)
   COMMAND_NORM="$_NORM"
 
   # Whitelist: messaging/notification tools — content should never trigger policy blocks
@@ -88,8 +84,9 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     *worker-message.sh*|*worker-bus-emit.sh*|notify\ *) echo '{}'; exit 0 ;;
   esac
 
-  # Universal gate: block direct prod access from worktrees (workers)
-  # Workers must not rsync/scp/ssh to prod directly — use deploy-prod.sh from main repo
+  # ── Universal gates (run regardless of denyList) ──────────────────
+
+  # Block direct prod access from worktrees — workers cannot deploy to prod
   if [ "$_IS_WORKTREE" = true ]; then
     _PROD_IP="120.77.216.196"
     if echo "$COMMAND" | grep -qF "$_PROD_IP" || echo "$COMMAND_NORM" | grep -qF "$_PROD_IP"; then
@@ -97,7 +94,12 @@ if [ "$TOOL_NAME" = "Bash" ]; then
       exit 0
     fi
   fi
+
 fi
+
+# Read denyList array (after universal gates so they always run)
+DISALLOWED=$(jq -r '.denyList // [] | .[]' "$PERMS" 2>/dev/null || true)
+[ -z "$DISALLOWED" ] && { echo '{}'; exit 0; }
 FILE_PATH=""
 case "$TOOL_NAME" in
   Edit|Write|Read) FILE_PATH=$(echo "$TOOL_INPUT" | jq -r '.file_path // ""' 2>/dev/null || echo "") ;;

@@ -836,7 +836,7 @@ function runDiagnostics(): DiagnosticIssue[] {
     // Registry entry (replaces state.json + permissions.json checks)
     const regEntry = getWorkerEntry(WORKER_NAME);
     if (!regEntry) {
-      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Add yourself: update_state('status', 'active') — this auto-registers you" });
+      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Call register() to self-register with auto-detected pane info" });
     } else {
       if (!regEntry.status) {
         issues.push({ severity: "warning", check: "registry.status", message: "registry entry missing 'status' field", fix: `update_state("status", "idle")` });
@@ -891,7 +891,7 @@ function runDiagnostics(): DiagnosticIssue[] {
   if (process.env.TMUX_PANE) {
     const entry = getWorkerEntry(WORKER_NAME);
     if (!entry) {
-      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you.`, fix: "Run update_state('status', 'active') to self-register" });
+      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you.`, fix: "Call register() to self-register" });
     } else if (entry.pane_id !== process.env.TMUX_PANE) {
       issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json.`, fix: "Run update_state('pane_id', '" + process.env.TMUX_PANE + "') to fix" });
     }
@@ -2464,6 +2464,58 @@ server.registerTool(
         ].filter(Boolean).join("\n"),
       }],
     };
+  }
+);
+
+server.registerTool(
+  "register",
+  {
+    description: "Self-register in the registry. Auto-detects your pane ID, tmux session, model, and worktree. Call this when lint warns you're not in registry.json. Only registers yourself — cannot register other workers.",
+    inputSchema: {
+      model: z.string().optional().describe("Model override (default: from registry or 'opus')"),
+      perpetual: z.boolean().optional().describe("Run in perpetual loop (default: false)"),
+      sleep_duration: z.number().optional().describe("Seconds between cycles if perpetual (default: 1800)"),
+      report_to: z.string().optional().describe("Who this worker reports to (default: mission_authority)"),
+    },
+  },
+  async ({ model, perpetual, sleep_duration, report_to }) => {
+    try {
+      const ownPane = findOwnPane();
+      let paneTarget = "";
+      let tmuxSession = "w";
+      if (ownPane) {
+        paneTarget = ownPane.paneTarget || "";
+        tmuxSession = paneTarget.split(":")[0] || "w";
+      }
+
+      const registry = readRegistry();
+      const config = registry._config as RegistryConfig | undefined;
+      const defaultReportTo = config?.mission_authority || "chief-of-staff";
+
+      withRegistryLocked((reg) => {
+        const entry = ensureWorkerInRegistry(reg, WORKER_NAME);
+        entry.status = "active";
+        entry.model = model || entry.model || "opus";
+        if (perpetual !== undefined) entry.perpetual = perpetual;
+        if (sleep_duration !== undefined) entry.sleep_duration = sleep_duration;
+        entry.report_to = report_to || entry.report_to || defaultReportTo;
+        if (ownPane) {
+          entry.pane_id = ownPane.paneId;
+          entry.pane_target = paneTarget;
+          entry.tmux_session = tmuxSession;
+        }
+      });
+
+      const paneInfo = ownPane ? `pane ${ownPane.paneId} (${paneTarget})` : "no pane detected";
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Registered '${WORKER_NAME}' in registry.json — ${paneInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}`,
+        }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Register failed: ${e.message}` }], isError: true };
+    }
   }
 );
 
