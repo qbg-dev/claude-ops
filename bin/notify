@@ -7,7 +7,16 @@
 #        notify "message" "" "https://example.com"        # default title + URL
 #        notify "message" "" "/path/to/file.html"         # local file (auto file:// prefix)
 
-msg="${1:?Usage: notify \"message\" [\"title\"] [\"url\"]}"
+# Parse --no-triage flag before positional args
+_NO_TRIAGE=0
+_ARGS=()
+for _a in "$@"; do
+  if [ "$_a" = "--no-triage" ]; then _NO_TRIAGE=1
+  else _ARGS+=("$_a"); fi
+done
+set -- "${_ARGS[@]}"
+
+msg="${1:?Usage: notify \"message\" [\"title\"] [\"url\"] [--no-triage]}"
 title="${2:-🔔 Claude}"
 url="${3:-}"
 
@@ -20,7 +29,7 @@ fi
 
 # ── Append to triage queue (.claude/triage/queue.jsonl) ──────────────────────
 _TRIAGE_DIR="$_PROJECT_ROOT/.claude/triage"
-if [ -n "$_PROJECT_ROOT" ] && [ -d "$_PROJECT_ROOT/.claude" ]; then
+if [ "$_NO_TRIAGE" -eq 0 ] && [ -n "$_PROJECT_ROOT" ] && [ -d "$_PROJECT_ROOT/.claude" ]; then
   mkdir -p "$_TRIAGE_DIR" 2>/dev/null || true
 
   # Auto-detect calling worker from WORKER_NAME env or registry pane_id lookup

@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileS
 import { join } from "path";
 import {
   readTasks, writeTasks, nextTaskId, isTaskBlocked,
-  writeToInbox, writeToTriageQueue, readInboxFromCursor, readInboxCursor, writeInboxCursor,
+  writeToInbox, writeToTriageQueue, buildMessageBody, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, generateSeedContent, runDiagnostics, createWorkerFiles, _setWorkersDir,
   readRegistry, getWorkerEntry, ensureWorkerInRegistry, lintRegistry,
   _replaceMemorySection, acquireLock, releaseLock, getWorktreeDir, getSessionId,
@@ -468,6 +468,114 @@ describe("writeToTriageQueue", () => {
     const last2 = lines.slice(-2).map(l => JSON.parse(l));
     expect(last2[0].source).toBe("bot-a");
     expect(last2[1].source).toBe("bot-b");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// buildMessageBody
+// ═══════════════════════════════════════════════════════════════════
+
+describe("buildMessageBody", () => {
+  test("content only", () => {
+    expect(buildMessageBody("hello")).toBe("hello");
+  });
+
+  test("content + context", () => {
+    const result = buildMessageBody("question", "some background");
+    expect(result).toBe("question\n\n---\nsome background");
+  });
+
+  test("content + options", () => {
+    const result = buildMessageBody("pick one", undefined, ["A", "B", "C"]);
+    expect(result).toContain("Options:");
+    expect(result).toContain("  1) A");
+    expect(result).toContain("  2) B");
+    expect(result).toContain("  3) C");
+  });
+
+  test("content + context + options", () => {
+    const result = buildMessageBody("pick", "ctx", ["X", "Y"]);
+    expect(result).toContain("---\nctx");
+    expect(result).toContain("  1) X");
+    expect(result).toContain("  2) Y");
+  });
+
+  test("empty options array is ignored", () => {
+    expect(buildMessageBody("hello", undefined, [])).toBe("hello");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// writeToTriageQueue — extended opts
+// ═══════════════════════════════════════════════════════════════════
+
+describe("writeToTriageQueue — extended opts", () => {
+  test("options are stored in triage entry", () => {
+    const result = writeToTriageQueue("pick one", "choices", "test-bot", { options: ["A", "B"] });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    const entry = JSON.parse(lines[lines.length - 1]);
+    expect(entry.options).toEqual(["A", "B"]);
+    expect(entry.category).toBe("worker-question");
+    expect(entry.from_worker).toBe("test-bot");
+  });
+
+  test("urgency is stored in triage entry", () => {
+    const result = writeToTriageQueue("urgent!", "urgent", "test-bot", { urgency: "high" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    const entry = JSON.parse(lines[lines.length - 1]);
+    expect(entry.urgency).toBe("high");
+  });
+
+  test("custom category overrides default", () => {
+    const result = writeToTriageQueue("test", "test", "test-bot", { category: "architecture" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    const entry = JSON.parse(lines[lines.length - 1]);
+    expect(entry.category).toBe("architecture");
+  });
+
+  test("no opts defaults to worker-escalation category", () => {
+    const result = writeToTriageQueue("plain msg", "plain", "test-bot");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    const entry = JSON.parse(lines[lines.length - 1]);
+    expect(entry.category).toBe("worker-escalation");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// writeToInbox — options & urgency
+// ═══════════════════════════════════════════════════════════════════
+
+describe("writeToInbox — options & urgency", () => {
+  test("options and urgency are stored in inbox message", () => {
+    const result = writeToInbox("test-worker", {
+      content: "pick one", summary: "choices", from_name: "sender",
+      options: ["A", "B"], urgency: "high",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const inboxPath = join(WORKERS_DIR, "test-worker", "inbox.jsonl");
+    const lines = readFileSync(inboxPath, "utf-8").trim().split("\n");
+    const msg = JSON.parse(lines[lines.length - 1]);
+    expect(msg.options).toEqual(["A", "B"]);
+    expect(msg.urgency).toBe("high");
+    expect(msg.msg_id).toBe(result.msg_id);
   });
 });
 

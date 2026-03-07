@@ -594,7 +594,7 @@ function readInboxFromCursor(
 /** Write a message to a worker's inbox.jsonl (durable delivery) */
 function writeToInbox(
   recipientName: string,
-  message: { content: string; summary?: string; from_name: string; ack_required?: boolean; in_reply_to?: string; reply_type?: string; [k: string]: any }
+  message: { content: string; summary?: string; from_name: string; ack_required?: boolean; in_reply_to?: string; reply_type?: string; options?: string[]; urgency?: string; [k: string]: any }
 ): { ok: true; msg_id: string } | { ok: false; error: string } {
   const workerDir = join(WORKERS_DIR, recipientName);
   if (!existsSync(workerDir)) {
@@ -617,6 +617,8 @@ function writeToInbox(
     _ts: new Date().toISOString(),
   };
   if (message.reply_type) payload.reply_type = message.reply_type;
+  if (message.options?.length) payload.options = message.options;
+  if (message.urgency) payload.urgency = message.urgency;
 
   try {
     appendFileSync(inboxPath, JSON.stringify(payload) + "\n");
@@ -631,26 +633,38 @@ function writeToTriageQueue(
   content: string,
   summary: string | undefined,
   fromWorker: string,
+  opts?: { options?: string[]; category?: string; urgency?: string },
 ): { ok: true; id: string } | { ok: false; error: string } {
   try {
     const triageDir = join(PROJECT_ROOT, ".claude/triage");
     if (!existsSync(triageDir)) mkdirSync(triageDir, { recursive: true });
     const triagePath = join(triageDir, "queue.jsonl");
     const id = `tq-${Date.now()}`;
-    const entry = {
+    const entry: Record<string, any> = {
       id,
-      category: "worker-escalation",
+      category: opts?.category || (opts?.options?.length ? "worker-question" : "worker-escalation"),
       title: summary || content.slice(0, 60),
       detail: content,
       source: fromWorker,
+      from_worker: fromWorker,
       added_at: new Date().toISOString(),
       status: "pending",
     };
+    if (opts?.options?.length) entry.options = opts.options;
+    if (opts?.urgency) entry.urgency = opts.urgency;
     appendFileSync(triagePath, JSON.stringify(entry) + "\n");
     return { ok: true, id };
   } catch (e: any) {
     return { ok: false, error: e.message };
   }
+}
+
+/** Build structured message body from content + optional context/options */
+function buildMessageBody(content: string, context?: string, options?: string[]): string {
+  let body = content;
+  if (context) body += `\n\n---\n${context}`;
+  if (options?.length) body += `\n\nOptions:\n${options.map((o, i) => `  ${i + 1}) ${o}`).join("\n")}`;
+  return body;
 }
 
 /** Resolve recipient — worker name, "report", "direct_reports", or raw pane ID */
@@ -1127,8 +1141,13 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
     fyi: z.boolean().optional().describe("If true, no reply expected — informational only (default: false = reply expected)"),
     in_reply_to: z.string().optional().describe("msg_id of a message you're replying to — marks it as acknowledged"),
     reply_type: z.string().optional().describe("What kind of reply is expected: 'ack' (simple acknowledgment), 'e2e_verify' (verify on main test and confirm), 'review' (review and provide feedback). Stored in message and shown in pending replies."),
+    options: z.array(z.string()).optional().describe("Structured choices for the recipient. Shown as numbered list."),
+    context: z.string().optional().describe("Background/context appended after content. Markdown and tables supported."),
+    urgency: z.enum(["low", "normal", "high"]).optional().describe("Message urgency (default: normal)."),
   } },
-  async ({ to, content, summary, fyi, in_reply_to, reply_type }) => {
+  async ({ to, content, summary, fyi, in_reply_to, reply_type, options, context, urgency }) => {
+    // Build structured body from content + context + options
+    const body = buildMessageBody(content, context, options);
     // Broadcast path: to="all" sends to every worker's inbox (defaults to fyi=true)
     if (to === "all") {
       const broadcastFyi = fyi !== false; // broadcasts are FYI unless explicitly fyi=false
@@ -1140,7 +1159,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
           .map(d => d.name)
           .filter(name => name !== WORKER_NAME);
         for (const name of dirs) {
-          const result = writeToInbox(name, { content, summary, from_name: WORKER_NAME, ack_required: !broadcastFyi, reply_type });
+          const result = writeToInbox(name, { content: body, summary, from_name: WORKER_NAME, ack_required: !broadcastFyi, reply_type, options, urgency });
           if (result.ok) successes.push(name);
           else failures.push(`${name}: ${result.error}`);
         }
@@ -1149,7 +1168,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
       }
       // Fire bus for tmux delivery (best-effort)
       try {
-        const args = ["broadcast", content];
+        const args = ["broadcast", body];
         if (summary) args.push("--summary", summary);
         runScript(WORKER_MESSAGE_SH, args, { timeout: 10_000 });
       } catch {}
@@ -1160,14 +1179,14 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
 
     // User escalation path: to="user" writes to triage queue + fires notification
     if (to === "user") {
-      const result = writeToTriageQueue(content, summary, WORKER_NAME);
+      const result = writeToTriageQueue(body, summary, WORKER_NAME, { options, urgency });
       if (!result.ok) {
         return { content: [{ type: "text" as const, text: `Error writing to triage queue: ${result.error}` }], isError: true };
       }
-      // Fire desktop notification via notify (best-effort)
+      // Fire desktop notification via notify with --no-triage to avoid duplicate triage entry
       try {
         execSync(
-          `"${join(CLAUDE_OPS, "bin/notify")}" ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`,
+          `"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`,
           { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
         );
       } catch {}
@@ -1192,7 +1211,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
           continue;
         }
         try {
-          tmuxSendMessage(pId, `[msg from ${WORKER_NAME}] ${content}`);
+          tmuxSendMessage(pId, `[msg from ${WORKER_NAME}] ${body}`);
           successes.push(pId);
         } catch {
           failures.push(pId);
@@ -1212,7 +1231,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
         return { content: [{ type: "text" as const, text: `Error: Pane ${resolved.paneId} is dead (not found in tmux)` }], isError: true };
       }
       try {
-        tmuxSendMessage(resolved.paneId!, `[msg from ${WORKER_NAME}] ${content}`);
+        tmuxSendMessage(resolved.paneId!, `[msg from ${WORKER_NAME}] ${body}`);
         const label = to === "report" ? `report (pane ${resolved.paneId})` : `pane ${resolved.paneId}`;
         return { content: [{ type: "text" as const, text: `Sent to ${label} (tmux-only, no inbox)` }] };
       } catch (e: any) {
@@ -1236,10 +1255,12 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
 
     // Step 1: Write to inbox (critical — must succeed)
     const inboxResult = writeToInbox(recipientName, {
-      content, summary, from_name: WORKER_NAME,
+      content: body, summary, from_name: WORKER_NAME,
       ack_required: !fyi,
       in_reply_to,
       reply_type,
+      options,
+      urgency,
     });
     if (!inboxResult.ok) {
       return { content: [{ type: "text" as const, text: `Error: ${inboxResult.error}` }], isError: true };
@@ -1257,10 +1278,10 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
       const entry = registry[recipientName] as RegistryWorkerEntry | undefined;
       const paneId = entry?.pane_id;
       if (paneId && isPaneAlive(paneId)) {
-        tmuxSendMessage(paneId, `[msg from ${WORKER_NAME}] ${content}`);
+        tmuxSendMessage(paneId, `[msg from ${WORKER_NAME}] ${body}`);
       } else {
         // Fall back to worker-message.sh (uses legacy pane-registry.json)
-        const args = ["send", recipientName, content];
+        const args = ["send", recipientName, body];
         if (summary) args.push("--summary", summary);
         runScript(WORKER_MESSAGE_SH, args, { timeout: 10_000 });
       }
@@ -2894,7 +2915,7 @@ if (import.meta.main) {
 // ── Exports for testing ──────────────────────────────────────────────
 export {
   readTasks, writeTasks, nextTaskId, isTaskBlocked, getTasksPath,
-  writeToInbox, writeToTriageQueue, readInboxFromCursor, readInboxCursor, writeInboxCursor,
+  writeToInbox, writeToTriageQueue, buildMessageBody, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, isPaneAlive, readJsonFile, acquireLock, releaseLock,
   findOwnPane, getSessionId, getWorkerModel, getWorktreeDir, generateSeedContent,
   runDiagnostics, createWorkerFiles, _setWorkersDir,

@@ -18644,7 +18644,6 @@ class ExperimentalMcpServerTasks {
     return mcpServerInternal._createRegisteredTool(name, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 }
-
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 class McpServer {
   constructor(serverInfo, options) {
@@ -19366,7 +19365,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "node:process";
+import process2 from "process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -19455,6 +19454,7 @@ class StdioServerTransport {
     });
   }
 }
+
 // index.ts
 import {
   readFileSync,
@@ -19897,6 +19897,10 @@ function writeToInbox(recipientName, message) {
   };
   if (message.reply_type)
     payload.reply_type = message.reply_type;
+  if (message.options?.length)
+    payload.options = message.options;
+  if (message.urgency)
+    payload.urgency = message.urgency;
   try {
     appendFileSync(inboxPath, JSON.stringify(payload) + `
 `);
@@ -19905,7 +19909,7 @@ function writeToInbox(recipientName, message) {
     return { ok: false, error: e.message };
   }
 }
-function writeToTriageQueue(content, summary, fromWorker) {
+function writeToTriageQueue(content, summary, fromWorker, opts) {
   try {
     const triageDir = join(PROJECT_ROOT, ".claude/triage");
     if (!existsSync(triageDir))
@@ -19914,19 +19918,39 @@ function writeToTriageQueue(content, summary, fromWorker) {
     const id = `tq-${Date.now()}`;
     const entry = {
       id,
-      category: "worker-escalation",
+      category: opts?.category || (opts?.options?.length ? "worker-question" : "worker-escalation"),
       title: summary || content.slice(0, 60),
       detail: content,
       source: fromWorker,
+      from_worker: fromWorker,
       added_at: new Date().toISOString(),
       status: "pending"
     };
+    if (opts?.options?.length)
+      entry.options = opts.options;
+    if (opts?.urgency)
+      entry.urgency = opts.urgency;
     appendFileSync(triagePath, JSON.stringify(entry) + `
 `);
     return { ok: true, id };
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+function buildMessageBody(content, context, options) {
+  let body = content;
+  if (context)
+    body += `
+
+---
+${context}`;
+  if (options?.length)
+    body += `
+
+Options:
+${options.map((o, i) => `  ${i + 1}) ${o}`).join(`
+`)}`;
+  return body;
 }
 function resolveRecipient(to) {
   if (to.startsWith("%")) {
@@ -20324,8 +20348,12 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
   summary: exports_external.string().describe("Short preview (5-10 words)"),
   fyi: exports_external.boolean().optional().describe("If true, no reply expected \u2014 informational only (default: false = reply expected)"),
   in_reply_to: exports_external.string().optional().describe("msg_id of a message you're replying to \u2014 marks it as acknowledged"),
-  reply_type: exports_external.string().optional().describe("What kind of reply is expected: 'ack' (simple acknowledgment), 'e2e_verify' (verify on main test and confirm), 'review' (review and provide feedback). Stored in message and shown in pending replies.")
-} }, async ({ to, content, summary, fyi, in_reply_to, reply_type }) => {
+  reply_type: exports_external.string().optional().describe("What kind of reply is expected: 'ack' (simple acknowledgment), 'e2e_verify' (verify on main test and confirm), 'review' (review and provide feedback). Stored in message and shown in pending replies."),
+  options: exports_external.array(exports_external.string()).optional().describe("Structured choices for the recipient. Shown as numbered list."),
+  context: exports_external.string().optional().describe("Background/context appended after content. Markdown and tables supported."),
+  urgency: exports_external.enum(["low", "normal", "high"]).optional().describe("Message urgency (default: normal).")
+} }, async ({ to, content, summary, fyi, in_reply_to, reply_type, options, context, urgency }) => {
+  const body = buildMessageBody(content, context, options);
   if (to === "all") {
     const broadcastFyi = fyi !== false;
     const failures = [];
@@ -20333,7 +20361,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
     try {
       const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_")).map((d) => d.name).filter((name) => name !== WORKER_NAME);
       for (const name of dirs) {
-        const result = writeToInbox(name, { content, summary, from_name: WORKER_NAME, ack_required: !broadcastFyi, reply_type });
+        const result = writeToInbox(name, { content: body, summary, from_name: WORKER_NAME, ack_required: !broadcastFyi, reply_type, options, urgency });
         if (result.ok)
           successes.push(name);
         else
@@ -20343,7 +20371,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
       return { content: [{ type: "text", text: `Error listing workers: ${e.message}` }], isError: true };
     }
     try {
-      const args = ["broadcast", content];
+      const args = ["broadcast", body];
       if (summary)
         args.push("--summary", summary);
       runScript(WORKER_MESSAGE_SH, args, { timeout: 1e4 });
@@ -20355,12 +20383,12 @@ Failed: ${failures.join(", ")}`;
     return { content: [{ type: "text", text: msg }] };
   }
   if (to === "user") {
-    const result = writeToTriageQueue(content, summary, WORKER_NAME);
+    const result = writeToTriageQueue(body, summary, WORKER_NAME, { options, urgency });
     if (!result.ok) {
       return { content: [{ type: "text", text: `Error writing to triage queue: ${result.error}` }], isError: true };
     }
     try {
-      execSync(`"${join(CLAUDE_OPS, "bin/notify")}" ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`, { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" });
+      execSync(`"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`, { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" });
     } catch {}
     return withPendingReminder({ content: [{ type: "text", text: `Escalated to user [${result.id}] \u2014 written to triage queue + notification sent` }] });
   }
@@ -20379,7 +20407,7 @@ Failed: ${failures.join(", ")}`;
         continue;
       }
       try {
-        tmuxSendMessage(pId, `[msg from ${WORKER_NAME}] ${content}`);
+        tmuxSendMessage(pId, `[msg from ${WORKER_NAME}] ${body}`);
         successes.push(pId);
       } catch {
         failures.push(pId);
@@ -20399,7 +20427,7 @@ Failed: ${failures.join(", ")}`;
       return { content: [{ type: "text", text: `Error: Pane ${resolved.paneId} is dead (not found in tmux)` }], isError: true };
     }
     try {
-      tmuxSendMessage(resolved.paneId, `[msg from ${WORKER_NAME}] ${content}`);
+      tmuxSendMessage(resolved.paneId, `[msg from ${WORKER_NAME}] ${body}`);
       const label = to === "report" ? `report (pane ${resolved.paneId})` : `pane ${resolved.paneId}`;
       return { content: [{ type: "text", text: `Sent to ${label} (tmux-only, no inbox)` }] };
     } catch (e) {
@@ -20418,12 +20446,14 @@ WARNING: Worker '${recipientName}' has no active pane \u2014 message queued in i
     }
   } catch {}
   const inboxResult = writeToInbox(recipientName, {
-    content,
+    content: body,
     summary,
     from_name: WORKER_NAME,
     ack_required: !fyi,
     in_reply_to,
-    reply_type
+    reply_type,
+    options,
+    urgency
   });
   if (!inboxResult.ok) {
     return { content: [{ type: "text", text: `Error: ${inboxResult.error}` }], isError: true };
@@ -20436,9 +20466,9 @@ WARNING: Worker '${recipientName}' has no active pane \u2014 message queued in i
     const entry = registry2[recipientName];
     const paneId = entry?.pane_id;
     if (paneId && isPaneAlive(paneId)) {
-      tmuxSendMessage(paneId, `[msg from ${WORKER_NAME}] ${content}`);
+      tmuxSendMessage(paneId, `[msg from ${WORKER_NAME}] ${body}`);
     } else {
-      const args = ["send", recipientName, content];
+      const args = ["send", recipientName, body];
       if (summary)
         args.push("--summary", summary);
       runScript(WORKER_MESSAGE_SH, args, { timeout: 1e4 });
@@ -21846,7 +21876,7 @@ async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
 }
-if (__require.main == __require.module) {
+if (import.meta.main) {
   main().catch((e) => {
     console.error("worker-fleet MCP server fatal:", e);
     process.exit(1);
@@ -21881,6 +21911,7 @@ export {
   ensureWorkerInRegistry,
   createWorkerFiles,
   canUpdateWorker,
+  buildMessageBody,
   acquireLock,
   _setWorkersDir,
   _replaceMemorySection,
