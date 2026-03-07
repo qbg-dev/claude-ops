@@ -32,10 +32,10 @@ complete_stop_check("sc-1", result="PASS — no TS errors")
 
 **Verification patterns** — pick what fits:
 - **Quick**: Run a command yourself (bun test, curl, grep) → `complete_stop_check`
-- **Subagent**: Spawn an Agent tool to verify in parallel while you continue
+- **Subagent**: Spawn an Agent tool to verify in parallel while you continue — this is the primary Claude-based review path
 - **Verifier worker**: `/claude-ops:complex-verification` — spawns a persistent worker for exhaustive multi-step verification
 - **Browser**: Use Chrome MCP to visually verify UI changes on your slot URL
-- **External tools**: Any verification-oriented MCP tools available in your session
+- **Codex**: `mcp__check-your-work__check_commit(sha)` — independent review via OpenAI Codex (Codex-only, not Claude)
 
 ## Rules
 - **Fix everything.** Never just report issues — investigate, fix, deploy, document in MEMORY.md.
