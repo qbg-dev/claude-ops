@@ -2391,24 +2391,42 @@ server.registerTool(
 
     if (isStandby) {
       // ── WAKE UP: standby → active ──
+      // The worker is still alive in its pane (just moved to w:standby).
+      // Move the pane back to its original window — no new launch needed.
+      const paneId = existing.pane_id;
+      const originalWindow = existing.window || targetName;
+      let moveResult = "";
+
+      if (paneId) {
+        try {
+          // Check if original window still exists; create if not
+          const windowCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
+          const windows = (windowCheck.stdout || "").split("\n").map(w => w.trim());
+          if (!windows.includes(originalWindow)) {
+            spawnSync("tmux", ["new-window", "-t", tmuxSession, "-n", originalWindow, "-d"], { encoding: "utf-8" });
+          }
+
+          // Move pane back from standby to original window
+          const moveRes = spawnSync("tmux", ["move-pane", "-s", paneId, "-t", `${tmuxSession}:${originalWindow}`], { encoding: "utf-8" });
+          if (moveRes.status === 0) {
+            moveResult = `Pane ${paneId}: moved back to ${tmuxSession}:${originalWindow}`;
+            spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:${originalWindow}`, "tiled"], { encoding: "utf-8" });
+          } else {
+            moveResult = `Pane ${paneId}: move failed — ${(moveRes.stderr || "").trim()}`;
+          }
+        } catch (e: any) {
+          moveResult = `Pane move error: ${e.message}`;
+        }
+      } else {
+        moveResult = "No pane_id in registry — pane may have been killed";
+      }
+
       withRegistryLocked((registry) => {
         const entry = registry[targetName] as RegistryWorkerEntry;
         if (entry) {
           entry.status = "active";
         }
       });
-
-      // Launch the worker (creates pane in correct window, injects seed)
-      const projectRoot = process.env.PROJECT_ROOT || "";
-      const launchScript = join(process.env.HOME || "", ".claude-ops", "scripts", "launch-flat-worker.sh");
-      const launchResult = spawnSync("bash", [launchScript, targetName], {
-        encoding: "utf-8",
-        env: { ...process.env, PROJECT_ROOT: projectRoot },
-        timeout: 60000,
-      });
-
-      const launchOutput = (launchResult.stdout || "").trim();
-      const launchError = (launchResult.stderr || "").trim();
 
       return {
         content: [{
@@ -2417,8 +2435,7 @@ server.registerTool(
             `Worker '${targetName}' → active (woken from standby).`,
             `  Registry: status=active`,
             reason ? `  Reason: ${reason}` : null,
-            launchOutput ? `  Launch: ${launchOutput.split("\n").pop()}` : null,
-            launchError ? `  Warning: ${launchError.split("\n").pop()}` : null,
+            moveResult ? `  ${moveResult}` : null,
           ].filter(Boolean).join("\n"),
         }],
       };
