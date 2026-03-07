@@ -26,6 +26,7 @@ create_worker(
 ```
 
 **Mission template** (adapt to your specific refactor):
+
 ```
 # Verification Worker
 

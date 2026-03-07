@@ -134,6 +134,17 @@ if [ "$_vision_approved" != "true" ]; then
   fi
 fi
 
+# ── Stop checks gate (file-persisted by MCP add_stop_check) ──
+_sc_file="/tmp/claude-stop-checks-${_wname}.json"
+if [ -f "$_sc_file" ]; then
+  _sc_pending=$(jq '[.checks[] | select(.completed == false)] | length' "$_sc_file" 2>/dev/null || echo "0")
+  if [ "$_sc_pending" -gt 0 ]; then
+    _sc_list=$(jq -r '.checks[] | select(.completed == false) | "  [\(.id)] \(.description)"' "$_sc_file" 2>/dev/null || echo "  (could not read checks)")
+    hook_block "$(printf '## %s: %s pending stop check(s)\n\nYou registered verification items that are not yet completed:\n\n%s\n\nComplete each check, then call complete_stop_check(id) before stopping.\nOr: recycle(force=true) to bypass.\n\nEscape: touch %s/allow-stop' "$_wname" "$_sc_pending" "$_sc_list" "$_SESSION_DIR")"
+    exit 0
+  fi
+fi
+
 # Perpetual workers: pass through (watchdog handles respawn cycle)
 _perpetual=$(jq -r '.perpetual // false' "$_wstate" 2>/dev/null || echo "false")
 if [ "$_perpetual" = "true" ]; then

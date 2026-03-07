@@ -77,18 +77,49 @@ function detectWorkerName(): string {
 
 const WORKER_NAME = detectWorkerName();
 
-// ── Stop Checks (in-memory, per-session) ────────────────────────────
-// Workers register verification items during their cycle. recycle() gates
-// on all checks being completed — forces end-to-end verification.
+// ── Stop Checks (in-memory + file-persisted) ────────────────────────
+// Workers register verification items during their cycle. Both recycle()
+// AND the Stop hook gate on all checks being completed.
+// File persistence: /tmp/claude-stop-checks-{WORKER_NAME}.json
+// The Stop hook reads this file to block session exit.
 interface StopCheck {
   id: string;
   description: string;
   added_at: string;
   completed: boolean;
   completed_at?: string;
+  result?: string;
 }
 const stopChecks: Map<string, StopCheck> = new Map();
 let _stopCheckCounter = 0;
+const STOP_CHECKS_FILE = `/tmp/claude-stop-checks-${WORKER_NAME}.json`;
+
+/** Persist current stop checks to file for the Stop hook to read */
+function _persistStopChecks(): void {
+  try {
+    const checks = [...stopChecks.values()];
+    if (checks.length === 0) {
+      // Clean up file when no checks
+      try { rmSync(STOP_CHECKS_FILE); } catch {}
+      return;
+    }
+    writeFileSync(STOP_CHECKS_FILE, JSON.stringify({ worker: WORKER_NAME, checks }, null, 2));
+  } catch {}
+}
+
+// On startup, restore from file (survives MCP restart via recycle resume)
+try {
+  if (existsSync(STOP_CHECKS_FILE)) {
+    const data = JSON.parse(readFileSync(STOP_CHECKS_FILE, "utf-8"));
+    if (data.worker === WORKER_NAME && Array.isArray(data.checks)) {
+      for (const c of data.checks) {
+        stopChecks.set(c.id, c);
+        const num = parseInt(c.id.replace("sc-", ""), 10);
+        if (num > _stopCheckCounter) _stopCheckCounter = num;
+      }
+    }
+  }
+} catch {}
 
 // Cache git branch at module load for fast diagnostics (no subprocess at check time)
 let _cachedBranch: string | null = null;
@@ -1635,6 +1666,7 @@ server.registerTool(
       added_at: new Date().toISOString(),
       completed: false,
     });
+    _persistStopChecks();
     return {
       content: [{
         type: "text" as const,
@@ -1664,6 +1696,7 @@ server.registerTool(
         check.completed = true;
         check.completed_at = now;
       }
+      _persistStopChecks();
       return {
         content: [{
           type: "text" as const,
@@ -1678,6 +1711,8 @@ server.registerTool(
     }
     check.completed = true;
     check.completed_at = new Date().toISOString();
+    if (result) check.result = result;
+    _persistStopChecks();
 
     const pending = [...stopChecks.values()].filter(c => !c.completed);
     const resultNote = result ? ` (${result})` : "";
