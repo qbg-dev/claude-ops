@@ -2164,10 +2164,13 @@ server.registerTool(
           } else if (!sessionId) {
             launchInfo = `\n  Launch: SKIPPED — no session ID for pane ${ownPane.paneId}. Run manually: bash fork-worker.sh`;
           } else {
-            // Copy session data to new worktree's project dir
+            // Copy session data to new worktree's project dir.
+            // Session JSONLs are stored under ~/.claude/projects/{cwd-slug}/.
+            // The caller's session is under their WORKTREE's slug (process.cwd()), not PROJECT_ROOT.
             if (worktreeReady) {
               try {
-                const parentSlug = PROJECT_ROOT.replace(/\//g, "-");
+                const callerCwd = process.cwd();
+                const parentSlug = callerCwd.replace(/\//g, "-");
                 const newSlug = worktreeDir.replace(/\//g, "-");
                 const parentProj = join(HOME, ".claude/projects", parentSlug);
                 const newProj = join(HOME, ".claude/projects", newSlug);
@@ -2179,36 +2182,33 @@ server.registerTool(
               } catch {} // non-fatal
             }
 
-            // Use fork-worker.sh synchronously (it handles pane creation, TUI wait, seed injection)
-            const forkScript = join(CLAUDE_OPS, "scripts/fork-worker.sh");
-            const workerModel = selectedModel || "opus";
-            const forkArgs = [
-              forkScript, ownPane.paneId, sessionId,
-              "--name", name, "--no-worktree",
-              "--model", workerModel,
-            ];
-            if (worktreeReady) forkArgs.push("--cwd", worktreeDir);
-            forkArgs.push("--dangerously-skip-permissions");
-            const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
-            forkArgs.push("--add-dir", workerDir);
+            // Fork needs a TTY (Claude runs interactively), so we must run inside the pane.
+            // Write a self-contained wrapper script and send just "bash /tmp/wrapper.sh" to the pane.
+            // The wrapper cleans up AFTER fork-worker.sh finishes (blocking), avoiding race conditions.
             try {
-              // Create the target pane first, then run fork-worker.sh inside it
               const childPaneId = createPane("window", worktreeReady ? worktreeDir : PROJECT_ROOT);
               if (!childPaneId?.startsWith("%")) {
                 launchInfo = `\n  Launch: SKIPPED — pane creation failed. Run manually.`;
               } else {
                 registerPane(childPaneId);
-                // Run fork-worker.sh synchronously in a subshell — it handles everything
-                const forkResult = spawnSync("bash", forkArgs, {
-                  encoding: "utf-8", timeout: 120_000,
-                  env: { ...process.env, PROJECT_ROOT, TMUX_PANE: childPaneId, WORKER_NAME: name },
-                  cwd: worktreeReady ? worktreeDir : PROJECT_ROOT,
-                });
-                if (forkResult.status === 0) {
-                  launchInfo = `\n  Launched (fork from ${sessionId}): pane ${childPaneId}`;
-                } else {
-                  launchInfo = `\n  Launch: FAILED (exit ${forkResult.status}) — ${(forkResult.stderr || "").slice(0, 200)}`;
-                }
+                const forkScript = join(CLAUDE_OPS, "scripts/fork-worker.sh");
+                const workerModel = selectedModel || "opus";
+                const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
+                const cwdFlag = worktreeReady ? `--cwd ${worktreeDir}` : "";
+                const wrapperPath = `/tmp/fork-launch-${name}-${Date.now()}.sh`;
+
+                // Write wrapper script — fork-worker.sh blocks until Claude exits, so cleanup is safe
+                const wrapperContent = [
+                  `#!/bin/bash`,
+                  `cd ${worktreeReady ? worktreeDir : PROJECT_ROOT}`,
+                  `bash ${forkScript} ${ownPane.paneId} ${sessionId} --name ${name} --no-worktree ${cwdFlag} --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`,
+                  `rm -f "${wrapperPath}"`,
+                ].join("\n");
+                writeFileSync(wrapperPath, wrapperContent, { mode: 0o755 });
+
+                // Send short command to pane — no escaping issues
+                execSync(`tmux send-keys -t "${childPaneId}" "bash ${wrapperPath}" && tmux send-keys -t "${childPaneId}" -H 0d`, { timeout: 5000 });
+                launchInfo = `\n  Launched (fork from ${sessionId}): pane ${childPaneId}`;
               }
             } catch (e: any) {
               launchInfo = `\n  Launch: FAILED — ${e.message}`;
