@@ -169,6 +169,14 @@ main() {
   register_hooks
   verify_install
 
+  # ── tmux setup ─────────────────────────────────────────────────
+  if [[ -f "$INSTALL_DIR/tmux/setup-tmux.sh" ]]; then
+    info "Setting up tmux bindings..."
+    bash "$INSTALL_DIR/tmux/setup-tmux.sh" --auto || {
+      warn "tmux setup had issues — run 'bash ~/.claude-ops/tmux/setup-tmux.sh' manually"
+    }
+  fi
+
   echo ""
   info "Done! claude-ops is installed at $INSTALL_DIR"
   echo ""
@@ -176,6 +184,8 @@ main() {
   echo "    scaffold:  bash ~/.claude-ops/scripts/scaffold.sh <name> /path/to/project"
   echo "    launch:    bash ~/.claude-ops/scripts/harness-launch.sh <name>"
   echo "    status:    bash ~/.claude-ops/scripts/worker-watchdog.sh --status"
+  echo "    tmux:      bash ~/.claude-ops/tmux/setup-tmux.sh --guide   (if new to tmux)"
+  echo "    tmux:      bash ~/.claude-ops/tmux/setup-tmux.sh --check   (review merge plan)"
   echo "    docs:      https://github.com/qbg-dev/claude-ops/blob/main/docs/getting-started.md"
   echo ""
 }
