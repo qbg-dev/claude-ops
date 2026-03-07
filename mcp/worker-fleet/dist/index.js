@@ -18644,6 +18644,7 @@ class ExperimentalMcpServerTasks {
     return mcpServerInternal._createRegisteredTool(name, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 }
+
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 class McpServer {
   constructor(serverInfo, options) {
@@ -19365,7 +19366,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "process";
+import process2 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -19454,7 +19455,6 @@ class StdioServerTransport {
     });
   }
 }
-
 // index.ts
 import {
   readFileSync,
@@ -19720,7 +19720,7 @@ function acquireLock(lockPath, maxWaitMs = 1e4) {
     } catch {
       if (Date.now() - start > maxWaitMs) {
         try {
-          execSync(`rm -rf "${lockPath}"`, { timeout: 2000 });
+          rmSync(lockPath, { recursive: true, force: true });
         } catch {}
         try {
           mkdirSync(lockPath, { recursive: false });
@@ -19728,13 +19728,13 @@ function acquireLock(lockPath, maxWaitMs = 1e4) {
         } catch {}
         return false;
       }
-      execSync("sleep 0.1", { timeout: 1000 });
+      globalThis.Bun.sleepSync(100);
     }
   }
 }
 function releaseLock(lockPath) {
   try {
-    execSync(`rm -rf "${lockPath}"`, { timeout: 2000 });
+    rmSync(lockPath, { recursive: true, force: true });
   } catch {}
 }
 function getTasksPath(worker) {
@@ -19971,17 +19971,11 @@ function tmuxSendMessage(paneId, text) {
       spawnSync("tmux", ["delete-buffer", "-b", bufName], { timeout: 2000 });
     } catch {}
   }
-  spawnSync("sleep", ["0.5"], { timeout: 2000 });
+  globalThis.Bun.sleepSync(500);
   spawnSync("tmux", ["send-keys", "-t", paneId, "-H", "0d"], { timeout: 5000 });
 }
 function isPaneAlive(paneId) {
   try {
-    const result = spawnSync("tmux", ["has-session", "-t", paneId], {
-      encoding: "utf-8",
-      timeout: 3000
-    });
-    if (result.status !== 0)
-      return false;
     const check2 = spawnSync("tmux", ["display-message", "-t", paneId, "-p", "#{pane_id}"], {
       encoding: "utf-8",
       timeout: 3000
@@ -21114,11 +21108,11 @@ function loadTypeTemplate(type) {
       result.disallowedTools = perms.denyList;
   } catch {}
   try {
-    const state = JSON.parse(readFileSync(join(typeDir, "state.json"), "utf-8"));
-    if (typeof state.perpetual === "boolean")
-      result.perpetual = state.perpetual;
-    if (typeof state.sleep_duration === "number")
-      result.sleep_duration = state.sleep_duration;
+    const defaults = JSON.parse(readFileSync(join(typeDir, "defaults.json"), "utf-8"));
+    if (typeof defaults.perpetual === "boolean")
+      result.perpetual = defaults.perpetual;
+    if (typeof defaults.sleep_duration === "number")
+      result.sleep_duration = defaults.sleep_duration;
   } catch {}
   return result;
 }
@@ -21330,6 +21324,12 @@ server.registerTool("create_worker", { description: "Spin up a new persistent wo
         execSync(`git -C "${PROJECT_ROOT}" worktree add "${worktreeDir}" "${workerBranch}"`, { encoding: "utf-8", timeout: 1e4 });
       }
       worktreeReady = true;
+      const setupScript = join(PROJECT_ROOT, ".claude/scripts/worker/setup-worktree.sh");
+      if (existsSync(setupScript)) {
+        try {
+          execSync(`bash "${setupScript}" "${worktreeDir}"`, { timeout: 5000 });
+        } catch {}
+      }
     } catch {}
     let launchInfo = "";
     if (launch) {
@@ -21468,13 +21468,13 @@ _Not found_
 `);
   }
   try {
-    const state = JSON.parse(readFileSync(join(typeDir, "state.json"), "utf-8"));
-    sections.push(`## Defaults (from state.json)
-` + `- **perpetual**: ${state.perpetual}
-` + `- **sleep_duration**: ${state.sleep_duration}s
+    const defaults = JSON.parse(readFileSync(join(typeDir, "defaults.json"), "utf-8"));
+    sections.push(`## Defaults (from defaults.json)
+` + `- **perpetual**: ${defaults.perpetual}
+` + `- **sleep_duration**: ${defaults.sleep_duration}s
 `);
   } catch {
-    sections.push(`## state.json
+    sections.push(`## defaults.json
 _Not found_
 `);
   }
@@ -21767,7 +21767,7 @@ async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
 }
-if (import.meta.main) {
+if (__require.main == __require.module) {
   main().catch((e) => {
     console.error("worker-fleet MCP server fatal:", e);
     process.exit(1);
