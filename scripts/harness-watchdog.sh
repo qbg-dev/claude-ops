@@ -734,6 +734,10 @@ fi
 run_once() {
   [ ! -f "$REGISTRY" ] && return
 
+  # Collect known workers for stale file cleanup
+  local known_workers
+  known_workers=$(jq -r 'keys[]' "$REGISTRY" 2>/dev/null | grep -v '^_config$' || true)
+
   while IFS= read -r worker; do
     if ! check_worker "$worker" 2>/dev/null; then
       # Respawn happened — stagger before processing next worker
@@ -741,7 +745,23 @@ run_once() {
       _log "STAGGER: sleeping ${stagger}s after respawning $worker"
       sleep "$stagger"
     fi
-  done < <(jq -r 'keys[]' "$REGISTRY" 2>/dev/null || true)
+  done <<< "$known_workers"
+
+  # Prune stale crash counters + runtime dirs for deregistered workers
+  for f in "$CRASH_DIR"/*.json; do
+    [ ! -f "$f" ] && continue
+    local name; name=$(basename "$f" .json)
+    if ! echo "$known_workers" | grep -qxF "$name"; then
+      rm -f "$f" 2>/dev/null
+    fi
+  done
+  for d in "$RUNTIME_DIR"/*/; do
+    [ ! -d "$d" ] && continue
+    local name; name=$(basename "$d")
+    if ! echo "$known_workers" | grep -qxF "$name"; then
+      rm -rf "$d" 2>/dev/null
+    fi
+  done
 }
 
 if [ "$MODE" = "once" ]; then
