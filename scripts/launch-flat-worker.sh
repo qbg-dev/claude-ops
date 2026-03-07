@@ -25,6 +25,9 @@ shift
 TARGET_SESSION="w"
 PROJECT_ROOT="${PROJECT_ROOT:-}"
 CLI_WINDOW=""
+CUSTOM_WORKTREE=""
+BOOTSTRAP_CMD_FILE=""
+BESIDE_PANE=""
 
 # Parse optional args
 while [[ $# -gt 0 ]]; do
@@ -32,6 +35,9 @@ while [[ $# -gt 0 ]]; do
     --session) TARGET_SESSION="$2"; shift 2 ;;
     --window)  CLI_WINDOW="$2"; shift 2 ;;
     --project) PROJECT_ROOT="$2"; shift 2 ;;
+    --worktree) CUSTOM_WORKTREE="$2"; shift 2 ;;
+    --bootstrap-cmd-file) BOOTSTRAP_CMD_FILE="$2"; shift 2 ;;
+    --beside-pane) BESIDE_PANE="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -46,8 +52,13 @@ WORKER_DIR="$PROJECT_ROOT/.claude/workers/$WORKER"
 REGISTRY="$PROJECT_ROOT/.claude/workers/registry.json"
 BRANCH="worker/$WORKER"
 WORKTREE_DIR="$PROJECT_ROOT/../${PROJECT_NAME}-w-$WORKER"
+[ -n "$CUSTOM_WORKTREE" ] && WORKTREE_DIR="$CUSTOM_WORKTREE"
 
 [ ! -d "$WORKER_DIR" ] && { echo "ERROR: worker dir not found: $WORKER_DIR"; exit 1; }
+[ -n "$BOOTSTRAP_CMD_FILE" ] && [ ! -f "$BOOTSTRAP_CMD_FILE" ] && {
+  echo "ERROR: bootstrap cmd file not found: $BOOTSTRAP_CMD_FILE"
+  exit 1
+}
 
 # Read worker config — registry.json is the single source of truth for all runtime config.
 # permissions.json is only used for disallowed_tools (deny-list).
@@ -57,14 +68,20 @@ PERM_MODE="bypassPermissions"
 WINDOW_GROUP=""
 
 if [ -f "$REGISTRY" ]; then
-  _REG_MODEL=$(jq -r --arg n "$WORKER" '.[$n].model // empty' "$REGISTRY" 2>/dev/null || echo "")
-  [ -n "$_REG_MODEL" ] && MODEL="$_REG_MODEL"
-  _REG_PERM=$(jq -r --arg n "$WORKER" '.[$n].permission_mode // empty' "$REGISTRY" 2>/dev/null || echo "")
-  [ -n "$_REG_PERM" ] && PERM_MODE="$_REG_PERM"
-  WINDOW_GROUP=$(jq -r --arg n "$WORKER" '.[$n].window // empty' "$REGISTRY" 2>/dev/null || echo "")
-  # Read tmux session from registry _config
-  _REG_SESS=$(jq -r '._config.tmux_session // empty' "$REGISTRY" 2>/dev/null || echo "")
-  [ -n "$_REG_SESS" ] && TARGET_SESSION="$_REG_SESS"
+  # Batch-read all needed fields in one jq call (4 calls → 1)
+  _REG_FIELDS=$(jq -r --arg n "$WORKER" '[
+    (.[$n].model // ""),
+    (.[$n].permission_mode // ""),
+    (.[$n].window // ""),
+    (._config.tmux_session // "")
+  ] | join("\t")' "$REGISTRY" 2>/dev/null || echo "")
+  if [ -n "$_REG_FIELDS" ]; then
+    IFS=$'\t' read -r _REG_MODEL _REG_PERM _REG_WIN _REG_SESS <<< "$_REG_FIELDS"
+    [ -n "$_REG_MODEL" ] && MODEL="$_REG_MODEL"
+    [ -n "$_REG_PERM" ] && PERM_MODE="$_REG_PERM"
+    [ -n "$_REG_WIN" ] && WINDOW_GROUP="$_REG_WIN"
+    [ -n "$_REG_SESS" ] && TARGET_SESSION="$_REG_SESS"
+  fi
 fi
 
 # CLI --window overrides registry
@@ -82,7 +99,14 @@ else
 fi
 
 # Worktree
-if [ ! -d "$WORKTREE_DIR" ]; then
+if [ -n "$CUSTOM_WORKTREE" ] && [ ! -d "$WORKTREE_DIR" ]; then
+  echo "ERROR: custom worktree does not exist: $WORKTREE_DIR"
+  exit 1
+fi
+
+if [ -n "$CUSTOM_WORKTREE" ]; then
+  BRANCH="$(git -C "$WORKTREE_DIR" branch --show-current 2>/dev/null || echo "$BRANCH")"
+elif [ ! -d "$WORKTREE_DIR" ]; then
   echo "Creating worktree at $WORKTREE_DIR on branch $BRANCH..."
   git -C "$PROJECT_ROOT" worktree add "$WORKTREE_DIR" "$BRANCH" 2>/dev/null || \
   git -C "$PROJECT_ROOT" worktree add "$WORKTREE_DIR" -b "$BRANCH" 2>/dev/null
@@ -92,7 +116,13 @@ fi
 # Always overwrite .mcp.json so worktrees pick up fixes (e.g. absolute bun path)
 for UNTRACKED_CFG in .mcp.json; do
   if [ -f "$PROJECT_ROOT/$UNTRACKED_CFG" ]; then
-    cp "$PROJECT_ROOT/$UNTRACKED_CFG" "$WORKTREE_DIR/$UNTRACKED_CFG"
+    SRC_CFG="$PROJECT_ROOT/$UNTRACKED_CFG"
+    DST_CFG="$WORKTREE_DIR/$UNTRACKED_CFG"
+    SRC_REAL="$(cd "$(dirname "$SRC_CFG")" && pwd -P)/$(basename "$SRC_CFG")"
+    DST_REAL="$(cd "$(dirname "$DST_CFG")" && pwd -P 2>/dev/null || dirname "$DST_CFG")/$(basename "$DST_CFG")"
+    if [ "$SRC_REAL" != "$DST_REAL" ]; then
+      cp "$SRC_CFG" "$DST_CFG"
+    fi
   fi
 done
 
@@ -150,7 +180,12 @@ WORKER_NAME="$WORKER" PROJECT_ROOT="$PROJECT_ROOT" \
 }
 
 # Create or join tmux window based on WINDOW_GROUP
-if [ "$CREATED_SESSION" -eq 1 ]; then
+if [ -n "$BESIDE_PANE" ]; then
+  WORKER_PANE=$(tmux split-window -h -t "$BESIDE_PANE" -c "$WORKTREE_DIR" -d -P -F '#{pane_id}')
+  _BESIDE_TARGET=$(tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}' \
+    | awk -v p="$WORKER_PANE" '$1==p{print $2}' 2>/dev/null || echo "")
+  [ -n "$_BESIDE_TARGET" ] && tmux select-layout -t "$_BESIDE_TARGET" tiled 2>/dev/null || true
+elif [ "$CREATED_SESSION" -eq 1 ]; then
   # Session was just created with a default window — rename it to our window group
   WORKER_PANE=$(tmux list-panes -t "$TARGET_SESSION" -F '#{pane_id}' | head -1)
   tmux rename-window -t "$TARGET_SESSION" "$WINDOW_GROUP"
@@ -199,6 +234,13 @@ if [ -f "$REGISTRY" ]; then
      .[$name].session_id = ""' \
     "$REGISTRY" > "$TMP_REG" 2>/dev/null && mv "$TMP_REG" "$REGISTRY" || rm -f "$TMP_REG"
   rmdir "$_LOCK_DIR" 2>/dev/null || true
+fi
+
+if [ -n "$BOOTSTRAP_CMD_FILE" ]; then
+  tmux send-keys -t "$WORKER_PANE" "bash $BOOTSTRAP_CMD_FILE"
+  tmux send-keys -t "$WORKER_PANE" -H 0d
+  echo "Launched worker/$WORKER in pane $WORKER_PANE (session: $TARGET_SESSION, window: $WINDOW_GROUP, worktree: $WORKTREE_DIR, custom bootstrap)"
+  exit 0
 fi
 
 # Read disallowed_tools — registry first, then permissions.json fallback
