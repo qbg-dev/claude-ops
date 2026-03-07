@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileS
 import { join } from "path";
 import {
   readTasks, writeTasks, nextTaskId, isTaskBlocked,
-  writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
+  writeToInbox, writeToTriageQueue, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, generateSeedContent, runDiagnostics, createWorkerFiles, _setWorkersDir,
   readRegistry, getWorkerEntry, ensureWorkerInRegistry, lintRegistry,
   _replaceMemorySection, acquireLock, releaseLock, getWorktreeDir, getSessionId,
@@ -418,6 +418,56 @@ describe("inbox cursor", () => {
   test("missing inbox file — no error", () => {
     const { messages } = readInboxFromCursor(TEST_WORKER, {});
     expect(messages.length).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// writeToTriageQueue
+// ═══════════════════════════════════════════════════════════════════
+
+describe("writeToTriageQueue", () => {
+  test("creates triage dir and queue file if missing", () => {
+    const result = writeToTriageQueue("need help", "help needed", "test-bot");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.id).toMatch(/^tq-\d+$/);
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    expect(existsSync(queuePath)).toBe(true);
+
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    const entry = JSON.parse(lines[lines.length - 1]);
+    expect(entry.id).toBe(result.id);
+    expect(entry.category).toBe("worker-escalation");
+    expect(entry.title).toBe("help needed");
+    expect(entry.detail).toBe("need help");
+    expect(entry.source).toBe("test-bot");
+    expect(entry.status).toBe("pending");
+    expect(entry.added_at).toBeTruthy();
+  });
+
+  test("uses content prefix as title when no summary", () => {
+    const result = writeToTriageQueue("a very long content message that exceeds sixty characters total length for testing", undefined, "test-bot");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    const entry = JSON.parse(lines[lines.length - 1]);
+    expect(entry.title.length).toBeLessThanOrEqual(60);
+  });
+
+  test("appends multiple entries to same file", () => {
+    writeToTriageQueue("first", "first msg", "bot-a");
+    writeToTriageQueue("second", "second msg", "bot-b");
+
+    const queuePath = join(process.env.PROJECT_ROOT || process.cwd(), ".claude/triage/queue.jsonl");
+    const lines = readFileSync(queuePath, "utf-8").trim().split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+
+    const last2 = lines.slice(-2).map(l => JSON.parse(l));
+    expect(last2[0].source).toBe("bot-a");
+    expect(last2[1].source).toBe("bot-b");
   });
 });
 

@@ -626,6 +626,33 @@ function writeToInbox(
   }
 }
 
+/** Write an escalation entry to the triage queue (.claude/triage/queue.jsonl) */
+function writeToTriageQueue(
+  content: string,
+  summary: string | undefined,
+  fromWorker: string,
+): { ok: true; id: string } | { ok: false; error: string } {
+  try {
+    const triageDir = join(PROJECT_ROOT, ".claude/triage");
+    if (!existsSync(triageDir)) mkdirSync(triageDir, { recursive: true });
+    const triagePath = join(triageDir, "queue.jsonl");
+    const id = `tq-${Date.now()}`;
+    const entry = {
+      id,
+      category: "worker-escalation",
+      title: summary || content.slice(0, 60),
+      detail: content,
+      source: fromWorker,
+      added_at: new Date().toISOString(),
+      status: "pending",
+    };
+    appendFileSync(triagePath, JSON.stringify(entry) + "\n");
+    return { ok: true, id };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
 /** Resolve recipient — worker name, "report", "direct_reports", or raw pane ID */
 function resolveRecipient(to: string): {
   type: "worker" | "pane" | "multi_pane";
@@ -1131,34 +1158,18 @@ server.registerTool(
 
     // User escalation path: to="user" writes to triage queue + fires notification
     if (to === "user") {
-      try {
-        const triageDir = join(PROJECT_ROOT, ".claude/triage");
-        if (!existsSync(triageDir)) mkdirSync(triageDir, { recursive: true });
-        const triagePath = join(triageDir, "queue.jsonl");
-        const id = `tq-${Date.now()}`;
-        const entry = {
-          id,
-          category: "worker-escalation",
-          title: summary || content.slice(0, 60),
-          detail: content,
-          source: WORKER_NAME,
-          added_at: new Date().toISOString(),
-          status: "pending",
-        };
-        appendFileSync(triagePath, JSON.stringify(entry) + "\n");
-
-        // Fire macOS notification via notify (best-effort)
-        try {
-          execSync(
-            `"${join(CLAUDE_OPS, "bin/notify")}" ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`,
-            { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
-          );
-        } catch {}
-
-        return withPendingReminder({ content: [{ type: "text" as const, text: `Escalated to user [${id}] — written to triage queue + notification sent` }] });
-      } catch (e: any) {
-        return { content: [{ type: "text" as const, text: `Error writing to triage queue: ${e.message}` }], isError: true };
+      const result = writeToTriageQueue(content, summary, WORKER_NAME);
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: `Error writing to triage queue: ${result.error}` }], isError: true };
       }
+      // Fire desktop notification via notify (best-effort)
+      try {
+        execSync(
+          `"${join(CLAUDE_OPS, "bin/notify")}" ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`,
+          { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
+        );
+      } catch {}
+      return withPendingReminder({ content: [{ type: "text" as const, text: `Escalated to user [${result.id}] — written to triage queue + notification sent` }] });
     }
 
     const resolved = resolveRecipient(to);
@@ -2876,7 +2887,7 @@ if (import.meta.main) {
 // ── Exports for testing ──────────────────────────────────────────────
 export {
   readTasks, writeTasks, nextTaskId, isTaskBlocked, getTasksPath,
-  writeToInbox, readInboxFromCursor, readInboxCursor, writeInboxCursor,
+  writeToInbox, writeToTriageQueue, readInboxFromCursor, readInboxCursor, writeInboxCursor,
   resolveRecipient, isPaneAlive, readJsonFile, acquireLock, releaseLock,
   findOwnPane, getSessionId, getWorkerModel, getWorktreeDir, generateSeedContent,
   runDiagnostics, createWorkerFiles, _setWorkersDir,
