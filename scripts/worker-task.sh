@@ -318,13 +318,15 @@ case "$CMD" in
       COMBINED=$(echo "$COMBINED" | jq --arg w "$wname" --slurpfile t "$tf" '.[$w] = $t[0]')
     done
 
-    # Also grab state.json summaries
+    # Grab worker state summaries from registry.json
     STATES="{}"
-    for sf in "$WORKERS_DIR"/*/state.json; do
-      [ -f "$sf" ] || continue
-      wname=$(basename "$(dirname "$sf")")
-      STATES=$(echo "$STATES" | jq --arg w "$wname" --slurpfile s "$sf" '.[$w] = {status: ($s[0].status // "unknown"), cycles_completed: ($s[0].cycles_completed // 0)}')
-    done
+    if [ -f "$WORKERS_DIR/registry.json" ]; then
+      STATES=$(jq '
+        to_entries | map(select(.key != "_config")) |
+        map({key: .key, value: {status: (.value.status // "unknown"), cycles_completed: (.value.cycles_completed // 0)}}) |
+        from_entries
+      ' "$WORKERS_DIR/registry.json" 2>/dev/null || echo "{}")
+    fi
 
     cat > "$OUT" << 'DASHEOF'
 <!DOCTYPE html>

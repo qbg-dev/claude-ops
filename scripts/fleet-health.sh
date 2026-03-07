@@ -6,7 +6,7 @@
 #   2. Graceful-stop markers (stale ones > 2× max sleep_duration)
 #   3. Crash-loop flags (agents stuck in crash loop)
 #   4. Worker tasks.json validity (JSON schema, required fields)
-#   5. Worker state.json consistency (perpetual/sleep_duration)
+#   5. Worker state consistency via registry.json (perpetual/sleep_duration)
 #   6. Stuck-candidate markers (possibly hanging workers)
 #   7. Watchdog config sanity
 #

@@ -52,11 +52,8 @@ for dir in "$WORKERS_DIR"/*/; do
   if [ -f "$REGISTRY" ]; then
     _entry=$(jq -r --arg n "$name" '.[$n] // empty' "$REGISTRY" 2>/dev/null || echo "")
     if [ -n "$_entry" ] && [ "$_entry" != "null" ]; then
-      status=$(echo "$_entry" | jq -r '.status // "unknown"' 2>/dev/null || echo "?")
-      cycles=$(echo "$_entry" | jq -r '.cycles_completed // 0' 2>/dev/null || echo "?")
-      last=$(echo "$_entry" | jq -r '.last_cycle_at // "never"' 2>/dev/null || echo "?")
-      found=$(echo "$_entry" | jq -r '.issues_found // 0' 2>/dev/null || echo "?")
-      fixed=$(echo "$_entry" | jq -r '.issues_fixed // 0' 2>/dev/null || echo "?")
+      _fields=$(echo "$_entry" | jq -r '[(.status // "unknown"), (.cycles_completed // 0 | tostring), (.last_cycle_at // "never"), (.issues_found // 0 | tostring), (.issues_fixed // 0 | tostring)] | join("\t")' 2>/dev/null || echo "")
+      IFS=$'\t' read -r status cycles last found fixed <<< "$_fields"
     else
       printf "%-22s %-10s\n" "$name" "NOT IN REG"
       continue

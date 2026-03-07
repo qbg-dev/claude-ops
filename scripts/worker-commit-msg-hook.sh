@@ -7,7 +7,7 @@
 
 MSG_FILE="$1"
 
-# Get worker context from branch name and state.json
+# Get worker context from branch name and registry.json
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 WORKER_NAME="${BRANCH#worker/}"
 [ -z "$WORKER_NAME" ] && exit 0
@@ -20,12 +20,12 @@ else
   MAIN_ROOT="$PROJECT_ROOT"
 fi
 
-STATE_FILE="$MAIN_ROOT/.claude/workers/$WORKER_NAME/state.json"
+REGISTRY="$MAIN_ROOT/.claude/workers/registry.json"
 
-# Read cycle count from state.json
+# Read cycle count from registry.json
 CYCLE=""
-if [ -f "$STATE_FILE" ]; then
-  CYCLE=$(jq -r '.cycles_completed // ""' "$STATE_FILE" 2>/dev/null || true)
+if [ -f "$REGISTRY" ]; then
+  CYCLE=$(jq -r --arg n "$WORKER_NAME" '.[$n].cycles_completed // ""' "$REGISTRY" 2>/dev/null || true)
 fi
 
 # Don't add trailers if they're already present (e.g., amend)

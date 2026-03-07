@@ -58,8 +58,9 @@ if [ -n "$PARENT_NAME" ]; then
 
   # Fallback: direct tmux send-keys to parent pane
   if [ "$NOTIFIED" = "false" ] && [ -f "$REGISTRY" ]; then
-    PARENT_PANE=$(jq -r --arg n "$PARENT_NAME" '.[$n].pane_id // ""' "$REGISTRY" 2>/dev/null)
-    PARENT_TARGET=$(jq -r --arg n "$PARENT_NAME" '.[$n].pane_target // ""' "$REGISTRY" 2>/dev/null)
+    _parent_fields=$(jq -r --arg n "$PARENT_NAME" '[(.[$n].pane_id // ""), (.[$n].pane_target // "")] | join("\t")' "$REGISTRY" 2>/dev/null || echo "")
+    PARENT_PANE=$(printf '%s' "$_parent_fields" | cut -d$'\t' -f1)
+    PARENT_TARGET=$(printf '%s' "$_parent_fields" | cut -d$'\t' -f2)
     TARGET="${PARENT_TARGET:-$PARENT_PANE}"
 
     if [ -n "$TARGET" ]; then
