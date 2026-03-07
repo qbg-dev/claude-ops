@@ -836,7 +836,7 @@ function runDiagnostics(): DiagnosticIssue[] {
     // Registry entry (replaces state.json + permissions.json checks)
     const regEntry = getWorkerEntry(WORKER_NAME);
     if (!regEntry) {
-      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Run create_worker to bootstrap entry" });
+      issues.push({ severity: "error", check: "registry_entry", message: `Worker '${WORKER_NAME}' not in registry.json`, fix: "Add yourself: update_state('status', 'active') — this auto-registers you" });
     } else {
       if (!regEntry.status) {
         issues.push({ severity: "warning", check: "registry.status", message: "registry entry missing 'status' field", fix: `update_state("status", "idle")` });
@@ -891,9 +891,9 @@ function runDiagnostics(): DiagnosticIssue[] {
   if (process.env.TMUX_PANE) {
     const entry = getWorkerEntry(WORKER_NAME);
     if (!entry) {
-      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you.`, fix: "Re-launch via launch-flat-worker.sh" });
+      issues.push({ severity: "error", check: "registry", message: `Worker '${WORKER_NAME}' not in registry.json — watchdog cannot monitor you.`, fix: "Run update_state('status', 'active') to self-register" });
     } else if (entry.pane_id !== process.env.TMUX_PANE) {
-      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json.`, fix: "Re-launch via launch-flat-worker.sh" });
+      issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json.`, fix: "Run update_state('pane_id', '" + process.env.TMUX_PANE + "') to fix" });
     }
   } else {
     issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — not running in tmux. Messaging and watchdog will NOT work.", fix: "Launch via launch-flat-worker.sh" });
