@@ -35,9 +35,11 @@ cleanup() { rm -rf "$TEST_DIR"; }
 trap cleanup EXIT
 
 # Suppress statusline install (it writes to ~/.claude/statusline-command.sh)
-# by pointing HOME to a temp dir for this part
+# by pointing HOME to a temp dir for this part.
+# Copy git config so init-project.sh can make commits in CI environments.
 MOCK_HOME=$(mktemp -d)
 mkdir -p "$MOCK_HOME/.claude"
+[ -f "$HOME/.gitconfig" ] && cp "$HOME/.gitconfig" "$MOCK_HOME/.gitconfig" || true
 
 echo "── init-project.sh E2E ──"
 

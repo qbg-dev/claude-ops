@@ -36,7 +36,7 @@ jobs:
           # Skip test suites that require local environment (project-specific harnesses,
           # manifests, control-plane.sh, tmux pane state). These pass locally but cannot
           # run on a fresh CI install.
-          CLAUDE_OPS_SKIP_SUITES="test-registry test-progress-validator test-pane-detection test-v3-comprehensive test-v3-edge-cases test-v3-functions test-v3-migration test-v3-rearchitecture test-seed test-reflection-loop test-spawn-sweep test-permissions-json test-cycle-phase test-harness-stop test-waves" \
+          CLAUDE_OPS_SKIP_SUITES="test-registry test-progress-validator test-pane-detection test-v3-comprehensive test-v3-edge-cases test-v3-functions test-v3-migration test-v3-rearchitecture test-seed test-reflection-loop test-spawn-sweep test-permissions-json test-cycle-phase test-harness-stop test-waves test-tool-policy-gate" \
           bash ~/.claude-ops/tests/run-all.sh
 
       - name: Run minimal-harness example
