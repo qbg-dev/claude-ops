@@ -286,9 +286,8 @@ async function runClaudeReview(args: {
       "--dangerously-skip-permissions",
     ], {
       cwd: PROJECT_ROOT,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", CLAUDECODE: "" },  // Unset CLAUDECODE to allow nested session
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: args.timeout,
     });
 
     let stdout = "";
