@@ -29,7 +29,7 @@ export EVENT_BUS_ENABLED="true"
 export PROJECT_ROOT="$TEST_PROJECT_DIR"
 
 # Copy schema.json for filter resolution
-cp "$HOME/Desktop/zPersonalProjects/Wechat/.claude/bus/schema.json" "$TEST_BUS_DIR/schema.json"
+cp "$(dirname "$0")/fixtures/bus-schema.json" "$TEST_BUS_DIR/schema.json"
 
 # Initialize seq.json
 echo '{"global": 0}' > "$TEST_BUS_DIR/seq.json"
@@ -378,5 +378,6 @@ echo ""
 # ── Cleanup ──────────────────────────────────────────────────────────
 rm -rf "$TEST_BUS_DIR" "$TEST_PROJECT_DIR"
 
-echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
+echo ""
+echo -e "  $PASS passed, $FAIL failed, $TOTAL total"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
