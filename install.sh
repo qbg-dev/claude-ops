@@ -30,14 +30,21 @@ die()     { err "$*"; exit 1; }
 
 # ── Prerequisite check ───────────────────────────────────────────
 check_prereqs() {
-  local missing=()
-  for cmd in git jq tmux bash; do
+  local missing=() optional_missing=()
+  for cmd in git jq tmux bash python3; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     die "Missing required tools: ${missing[*]}. Install them and retry."
   fi
-  info "Prerequisites OK (git, jq, tmux, bash)"
+  # Optional but recommended
+  for cmd in bun curl; do
+    command -v "$cmd" &>/dev/null || optional_missing+=("$cmd")
+  done
+  if [[ ${#optional_missing[@]} -gt 0 ]]; then
+    warn "Optional tools not found: ${optional_missing[*]} (needed for MCP servers, google-auth)"
+  fi
+  info "Prerequisites OK (git, jq, tmux, bash, python3)"
 }
 
 # ── Clone or update ──────────────────────────────────────────────
@@ -51,6 +58,11 @@ install_repo() {
     info "Cloning claude-ops to $INSTALL_DIR ..."
     git clone "$REPO_URL" "$INSTALL_DIR"
   fi
+  # Ensure all hook scripts and bin/ are executable
+  find "$INSTALL_DIR/hooks" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+  find "$INSTALL_DIR/scripts" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+  find "$INSTALL_DIR/bin" -type f -exec chmod +x {} + 2>/dev/null || true
+  info "Ensured scripts are executable"
 }
 
 # ── PATH setup ───────────────────────────────────────────────────
@@ -135,6 +147,40 @@ register_hooks() {
   fi
 }
 
+# ── MCP server registration ────────────────────────────────────────
+register_mcp_servers() {
+  [[ ! -f "$SETTINGS_FILE" ]] && return
+
+  local mcp_servers=(
+    "worker-fleet:$INSTALL_DIR/mcp/worker-fleet/index.js"
+    "check-your-work:$INSTALL_DIR/mcp/check-your-work/dist/index.js"
+  )
+
+  for entry in "${mcp_servers[@]}"; do
+    local name="${entry%%:*}"
+    local script="${entry#*:}"
+    [[ ! -f "$script" ]] && continue
+
+    # Detect runtime (bun for .ts, node for .js)
+    local runtime="node"
+    [[ "$script" == *.ts ]] && runtime="bun"
+
+    # Check if already registered
+    if jq -e ".mcpServers.\"$name\"" "$SETTINGS_FILE" &>/dev/null; then
+      info "MCP server '$name' already registered"
+      continue
+    fi
+
+    # Register
+    local tmp
+    tmp=$(mktemp)
+    jq --arg name "$name" --arg cmd "$runtime" --arg script "$script" \
+      '.mcpServers[$name] = {command: $cmd, args: [$script]}' "$SETTINGS_FILE" > "$tmp" \
+      && mv "$tmp" "$SETTINGS_FILE"
+    info "Registered MCP server: $name ($runtime $script)"
+  done
+}
+
 # ── Verification ─────────────────────────────────────────────────
 verify_install() {
   info "Verifying installation ..."
@@ -186,6 +232,7 @@ main() {
   setup_path
   setup_compat_symlink
   register_hooks
+  register_mcp_servers
   setup_commands
   verify_install
 

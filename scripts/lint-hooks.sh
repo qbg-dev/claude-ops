@@ -199,6 +199,85 @@ fi
 
 info ""
 
+# ── Check 6: Runtime dependencies ──
+info "Runtime Dependencies:"
+_dep_warnings=0
+for cmd in jq python3 git tmux; do
+  if command -v "$cmd" &>/dev/null; then
+    ok "  $cmd available"
+  else
+    fail "  $cmd MISSING — required by multiple hooks"
+    (( _errors++ ))
+  fi
+done
+for cmd in bun node; do
+  if command -v "$cmd" &>/dev/null; then
+    ok "  $cmd available"
+  else
+    warn "  $cmd not found — needed for MCP servers"
+    (( _warnings++ ))
+  fi
+done
+
+info ""
+
+# ── Check 7: Source chain (libraries referenced by hooks) ──
+info "Library Dependencies:"
+_lib_files=(
+  "$CLAUDE_OPS_DIR/lib/fleet-jq.sh"
+  "$CLAUDE_OPS_DIR/lib/event-bus.sh"
+  "$CLAUDE_OPS_DIR/lib/pane-resolve.sh"
+)
+for f in "${_lib_files[@]}"; do
+  if [ -f "$f" ]; then
+    ok "  $(basename "$f")"
+  else
+    fail "  $(basename "$f") MISSING — hooks will fail at runtime"
+    (( _errors++ ))
+  fi
+done
+
+info ""
+
+# ── Check 8: MCP server registration ──
+if [ -f "$SETTINGS" ]; then
+  info "MCP Server Registration:"
+  for srv in worker-fleet check-your-work; do
+    if jq -e ".mcpServers.\"$srv\"" "$SETTINGS" &>/dev/null; then
+      ok "  $srv registered"
+    else
+      warn "  $srv not registered in settings.json"
+      (( _warnings++ ))
+    fi
+  done
+  info ""
+fi
+
+# ── Check 9: Stop-check integration ──
+info "Stop-Check Integration:"
+_sc_hook="$CLAUDE_OPS_DIR/hooks/gates/stop-worker-dispatch.sh"
+if [ -f "$_sc_hook" ] && grep -q 'stop-checks' "$_sc_hook"; then
+  ok "  stop-worker-dispatch.sh reads stop-check files"
+else
+  warn "  stop-worker-dispatch.sh missing stop-check gate"
+  (( _warnings++ ))
+fi
+_sc_mcp="$CLAUDE_OPS_DIR/mcp/worker-fleet/index.ts"
+if [ -f "$_sc_mcp" ] && grep -q 'add_stop_check' "$_sc_mcp"; then
+  ok "  worker-fleet MCP defines add_stop_check"
+else
+  warn "  worker-fleet MCP missing add_stop_check tool"
+  (( _warnings++ ))
+fi
+if [ -f "$_sc_mcp" ] && grep -q '_persistStopChecks' "$_sc_mcp"; then
+  ok "  stop checks persist to file for hook enforcement"
+else
+  warn "  stop checks not persisted — hook enforcement won't work"
+  (( _warnings++ ))
+fi
+
+info ""
+
 # ── Summary ──
 if [ "$_errors" -eq 0 ] && [ "$_warnings" -eq 0 ]; then
   info "${G}All hooks OK${N}"
