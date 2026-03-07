@@ -123,12 +123,6 @@ async function runCodexReview(args: {
   title?: string;
   timeout?: number;
 }): Promise<string> {
-  const cmdArgs = ["review", "-c", `model="${CODEX_MODEL}"`, "--commit", args.commitSha];
-
-  if (args.title) {
-    cmdArgs.push("--title", args.title);
-  }
-
   const context = buildContextPreamble();
   const reviewPrompt = [
     context,
@@ -138,18 +132,29 @@ async function runCodexReview(args: {
     .filter(Boolean)
     .join("\n\n");
 
+  // Pass review instructions as the PROMPT argument (not stdin — stdin piping can cause hangs)
+  const cmdArgs = [
+    "review",
+    "-c", `model="${CODEX_MODEL}"`,
+    "--commit", args.commitSha,
+  ];
+  if (args.title) cmdArgs.push("--title", args.title);
+  // Append the prompt as positional arg
+  cmdArgs.push(reviewPrompt);
+
   log(`── Starting review of commit ${args.commitSha} ──`);
   if (args.title) log(`  Title: ${args.title}`);
   if (args.extraInstructions) log(`  Focus: ${args.extraInstructions}`);
-  log(`  Command: ${CODEX_BIN} ${cmdArgs.join(" ")}`);
+  log(`  Command: ${CODEX_BIN} review --commit ${args.commitSha} (prompt: ${reviewPrompt.length} chars)`);
 
-  const timeout = args.timeout || 300000; // 5 min — codex with xhigh reasoning needs time
+  const timeout = args.timeout || 600000; // 10 min default — large diffs with xhigh reasoning need time
+  let timedOut = false;
 
   return new Promise((resolve, reject) => {
     const child = spawn(CODEX_BIN, cmdArgs, {
       cwd: PROJECT_ROOT,
       env: { ...process.env, NO_COLOR: "1" },
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],  // no stdin needed — prompt is positional arg
     });
 
     let stdout = "";
@@ -158,7 +163,6 @@ async function runCodexReview(args: {
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
       stdout += text;
-      // Stream each line to log file
       for (const line of text.split("\n")) {
         if (line.trim()) log(`  [codex] ${line}`);
       }
@@ -172,11 +176,8 @@ async function runCodexReview(args: {
       }
     });
 
-    // Send the review prompt via stdin
-    child.stdin.write(reviewPrompt);
-    child.stdin.end();
-
     const timer = setTimeout(() => {
+      timedOut = true;
       log(`  TIMEOUT after ${timeout}ms — killing codex`);
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 5000);
@@ -185,10 +186,18 @@ async function runCodexReview(args: {
     child.on("close", (code) => {
       clearTimeout(timer);
       log(`── Review complete (exit code: ${code}) ──`);
-      if (stdout.trim()) {
+      if (timedOut) {
+        // Return partial output if any, with timeout notice
+        const partial = stdout.trim();
+        if (partial) {
+          resolve(`[TIMEOUT after ${Math.round(timeout/1000)}s — partial output below]\n\n${partial}`);
+        } else {
+          reject(new Error(`Codex timed out after ${Math.round(timeout/1000)}s with no output. The diff may be too large. Try increasing timeout_ms or reviewing smaller commits. Log: tail -f ${LOG_FILE}`));
+        }
+      } else if (stdout.trim()) {
         resolve(stdout.trim());
       } else if (code !== 0) {
-        reject(new Error(`Codex exited with code ${code}: ${stderr.slice(0, 500)}`));
+        reject(new Error(`Codex exited with code ${code}. Check log: tail -f ${LOG_FILE}\n\nStderr: ${stderr.slice(0, 500)}`));
       } else {
         resolve("(No output from reviewer)");
       }
