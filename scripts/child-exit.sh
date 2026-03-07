@@ -41,7 +41,7 @@ if [ -f "$REGISTRY" ]; then
   ' "$REGISTRY" 2>/dev/null | head -1)
 
   if [ -n "$OWN_NAME" ]; then
-    PARENT_NAME=$(jq -r --arg n "$OWN_NAME" '.[$n].parent // ""' "$REGISTRY" 2>/dev/null)
+    PARENT_NAME=$(jq -r --arg n "$OWN_NAME" '.[$n].report_to // .[$n].assigned_by // .[$n].parent // ""' "$REGISTRY" 2>/dev/null)
   fi
 fi
 
