@@ -182,7 +182,15 @@ fi
 # Path slug = CWD path with / replaced by -. Different worktree = different slug.
 _LAUNCH_DIR=""
 if [ -n "$LAUNCH_CWD" ] && [ -d "$LAUNCH_CWD" ]; then
-  # create_worker already copied session data; just cd there
+  # create_worker may have copied session data; verify and copy if missing
+  _PARENT_PROJ="$HOME/.claude/projects/$(echo "$(pwd)" | tr '/' '-')"
+  _NEW_PROJ="$HOME/.claude/projects/$(echo "$LAUNCH_CWD" | tr '/' '-')"
+  if [ -f "$_PARENT_PROJ/$PARENT_SESSION.jsonl" ] && [ ! -f "$_NEW_PROJ/$PARENT_SESSION.jsonl" ]; then
+    mkdir -p "$_NEW_PROJ"
+    cp "$_PARENT_PROJ/$PARENT_SESSION.jsonl" "$_NEW_PROJ/$PARENT_SESSION.jsonl" 2>/dev/null || true
+    [ -d "$_PARENT_PROJ/$PARENT_SESSION" ] && cp -r "$_PARENT_PROJ/$PARENT_SESSION" "$_NEW_PROJ/$PARENT_SESSION" 2>/dev/null || true
+    echo "Copied session data to $_NEW_PROJ (fallback — MCP copy was missing)"
+  fi
   _LAUNCH_DIR="$LAUNCH_CWD"
 elif [ -n "${_worktree_dir:-}" ] && [ -d "$_worktree_dir" ]; then
   # Copy session JSONL + subdir from parent project dir to new worktree's project dir
@@ -220,7 +228,7 @@ fi
 # ── Capture any piped stdin (from create_worker task file) ──
 _STDIN_CONTENT=""
 if [ ! -t 0 ]; then
-  _STDIN_CONTENT=$(cat)
+  _STDIN_CONTENT=$(cat 2>/dev/null || true)
 fi
 
 # ── Write setup prompt to temp file and pipe into Claude's stdin ──
