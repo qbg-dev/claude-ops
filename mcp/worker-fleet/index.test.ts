@@ -50,8 +50,6 @@ function makeRegistryEntry(overrides: Partial<RegistryWorkerEntry> = {}): Regist
     status: "idle",
     perpetual: false,
     sleep_duration: 0,
-    cycles_completed: 0,
-    last_cycle_at: null,
     branch: "worker/test",
     worktree: null,
     window: null,
@@ -487,7 +485,6 @@ describe("generateSeedContent", () => {
   test("contains worker name", () => {
     const seed = generateSeedContent();
     expect(seed).toContain("You are worker **");
-    expect(seed).toContain("Cycle Pattern");
     expect(seed).toContain("MCP Tools");
   });
 
@@ -504,7 +501,7 @@ describe("generateSeedContent", () => {
 
   test("seed references get_worker_state, not state.json", () => {
     const seed = generateSeedContent();
-    expect(seed).toContain("get_worker_state()");
+    expect(seed).toContain("get_worker_state");
     expect(seed).not.toContain("state.json");
   });
 
@@ -540,19 +537,9 @@ describe("generateSeedContent", () => {
     expect(seed).not.toContain("register_pane()");
   });
 
-  test("includes heartbeat in cycle pattern and tool table", () => {
+  test("does not include heartbeat (removed — liveness hook replaces it)", () => {
     const seed = generateSeedContent();
-    expect(seed).toContain("heartbeat(");
-    expect(seed).toContain("auto-registers");
-  });
-
-  test("cycle pattern has heartbeat as step 1 before read_inbox", () => {
-    const seed = generateSeedContent();
-    const hbIdx = seed.indexOf("Heartbeat");
-    const inboxIdx = seed.indexOf("Drain inbox");
-    expect(hbIdx).toBeGreaterThan(-1);
-    expect(inboxIdx).toBeGreaterThan(-1);
-    expect(hbIdx).toBeLessThan(inboxIdx);
+    expect(seed).not.toContain("heartbeat(");
   });
 
   test("does not reference {workerDir}/MEMORY.md — memory is auto-loaded", () => {
@@ -746,7 +733,6 @@ describe("ensureWorkerInRegistry", () => {
     expect(entry.model).toBe("opus");
     expect(entry.permission_mode).toBe("bypassPermissions");
     expect(entry.status).toBe("idle");
-    expect(entry.cycles_completed).toBe(0);
     expect(entry.disallowed_tools).toEqual(expect.any(Array));
     expect(entry.custom).toEqual({});
     // Entry should be in registry
@@ -758,14 +744,13 @@ describe("ensureWorkerInRegistry", () => {
     const existing = makeRegistryEntry({
       model: "opus",
       status: "active",
-      cycles_completed: 99,
     });
     const registry = makeProjectRegistry({ [testName]: existing });
 
     const result = ensureWorkerInRegistry(registry, testName);
 
-    expect(result.cycles_completed).toBe(99);
     expect(result.model).toBe("opus");
+    expect(result.status).toBe("active");
     expect(result).toBe(existing); // same reference
   });
 
@@ -914,7 +899,6 @@ describe("RegistryWorkerEntry", () => {
     expect(typeof entry.status).toBe("string");
     expect(typeof entry.perpetual).toBe("boolean");
     expect(typeof entry.sleep_duration).toBe("number");
-    expect(typeof entry.cycles_completed).toBe("number");
     expect(typeof entry.tmux_session).toBe("string");
     expect(typeof entry.mission_file).toBe("string");
     expect(typeof entry.custom).toBe("object");
@@ -922,7 +906,6 @@ describe("RegistryWorkerEntry", () => {
 
   test("nullable fields accept null", () => {
     const entry = makeRegistryEntry({
-      last_cycle_at: null,
       worktree: null,
       window: null,
       pane_id: null,
@@ -930,7 +913,6 @@ describe("RegistryWorkerEntry", () => {
       session_id: null,
       session_file: null,
     });
-    expect(entry.last_cycle_at).toBeNull();
     expect(entry.worktree).toBeNull();
     expect(entry.pane_id).toBeNull();
   });
@@ -1375,10 +1357,9 @@ describe("generateSeedContent — flat org updates", () => {
     expect(seed).not.toContain("`rename(");
   });
 
-  test("mentions create_worker with fork_from_session", () => {
+  test("mentions create_worker in tool table", () => {
     const seed = generateSeedContent();
     expect(seed).toContain("create_worker");
-    expect(seed).toContain("fork_from_session");
   });
 
   test("mentions deregister in tool table", () => {
