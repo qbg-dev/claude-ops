@@ -12,9 +12,8 @@
 #   4. Verifies the installation by running a quick sanity check
 set -euo pipefail
 
-REPO_URL="${CLAUDE_OPS_REPO:-${CLAUDE_OPS_REPO:-https://github.com/qbg-dev/claude-ops.git}}"
-# Prefer CLAUDE_OPS_DIR, fall back to legacy CLAUDE_OPS_DIR, default to ~/.claude-ops
-INSTALL_DIR="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}"
+REPO_URL="${CLAUDE_OPS_REPO:-https://github.com/qbg-dev/claude-ops.git}"
+INSTALL_DIR="${CLAUDE_OPS_DIR:-$HOME/.claude-ops}"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
 # ── Colors ──────────────────────────────────────────────────────
@@ -87,10 +86,11 @@ setup_path() {
 }
 
 # ── Backwards-compat symlink ─────────────────────────────────────
-# ~/.claude-ops → ~/.claude-ops so existing hook paths and scripts continue working
+# When installed to a custom dir, symlink ~/.claude-ops → $INSTALL_DIR
+# so existing hook paths and scripts continue working.
 setup_compat_symlink() {
   local legacy="$HOME/.claude-ops"
-  if [[ "$INSTALL_DIR" == "$HOME/.claude-ops" ]]; then
+  if [[ "$INSTALL_DIR" != "$HOME/.claude-ops" ]]; then
     if [[ -L "$legacy" ]] && [[ "$(readlink "$legacy")" == "$INSTALL_DIR" ]]; then
       info "Compat symlink already in place ($legacy → $INSTALL_DIR)"
     elif [[ -d "$legacy" ]] && [[ ! -L "$legacy" ]]; then

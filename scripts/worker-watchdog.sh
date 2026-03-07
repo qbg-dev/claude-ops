@@ -264,13 +264,13 @@ _get_worker_window() {
   echo "$win"
 }
 
-# ── Kill + resume a stuck flat worker in the same pane ────────────
-# Kills the Claude process, then resumes via `claude --resume <session_id>`.
-# The worker keeps its pane ID, registry entry, and full conversation context.
-_unstick_worker() {
-  local pane_id="$1" canonical="$2" idle_sec="$3"
+# ── Shared: kill Claude in pane, relaunch with seed ──────────────
+# Used by both _unstick_worker and _respawn_agent (pane-alive path).
+# Args: pane_id canonical log_prefix
+# Returns: 0 on success, 1 on failure (seed load failed)
+_kill_and_relaunch_in_pane() {
+  local pane_id="$1" canonical="$2" log_prefix="$3"
   local worker_name="${canonical#worker/}"
-  local worker_dir="$PROJECT_ROOT/.claude/workers/$worker_name"
 
   # 1. Get session ID before killing (need scrollback)
   local prev_session_id
@@ -290,22 +290,22 @@ _unstick_worker() {
   # 3. Build command from worker config (with resume if session available)
   # For main-window workers (no worktree), prepend WORKER_NAME env
   local claude_cmd
-  local unstick_window_check
-  unstick_window_check=$(_get_worker_window "$pane_id")
-  if [ -n "$unstick_window_check" ]; then
+  local window_check
+  window_check=$(_get_worker_window "$pane_id")
+  if [ -n "$window_check" ]; then
     claude_cmd="export WORKER_NAME=$worker_name && $(_build_claude_cmd "$worker_name" "$prev_session_id")"
   else
     claude_cmd=$(_build_claude_cmd "$worker_name" "$prev_session_id")
   fi
 
   if [ -n "$prev_session_id" ]; then
-    _log "UNSTICK: $canonical — resuming session $prev_session_id in pane $pane_id"
+    _log "${log_prefix}: $canonical — resuming session $prev_session_id in pane $pane_id"
   else
-    _log "UNSTICK: $canonical — no session_id found, fresh start in pane $pane_id"
+    _log "${log_prefix}: $canonical — no session_id found, fresh start in pane $pane_id"
   fi
 
   # 4. Prepare seed file BEFORE launching Claude (shared template)
-  local seed_file="/tmp/worker-${worker_name}-respawn.txt"
+  local seed_file="/tmp/worker-${worker_name}-relaunch.txt"
   local _claude_ops="${HOME}/.claude-ops"
   WORKER_NAME="$worker_name" PROJECT_ROOT="$PROJECT_ROOT" \
     "${HOME}/.bun/bin/bun" -e "
@@ -319,30 +319,25 @@ _unstick_worker() {
   tmux send-keys -t "$pane_id" "$claude_cmd" 2>/dev/null || true
   tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
 
-  # 6. Wait for Claude TUI to be READY (not just ❯ — old ❯ may be in scrollback).
-  # Detect "bypass permissions" statusline which only appears when Claude TUI is loaded.
-  # Clear any old content detection by waiting for FRESH statusline after launch.
-  sleep 5  # minimum startup time for Claude
+  # 6. Wait for Claude TUI to be READY
+  sleep 5
   local wait=0
   until tmux capture-pane -t "$pane_id" -p 2>/dev/null | tail -5 | grep -qF 'bypass permissions'; do
     sleep 3; wait=$((wait + 3))
     if [ "$wait" -ge 90 ]; then
-      _log "UNSTICK-WARN: $canonical — TUI prompt not detected after 95s, injecting seed anyway"
+      _log "${log_prefix}-WARN: $canonical — TUI prompt not detected after 95s, injecting seed anyway"
       break
     fi
   done
   sleep 2
 
-  # 7. Inject full seed prompt into Claude TUI
-  # Use unique buffer name (pane + PID) to prevent stale buffer reuse
+  # 7. Inject seed via tmux buffer (unique name prevents stale buffer reuse)
   local buf_name="wd-${pane_id#%}-$$"
-  # Delete any pre-existing buffer with this name first
   tmux delete-buffer -b "$buf_name" 2>/dev/null || true
-  # Load seed — if this fails, skip paste entirely (don't risk stale buffer)
   if ! tmux load-buffer -b "$buf_name" "$seed_file" 2>/dev/null; then
-    _log "UNSTICK-ERR: $canonical — failed to load seed into tmux buffer (file: $seed_file)"
+    _log "${log_prefix}-ERR: $canonical — failed to load seed into tmux buffer (file: $seed_file)"
     rm -f "$seed_file" 2>/dev/null || true
-    return
+    return 1
   fi
   tmux paste-buffer -t "$pane_id" -b "$buf_name" -d 2>/dev/null || true
   sleep 1
@@ -353,8 +348,13 @@ _unstick_worker() {
     tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
   fi
   rm -f "$seed_file" 2>/dev/null || true
-  # Write pane border status for visual indicator
   echo "⚡ $worker_name" > "/tmp/tmux_pane_status_${pane_id}" 2>/dev/null || true
+}
+
+# ── Kill + resume a stuck flat worker in the same pane ────────────
+_unstick_worker() {
+  local pane_id="$1" canonical="$2" idle_sec="$3"
+  _kill_and_relaunch_in_pane "$pane_id" "$canonical" "UNSTICK"
 }
 
 # ── Check a single agent ──────────────────────────────────────────
@@ -570,83 +570,7 @@ _respawn_agent() {
     tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -q "^${pane_id}$" && pane_alive=true
 
     if $pane_alive; then
-      local worker_dir="$PROJECT_ROOT/.claude/workers/$worker_name"
-      local prev_session_id
-      prev_session_id=$(_get_session_id "$pane_id")
-
-      # Kill existing Claude process in pane
-      local pane_pid
-      pane_pid=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null \
-        | awk -v id="$pane_id" '$1==id{print $2}')
-      if [ -n "$pane_pid" ]; then
-        pkill -TERM -P "$pane_pid" 2>/dev/null || true
-        sleep 2
-        pkill -KILL -P "$pane_pid" 2>/dev/null || true
-        sleep 1
-      fi
-
-      # Prepare seed file BEFORE launching (generated via bun)
-      local prompt_file="/tmp/watchdog-prompt-${worker_name}.txt"
-      local _claude_ops="${HOME}/.claude-ops"
-      WORKER_NAME="$worker_name" PROJECT_ROOT="$PROJECT_ROOT" \
-        "${HOME}/.bun/bin/bun" -e "
-          const { generateSeedContent } = await import('${_claude_ops}/mcp/worker-fleet/index.ts');
-          process.stdout.write(generateSeedContent());
-        " > "$prompt_file" 2>/dev/null || {
-        echo "You are worker $worker_name. Read mission.md, then start your next cycle." > "$prompt_file"
-      }
-
-      # Build command from config, resume previous session
-      # For main-window workers (no worktree), set WORKER_NAME env
-      local claude_cmd
-      local worker_window_check
-      worker_window_check=$(_get_worker_window "$pane_id")
-      if [ -n "$worker_window_check" ]; then
-        claude_cmd="export WORKER_NAME=$worker_name && $(_build_claude_cmd "$worker_name" "$prev_session_id")"
-      else
-        claude_cmd=$(_build_claude_cmd "$worker_name" "$prev_session_id")
-      fi
-      tmux send-keys -t "$pane_id" "$claude_cmd" 2>/dev/null || true
-      tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
-
-      # Wait for Claude TUI to be READY (detect "bypass permissions" statusline)
-      sleep 5
-      local wait=0
-      until tmux capture-pane -t "$pane_id" -p 2>/dev/null | tail -5 | grep -qF 'bypass permissions'; do
-        sleep 3; wait=$((wait + 3))
-        if [ "$wait" -ge 90 ]; then
-          _log "RESPAWN-WARN: $canonical — TUI prompt not detected after 95s, injecting seed anyway"
-          break
-        fi
-      done
-      sleep 2
-
-      # Inject seed into Claude TUI
-      # Use unique buffer name (pane + PID) to prevent stale buffer reuse
-      local buf_name="wd-${pane_id#%}-$$"
-      tmux delete-buffer -b "$buf_name" 2>/dev/null || true
-      if ! tmux load-buffer -b "$buf_name" "$prompt_file" 2>/dev/null; then
-        _log "RESPAWN-ERR: $canonical — failed to load seed into tmux buffer (file: $prompt_file)"
-        rm -f "$prompt_file" 2>/dev/null || true
-        return
-      fi
-      tmux paste-buffer -t "$pane_id" -b "$buf_name" -d 2>/dev/null || true
-      sleep 1
-      tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
-      # Retry Enter after 3s — Claude TUI sometimes swallows the first one during paste processing
-      sleep 3
-      if tmux capture-pane -t "$pane_id" -p 2>/dev/null | tail -3 | grep -qE '❯'; then
-        tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
-      fi
-      rm -f "$prompt_file" 2>/dev/null || true
-
-      if [ -n "$prev_session_id" ]; then
-        _log "RESPAWN: $canonical (reason=$reason) — resumed session $prev_session_id in pane $pane_id"
-      else
-        _log "RESPAWN: $canonical (reason=$reason) — fresh start in pane $pane_id"
-      fi
-      # Write pane border status for visual indicator
-      echo "⚡ $worker_name" > "/tmp/tmux_pane_status_${pane_id}" 2>/dev/null || true
+      _kill_and_relaunch_in_pane "$pane_id" "$canonical" "RESPAWN" || return
       _publish_agent_event "agent.respawned" "$canonical" "Respawned after $reason (in-place)"
       return
     fi
