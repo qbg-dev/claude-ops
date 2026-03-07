@@ -103,6 +103,25 @@ setup_compat_symlink() {
   fi
 }
 
+# ── Slash commands (claude-ops:*) ─────────────────────────────────
+setup_commands() {
+  local cmds_src="$INSTALL_DIR/commands"
+  local cmds_dst="$HOME/.claude/commands/claude-ops"
+
+  if [[ ! -d "$cmds_src" ]]; then
+    info "No commands/ directory — skipping"
+    return
+  fi
+
+  mkdir -p "$HOME/.claude/commands"
+  if [[ -L "$cmds_dst" ]] && [[ "$(readlink "$cmds_dst")" == "$cmds_src" ]]; then
+    info "Slash commands symlink already in place"
+  else
+    ln -sfn "$cmds_src" "$cmds_dst"
+    info "Linked slash commands: $cmds_dst → $cmds_src"
+  fi
+}
+
 # ── Hook registration ────────────────────────────────────────────
 register_hooks() {
   info "Installing hooks from manifest..."
@@ -167,6 +186,7 @@ main() {
   setup_path
   setup_compat_symlink
   register_hooks
+  setup_commands
   verify_install
 
   # ── tmux setup ─────────────────────────────────────────────────
