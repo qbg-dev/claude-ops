@@ -30,7 +30,7 @@
     {
       "id": "prompt-echo-deferred",
       "event": "UserPromptSubmit",
-      "path": "~/.claude/hooks/prompt-echo-deferred.sh",
+      "path": "~/.claude-ops/hooks/publishers/prompt-echo-deferred.sh",
       "required": false,
       "category": "user",
       "description": "Deferred echo chain — feeds queued prompts from stop-echo.sh"
@@ -84,37 +84,19 @@
       "description": "Publishes tool usage events to event bus and tool logs"
     },
     {
-      "id": "post-tool-write-flag",
-      "event": "PostToolUse",
-      "path": "~/.claude/hooks/post-tool-write-flag.sh",
-      "matcher": "Write|Edit|NotebookEdit",
-      "required": false,
-      "category": "user",
-      "description": "Flags file write events for deploy detection"
-    },
-    {
-      "id": "post-tool-deploy-flag",
-      "event": "PostToolUse",
-      "path": "~/.claude/hooks/post-tool-deploy-flag.sh",
-      "matcher": "Bash",
-      "required": false,
-      "category": "user",
-      "description": "Flags deploy-related bash commands"
-    },
-    {
       "id": "subagent-start",
       "event": "SubagentStart",
-      "path": "~/.claude/hooks/subagent-lifecycle.sh",
-      "required": false,
-      "category": "user",
+      "path": "~/.claude-ops/hooks/publishers/subagent-lifecycle.sh",
+      "required": true,
+      "category": "core",
       "description": "Tracks subagent lifecycle for resource management"
     },
     {
       "id": "subagent-stop",
       "event": "SubagentStop",
-      "path": "~/.claude/hooks/subagent-lifecycle.sh",
-      "required": false,
-      "category": "user",
+      "path": "~/.claude-ops/hooks/publishers/subagent-lifecycle.sh",
+      "required": true,
+      "category": "core",
       "description": "Tracks subagent lifecycle for resource management"
     },
     {
@@ -122,7 +104,7 @@
       "event": "PreCompact",
       "path": "~/.claude-ops/scripts/pre-compact.sh",
       "timeout": 5000,
-      "required": false,
+      "required": true,
       "category": "core",
       "description": "Saves critical context before conversation compaction"
     },
@@ -153,7 +135,7 @@
     {
       "id": "stop-echo",
       "event": "Stop",
-      "path": "~/.claude/hooks/stop-echo.sh",
+      "path": "~/.claude-ops/hooks/publishers/stop-echo.sh",
       "required": false,
       "category": "user",
       "description": "Echo chain support — pops queued items and re-injects as block reasons"
