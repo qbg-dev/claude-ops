@@ -697,6 +697,10 @@ function generateSeedContent(handoff?: string): string {
     }
   } catch {}
 
+  // Worker memory lives at project-level auto-memory subdirectory
+  const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
+  const workerMemoryDir = join(HOME, ".claude", "projects", projectSlug, "memory", WORKER_NAME);
+
   let seed = `You are worker **${WORKER_NAME}**.
 Worktree: ${worktreeDir} (branch: ${branch})
 Worker config: ${workerDir}/
@@ -706,8 +710,9 @@ Read these files NOW in this order:
 2. Call \`mail_inbox()\` — check for messages before anything else
 3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
 
-Your MEMORY.md is auto-loaded by Claude (see "persistent auto memory directory" in your context).
-Use Edit/Write to update it directly at that path. Then begin working immediately.
+**Your memory**: \`${workerMemoryDir}/MEMORY.md\`
+Use Edit/Write to update it directly. Create topic files in that same directory for detailed notes.
+This path is under the project-level auto-memory — it persists across recycles and is shared with other workers.
 
 If your inbox has a message from the user or ${_missionAuth} (mission_authority), prioritize it over your current work.${stateBlock}${proposalBlock}
 
@@ -1987,10 +1992,10 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
   // Create directory
   mkdirSync(workerDir, { recursive: true });
 
-  // MEMORY.md — write directly to Claude Code's auto-memory path (no symlinks)
-  const worktreePath = `${PROJECT_ROOT}-w-${name}`;
-  const slug = worktreePath.replace(/\//g, "-");
-  const autoMemoryDir = join(HOME, ".claude", "projects", slug, "memory");
+  // MEMORY.md — project-level auto-memory subdirectory (shared across all workers)
+  // Path: ~/.claude/projects/{project-slug}/memory/{worker-name}/MEMORY.md
+  const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
+  const autoMemoryDir = join(HOME, ".claude", "projects", projectSlug, "memory", name);
   mkdirSync(autoMemoryDir, { recursive: true });
   const autoMemoryPath = join(autoMemoryDir, "MEMORY.md");
   // Remove stale symlink if present (legacy linkWorkerMemory artifact), then write real file

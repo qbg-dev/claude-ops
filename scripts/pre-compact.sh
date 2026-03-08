@@ -146,11 +146,16 @@ if [ -n "${REGISTRY_ENTRY:-}" ] && [ "$REGISTRY_ENTRY" != "null" ]; then
   echo ""
 fi
 
-# Memory
-MEMORY_FILE="$WORKER_DIR/MEMORY.md"
+# Memory — project-level auto-memory subdirectory (primary), fallback to worker dir
+PROJECT_SLUG=$(echo "$MAIN_ROOT" | tr '/' '-')
+AUTO_MEMORY_DIR="$HOME/.claude/projects/$PROJECT_SLUG/memory/$WORKER_NAME"
+MEMORY_FILE="$AUTO_MEMORY_DIR/MEMORY.md"
+# Fallback to legacy location
+[ ! -f "$MEMORY_FILE" ] && MEMORY_FILE="$WORKER_DIR/MEMORY.md"
 if [ -f "$MEMORY_FILE" ] && [ -s "$MEMORY_FILE" ]; then
   echo "### Accumulated Knowledge"
   echo "This is YOUR persistent memory from previous cycles. Read it carefully:"
+  echo "Memory path: \`$AUTO_MEMORY_DIR/\`"
   echo ""
   truncated_cat "$MEMORY_FILE" 150
   echo ""

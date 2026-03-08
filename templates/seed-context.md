@@ -152,7 +152,7 @@ When a reflection reveals a convention, gotcha, or pattern worth sharing, includ
 
 ## Perpetual Mode Tips
 
-- **Save learnings**: Edit your MEMORY.md. Claude picks it up next session automatically.
+- **Save learnings**: Edit your MEMORY.md at the path shown in your seed. Create topic files in the same directory for detailed notes. All workers share the same project-level auto-memory dir — coordinate via subdirectories.
 - **Scripts first**: Check `.claude/scripts/{{WORKER_NAME}}/` before writing inline bash.
 - **Adapt sleep**: Call `update_state("sleep_duration", N)` to tune your cycle interval.
 - **Stop checks**: Register verifications with `add_stop_check()` before recycling.
