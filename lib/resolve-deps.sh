@@ -33,6 +33,7 @@ BUN=$(_resolve_bin bun "$HOME/.bun/bin/bun" "/usr/local/bin/bun" "/opt/homebrew/
 NODE=$(_resolve_bin node "$HOME/.nvm/versions/node/*/bin/node" "/usr/local/bin/node" "/opt/homebrew/bin/node") || NODE=""
 JQ=$(_resolve_bin jq "/usr/local/bin/jq" "/opt/homebrew/bin/jq") || JQ=""
 TMUX_BIN=$(_resolve_bin tmux "/usr/local/bin/tmux" "/opt/homebrew/bin/tmux") || TMUX_BIN=""
+CODEX_BIN=$(_resolve_bin codex "$HOME/.local/bin/codex-wrapper" "$HOME/.local/bin/codex" "/usr/local/bin/codex") || CODEX_BIN=""
 
 # resolve_project_root — Find the git root. No hardcoded fallback.
 # Usage: PROJECT_ROOT=$(resolve_project_root) or PROJECT_ROOT="${PROJECT_ROOT:-$(resolve_project_root)}"
@@ -53,10 +54,11 @@ check_deps() {
   for dep in "$@"; do
     local var_name
     case "$dep" in
-      bun)  var_name="BUN" ;;
-      node) var_name="NODE" ;;
-      jq)   var_name="JQ" ;;
-      tmux) var_name="TMUX_BIN" ;;
+      bun)   var_name="BUN" ;;
+      node)  var_name="NODE" ;;
+      jq)    var_name="JQ" ;;
+      tmux)  var_name="TMUX_BIN" ;;
+      codex) var_name="CODEX_BIN" ;;
       *)
         if ! command -v "$dep" >/dev/null 2>&1; then
           echo "MISSING: $dep — install with: brew install $dep" >&2
@@ -69,10 +71,11 @@ check_deps() {
     if [ -z "$val" ]; then
       local install_hint
       case "$dep" in
-        bun)  install_hint="curl -fsSL https://bun.sh/install | bash" ;;
-        node) install_hint="brew install node" ;;
-        jq)   install_hint="brew install jq" ;;
-        tmux) install_hint="brew install tmux" ;;
+        bun)   install_hint="curl -fsSL https://bun.sh/install | bash" ;;
+        node)  install_hint="brew install node" ;;
+        jq)    install_hint="brew install jq" ;;
+        tmux)  install_hint="brew install tmux" ;;
+        codex) install_hint="npm install -g @openai/codex (optional — only needed for runtime=codex workers)" ;;
       esac
       echo "MISSING: $dep — install with: $install_hint" >&2
       missing=$((missing + 1))

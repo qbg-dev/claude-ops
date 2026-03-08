@@ -2094,12 +2094,15 @@ rm -f "${recycleScript}"
 type WorkerType = "implementer" | "monitor" | "coordinator" | "optimizer" | "verifier";
 type WorkerRuntime = "claude" | "codex";
 
+type ReasoningEffort = "low" | "medium" | "high" | "extra_high";
+
 interface CreateWorkerInput {
   name: string;
   mission: string;
   type?: WorkerType;
   runtime?: WorkerRuntime;
   model?: string;
+  reasoning_effort?: ReasoningEffort;
   perpetual?: boolean;
   sleep_duration?: number;
   disallowed_tools?: string[];
@@ -2143,7 +2146,7 @@ interface CreateWorkerResult {
 
 /** Core logic for creating a worker's directory and files. Exported for testing. */
 function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
-  const { name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools, window: windowGroup, report_to, permission_mode, taskEntries = [] } = input;
+  const { name, mission, type, runtime, model, reasoning_effort, perpetual, sleep_duration, disallowed_tools, window: windowGroup, report_to, permission_mode, taskEntries = [] } = input;
   const resolvedRuntime: WorkerRuntime = runtime || "claude";
 
   // Validate
@@ -2188,13 +2191,15 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
     "Bash(git clean*)",
     "Bash(rm -rf*)",
   ];
-  const runtimeModelDefault = resolvedRuntime === "codex" ? "o3" : "opus";
+  const runtimeModelDefault = resolvedRuntime === "codex" ? "gpt-5.4" : "opus";
   const selectedModel = model ?? tpl.model ?? runtimeModelDefault;
+  const resolvedEffort: ReasoningEffort = reasoning_effort ?? "high";
   const resolvedDisallowed = disallowed_tools ?? tpl.disallowedTools ?? defaultDisallowed;
   const resolvedPermMode = permission_mode ?? tpl.permission_mode ?? "bypassPermissions";
   const permissions = {
     model: selectedModel,
     permission_mode: resolvedPermMode,
+    reasoning_effort: resolvedEffort,
     disallowedTools: resolvedDisallowed,
     window: windowGroup || null,
     report_to: report_to || null,
@@ -2244,8 +2249,9 @@ server.registerTool(
     name: z.string().describe("Worker name in kebab-case (e.g. 'chatbot-fix')"),
     mission: z.string().describe("Full mission.md content (markdown)"),
     type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("Worker archetype — sets model, permissions, perpetual/sleep defaults from template. Caller still writes mission. Use get_worker_template to preview."),
-    runtime: z.enum(["claude", "codex"]).optional().describe("Runtime engine (default: claude). Codex workers use OpenAI Codex CLI instead of Claude CLI."),
-    model: z.string().optional().describe("LLM model (overrides type/runtime default if set). Claude: sonnet, opus, haiku. Codex: o3, o4-mini."),
+    runtime: z.enum(["claude", "codex"]).optional().describe("Runtime engine (default: claude). Use codex for well-specified tasks, logical/structured work, verification, and instruction-following. Use claude for open-ended exploration, complex reasoning, and creative problem-solving. Codex uses OpenAI Codex CLI; Claude uses Claude Code CLI."),
+    model: z.string().optional().describe("LLM model (overrides type/runtime default if set). Claude: sonnet, opus, haiku. Codex: gpt-5.4, o3, o4-mini."),
+    reasoning_effort: z.enum(["low", "medium", "high", "extra_high"]).optional().describe("Reasoning effort level (default: high). Both Claude (--effort) and Codex (-c model_reasoning_effort) support this."),
     perpetual: z.boolean().optional().describe("Run in perpetual loop (overrides type default if set)"),
     sleep_duration: z.number().optional().describe("Seconds between cycles, only if perpetual (overrides type default if set)"),
     disallowed_tools: z.string().optional().describe("JSON array of disallowed tool patterns (default: safe git/rm guards). Example: [\"Bash(git push*)\",\"Edit\",\"Bash(*deploy*)\"]"),
@@ -2257,7 +2263,7 @@ server.registerTool(
     fork_from_session: z.boolean().optional().describe("Fork the caller's Claude session so the new worker inherits conversation context (default: false). Requires launch=true."),
     direct_report: z.boolean().optional().describe("Set report_to to the calling worker instead of mission_authority (default: false)"),
   } },
-  async ({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report }) => {
+  async ({ name, mission, type, runtime, model, reasoning_effort, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report }) => {
     try {
       // Change 4: Enforce unique worker names
       const existingRegistry = readRegistry();
@@ -2304,7 +2310,7 @@ server.registerTool(
       }
 
       // Create files
-      const result = createWorkerFiles({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedTools, window: windowGroup, report_to, permission_mode, taskEntries });
+      const result = createWorkerFiles({ name, mission, type, runtime, model, reasoning_effort, perpetual, sleep_duration, disallowed_tools: disallowedTools, window: windowGroup, report_to, permission_mode, taskEntries });
       if (!result.ok) {
         return { content: [{ type: "text" as const, text: `Error: ${result.error}` }], isError: true };
       }
@@ -2331,7 +2337,7 @@ server.registerTool(
           entry.window = permissions.window;
         }
         entry.report_to = reportTo;
-        entry.custom = { ...entry.custom, runtime: resolvedRuntime || "claude" };
+        entry.custom = { ...entry.custom, runtime: resolvedRuntime || "claude", reasoning_effort: permissions.reasoning_effort || "high" };
         if (fork_from_session) {
           entry.forked_from = WORKER_NAME;
         }
@@ -2901,5 +2907,5 @@ export {
   WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR, REGISTRY_PATH,
   type Task, type InboxCursor, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
-  type WorkerRuntime,
+  type WorkerRuntime, type ReasoningEffort,
 };

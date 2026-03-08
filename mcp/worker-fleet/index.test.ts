@@ -1992,7 +1992,7 @@ describe("createWorkerFiles — runtime (Claude vs Codex)", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.runtime).toBe("codex");
-    expect(result.model).toBe("o3");
+    expect(result.model).toBe("gpt-5.4");
     expect(result.permissions?.runtime).toBe("codex");
   });
 
@@ -2036,6 +2036,38 @@ describe("createWorkerFiles — runtime (Claude vs Codex)", () => {
     expect(codexResult.ok).toBe(true);
     // denyList is type-driven, not runtime-driven
     expect(claudeResult.permissions?.disallowedTools).toEqual(codexResult.permissions?.disallowedTools);
+  });
+
+  test("reasoning_effort defaults to high", () => {
+    const result = createWorkerFiles({
+      name: "rt-effort-default",
+      mission: "# Default Effort",
+      runtime: "codex",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permissions?.reasoning_effort).toBe("high");
+  });
+
+  test("reasoning_effort=extra_high is stored", () => {
+    const result = createWorkerFiles({
+      name: "rt-effort-extra",
+      mission: "# Extra Effort",
+      runtime: "codex",
+      reasoning_effort: "extra_high",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permissions?.reasoning_effort).toBe("extra_high");
+  });
+
+  test("reasoning_effort works for claude runtime too", () => {
+    const result = createWorkerFiles({
+      name: "rt-effort-claude",
+      mission: "# Claude Effort",
+      runtime: "claude",
+      reasoning_effort: "low",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permissions?.reasoning_effort).toBe("low");
   });
 
   test("runtime=codex with type=monitor uses type model (opus) not codex default", () => {
@@ -2207,12 +2239,12 @@ describe("registry parity — Claude vs Codex", () => {
 
     const codexEntry = ensureWorkerInRegistry(registry, "dual-codex");
     codexEntry.custom = { runtime: "codex" };
-    codexEntry.model = "o3";
+    codexEntry.model = "gpt-5.4";
 
     // Both should be retrievable
     expect((registry["dual-claude"] as RegistryWorkerEntry).custom.runtime).toBe("claude");
     expect((registry["dual-codex"] as RegistryWorkerEntry).custom.runtime).toBe("codex");
     expect((registry["dual-claude"] as RegistryWorkerEntry).model).toBe("opus");
-    expect((registry["dual-codex"] as RegistryWorkerEntry).model).toBe("o3");
+    expect((registry["dual-codex"] as RegistryWorkerEntry).model).toBe("gpt-5.4");
   });
 });

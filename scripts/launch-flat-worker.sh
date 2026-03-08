@@ -69,25 +69,29 @@ WINDOW_GROUP=""
 
 if [ -f "$REGISTRY" ]; then
   # Batch-read all needed fields in one jq call
+  # Use "_" sentinel for null/empty fields to prevent bash IFS from collapsing consecutive tabs
   _REG_FIELDS=$(jq -r --arg n "$WORKER" '[
-    (.[$n].model // ""),
-    (.[$n].permission_mode // ""),
-    (.[$n].window // ""),
-    (._config.tmux_session // ""),
-    (.[$n].custom.runtime // "")
+    (.[$n].model // "_"),
+    (.[$n].permission_mode // "_"),
+    (.[$n].window // "_"),
+    (._config.tmux_session // "_"),
+    (.[$n].custom.runtime // "_"),
+    (.[$n].custom.reasoning_effort // "_")
   ] | join("\t")' "$REGISTRY" 2>/dev/null || echo "")
   if [ -n "$_REG_FIELDS" ]; then
-    IFS=$'\t' read -r _REG_MODEL _REG_PERM _REG_WIN _REG_SESS _REG_RUNTIME <<< "$_REG_FIELDS"
-    [ -n "$_REG_MODEL" ] && MODEL="$_REG_MODEL"
-    [ -n "$_REG_PERM" ] && PERM_MODE="$_REG_PERM"
-    [ -n "$_REG_WIN" ] && WINDOW_GROUP="$_REG_WIN"
-    [ -n "$_REG_SESS" ] && TARGET_SESSION="$_REG_SESS"
-    [ -n "$_REG_RUNTIME" ] && WORKER_RUNTIME="$_REG_RUNTIME"
+    IFS=$'\t' read -r _REG_MODEL _REG_PERM _REG_WIN _REG_SESS _REG_RUNTIME _REG_EFFORT <<< "$_REG_FIELDS"
+    [ "$_REG_MODEL" != "_" ] && [ -n "$_REG_MODEL" ] && MODEL="$_REG_MODEL"
+    [ "$_REG_PERM" != "_" ] && [ -n "$_REG_PERM" ] && PERM_MODE="$_REG_PERM"
+    [ "$_REG_WIN" != "_" ] && [ -n "$_REG_WIN" ] && WINDOW_GROUP="$_REG_WIN"
+    [ "$_REG_SESS" != "_" ] && [ -n "$_REG_SESS" ] && TARGET_SESSION="$_REG_SESS"
+    [ "$_REG_RUNTIME" != "_" ] && [ -n "$_REG_RUNTIME" ] && WORKER_RUNTIME="$_REG_RUNTIME"
+    [ "$_REG_EFFORT" != "_" ] && [ -n "$_REG_EFFORT" ] && REASONING_EFFORT="$_REG_EFFORT"
   fi
 fi
 
 # WORKER_RUNTIME can be set via env var (from create_worker) or registry
 WORKER_RUNTIME="${WORKER_RUNTIME:-claude}"
+REASONING_EFFORT="${REASONING_EFFORT:-high}"
 
 # CLI --window overrides registry
 [ -n "$CLI_WINDOW" ] && WINDOW_GROUP="$CLI_WINDOW"
@@ -261,13 +265,29 @@ fi
 
 # Launch agent (Claude or Codex)
 if [ "$WORKER_RUNTIME" = "codex" ]; then
+  # Use resolved CODEX_BIN from resolve-deps.sh, or fall back to PATH
   CODEX_BIN="${CODEX_BIN:-codex}"
+  if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
+    echo "ERROR: codex CLI not found. Install with: npm install -g @openai/codex"
+    exit 1
+  fi
+  # Permission mapping: Claude bypassPermissions → Codex --dangerously-bypass-approvals-and-sandbox
+  # Otherwise: Codex uses sandbox modes (-s workspace-write) + approval (-a on-request)
   AGENT_CMD="WORKER_NAME=$WORKER WORKER_RUNTIME=codex PROJECT_ROOT=$PROJECT_ROOT $CODEX_BIN"
   AGENT_CMD+=" -C $WORKTREE_DIR"
-  AGENT_CMD+=" -c model=$MODEL"
-  AGENT_CMD+=" -s workspace-write"
+  AGENT_CMD+=" -m $MODEL"
+  # Map reasoning_effort: Codex uses model_reasoning_effort config key
+  # extra_high is a valid Codex value (maps to extended thinking)
+  AGENT_CMD+=" -c model_reasoning_effort=$REASONING_EFFORT"
+  if [ "$PERM_MODE" = "bypassPermissions" ]; then
+    AGENT_CMD+=" --dangerously-bypass-approvals-and-sandbox"
+  else
+    AGENT_CMD+=" -s workspace-write -a on-request"
+  fi
   AGENT_CMD+=" --no-alt-screen"
   AGENT_CMD+=" --add-dir $PROJECT_ROOT/.claude/workers/$WORKER"
+  # Note: Codex has no --disallowed-tools equivalent. denyList is not enforced for Codex workers.
+  # The sandbox mode provides coarser-grained permission control instead.
   tmux send-keys -t "$WORKER_PANE" "$AGENT_CMD"
   tmux send-keys -t "$WORKER_PANE" -H 0d
 
@@ -280,7 +300,7 @@ if [ "$WORKER_RUNTIME" = "codex" ]; then
   sleep 2  # extra settle time after prompt appears
 else
   # Claude launch
-  CLAUDE_CMD="CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME=$WORKER claude --model $MODEL"
+  CLAUDE_CMD="CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME=$WORKER claude --model $MODEL --effort $REASONING_EFFORT"
   if [ "$PERM_MODE" = "bypassPermissions" ]; then
     CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
   fi
