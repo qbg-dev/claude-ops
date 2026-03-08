@@ -114,18 +114,17 @@ assert_equals "stuck: deploy output does not match" "no-match" "$STATUS"
 echo ""
 echo "── watchdog: config values ──"
 
-# Architecture: v3 uses worker-watchdog.sh (full-featured, supports flat workers)
-# harness-watchdog.sh is a simplified crash-only watchdog for legacy harnesses.
-WATCHDOG="$HOME/.claude-ops/scripts/worker-watchdog.sh"
+# harness-watchdog.sh is the unified watchdog (supports flat workers + legacy harnesses).
+WATCHDOG="$HOME/.claude-ops/scripts/harness-watchdog.sh"
 
-# STUCK_THRESHOLD_SEC must be 1200 (20 min) — configurable via env, default 1200
+# STUCK_THRESHOLD_SEC must be 600 (10 min) — configurable via env, default 600
 THRESHOLD=$(grep 'STUCK_THRESHOLD_SEC=' "$WATCHDOG" | head -1 \
   | sed 's/.*:-//' | grep -oE '^[0-9]+')
-assert_equals "stuck threshold hardcoded to 1200 (20 min)" "1200" "$THRESHOLD"
+assert_equals "stuck threshold hardcoded to 600 (10 min)" "600" "$THRESHOLD"
 
-# Flat worker unstick path (worker/*) must be present
-assert_file_contains "watchdog has _unstick_worker function" "$WATCHDOG" "_unstick_worker()"
-assert_file_contains "watchdog detects worker/* canonicals" "$WATCHDOG" 'worker/*'
+# Core watchdog functions
+assert_file_contains "watchdog has check_worker function" "$WATCHDOG" "check_worker"
+assert_file_contains "watchdog has _is_pane_process_busy function" "$WATCHDOG" "_is_pane_process_busy"
 assert_file_contains "watchdog calls _check_scrollback_stuck" "$WATCHDOG" "_check_scrollback_stuck"
 
 echo ""
@@ -228,9 +227,9 @@ assert_file_contains "_record_relaunch touches liveness after respawn" \
 assert_file_contains "_record_relaunch stamp uses UTC ISO format" \
   "$WATCHDOG_SH2" 'date -u +"%Y-%m-%dT%H:%M:%SZ"'
 
-# Test: _record_relaunch is protected by registry lock (mkdir-based)
+# Test: _record_relaunch is protected by registry lock
 assert_file_contains "_record_relaunch acquires registry lock" \
-  "$WATCHDOG_SH2" "mkdir \"\$_LOCK_DIR\""
+  "$WATCHDOG_SH2" "_lock_registry"
 
 # Runtime test: verify stamped timestamp is recent (within 5 seconds)
 FAKE_REGISTRY="$TMPDIR_TEST/registry-stamp-test.json"

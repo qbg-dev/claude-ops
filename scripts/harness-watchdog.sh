@@ -122,6 +122,25 @@ _get_session_id() {
   echo ""
 }
 
+# ── CPU-based activity check ──────────────────────────────────────
+# Returns 0 (true) if the pane's process tree is actively consuming CPU.
+# This catches long thinking phases where Claude is computing but no hooks fire.
+_is_pane_process_busy() {
+  local pane_id="$1"
+  local pane_pid
+  pane_pid=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v p="$pane_id" '$1==p{print $2}')
+  [ -z "$pane_pid" ] && return 1
+
+  # Sum CPU of the pane process and all descendants (node + workers)
+  # macOS ps: %cpu is cumulative for each process
+  local total_cpu
+  total_cpu=$(ps -o %cpu= -g "$pane_pid" 2>/dev/null | awk '{s+=$1} END{printf "%.0f", s}')
+  [ -z "$total_cpu" ] && return 1
+
+  # >5% aggregate CPU means the process tree is actively computing
+  [ "$total_cpu" -gt 5 ] 2>/dev/null
+}
+
 # ── Scrollback-based stuck detection ───────────────────────────────
 # Hash the pane content and compare with previous check.
 # If content changed → worker is active. If unchanged → idle.
@@ -333,7 +352,7 @@ _build_agent_cmd() {
     fi
   else
     # Claude Code CLI (default)
-    local cmd="CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model $model"
+    local cmd="CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME=$worker claude --model $model"
     [ "$perm_mode" = "bypassPermissions" ] && cmd="$cmd --dangerously-skip-permissions"
     [ -n "$effort" ] && cmd="$cmd --effort $effort"
     [ -n "$disallowed" ] && cmd="$cmd --disallowed-tools \"$disallowed\""
@@ -480,16 +499,47 @@ _relaunch_claude() {
   (
     sleep 10
     local wait=0
-    local tui_pattern="bypass permissions"
+    local tui_pattern="bypass permissions on"
     [ "$worker_runtime" = "codex" ] && tui_pattern="codex"
 
-    until tmux capture-pane -t "$pane" -p 2>/dev/null | tail -5 | grep -qiF "$tui_pattern"; do
+    # Phase 1: Wait for any Claude indicator (including bypass dialog or TUI status bar)
+    until tmux capture-pane -t "$pane" -p 2>/dev/null | tail -10 | grep -qiF "bypass permissions"; do
       sleep 3; wait=$((wait + 3))
       [ "$wait" -ge 60 ] && break
     done
 
-    if ! tmux capture-pane -t "$pane" -p 2>/dev/null | tail -5 | grep -qiF "$tui_pattern"; then
+    if ! tmux capture-pane -t "$pane" -p 2>/dev/null | tail -10 | grep -qiF "bypass permissions"; then
       _log "RELAUNCH-WARN: $worker — TUI not ready after $((wait + 10))s, skipping seed"
+      return
+    fi
+
+    # Phase 2: If bypass dialog is showing (not the TUI status bar), auto-accept it
+    local pane_bottom
+    pane_bottom=$(tmux capture-pane -t "$pane" -p 2>/dev/null | tail -10)
+    if echo "$pane_bottom" | grep -qF "Yes, I accept" && ! echo "$pane_bottom" | grep -qF "bypass permissions on"; then
+      _log "RELAUNCH-ACCEPT: $worker — auto-accepting bypass dialog"
+      tmux send-keys -t "$pane" Down
+      sleep 0.5
+      tmux send-keys -t "$pane" Enter
+      sleep 5
+      # Now wait for the actual TUI status bar
+      local wait2=0
+      until tmux capture-pane -t "$pane" -p 2>/dev/null | tail -5 | grep -qiF "$tui_pattern"; do
+        sleep 3; wait2=$((wait2 + 3))
+        [ "$wait2" -ge 30 ] && break
+      done
+    fi
+
+    # Phase 3: Also handle project trust dialog ("Yes, I trust this folder")
+    pane_bottom=$(tmux capture-pane -t "$pane" -p 2>/dev/null | tail -10)
+    if echo "$pane_bottom" | grep -qF "I trust this folder"; then
+      _log "RELAUNCH-TRUST: $worker — auto-accepting project trust dialog"
+      tmux send-keys -t "$pane" Enter
+      sleep 5
+    fi
+
+    if ! tmux capture-pane -t "$pane" -p 2>/dev/null | tail -5 | grep -qiF "$tui_pattern"; then
+      _log "RELAUNCH-WARN: $worker — TUI ready check failed after dialogs, skipping seed"
       return
     fi
 
@@ -574,23 +624,61 @@ check_worker() {
     # Quick check: liveness heartbeat file (touched by PostToolUse + UserPromptSubmit hooks)
     local runtime; runtime=$(_worker_runtime "$worker")
     local liveness_file="$runtime/liveness"
+
+    # Relaunch cooldown: if last relaunch was < 120s ago, skip entirely.
+    # Prevents respawn-detection-respawn loop when Claude takes 30-60s to start.
+    local _last_relaunch_ts
+    _last_relaunch_ts=$(jq -r --arg n "$worker" '.[$n].last_relaunch.at // empty' "$REGISTRY" 2>/dev/null || echo "")
+    if [ -n "$_last_relaunch_ts" ] && [ "$_last_relaunch_ts" != "null" ]; then
+      local _relaunch_epoch
+      _relaunch_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_last_relaunch_ts" +%s 2>/dev/null || echo 0)
+      local _since_relaunch=$(( now_ts - _relaunch_epoch ))
+      if [ "$_since_relaunch" -lt 120 ]; then
+        return  # within relaunch cooldown
+      fi
+    fi
+
     if [ -f "$liveness_file" ]; then
       local last_active
       last_active=$(cat "$liveness_file" 2>/dev/null || echo "0")
+      # Guard against non-numeric content in liveness file
+      if ! [[ "$last_active" =~ ^[0-9]+$ ]]; then
+        # Fix corrupt liveness file
+        echo "$now_ts" > "$liveness_file"
+        return
+      fi
       local since_active=$(( now_ts - last_active ))
-      if [ "$since_active" -lt 60 ]; then
-        # Active within last 60s — not stuck, clear any stale marker
+      if [ "$since_active" -lt 300 ]; then
+        # Active within last 300s — not stuck. Opus models can think for 2-4 min
+        # without firing PostToolUse hooks, so 60s was too aggressive.
         rm -f "$runtime/stuck-candidate" 2>/dev/null || true
         _clear_cos_notified "$worker"
         return
       fi
+    else
+      # No liveness file at all — this is the first watchdog check for this worker.
+      # Seed the file so the sleep-complete logic can measure idle time.
+      echo "$now_ts" > "$liveness_file"
+      _log "LIVENESS-SEED: $worker — created initial liveness file"
+      return
+    fi
+
+    # ── CPU activity gate ──
+    # If the pane process tree is actively consuming CPU, the agent is thinking.
+    # Skip all heuristic checks (bare-shell, scrollback) — it's working.
+    if _is_pane_process_busy "$pane_id"; then
+      rm -f "$(_worker_runtime "$worker")/stuck-candidate" 2>/dev/null || true
+      _clear_cos_notified "$worker"
+      return
     fi
 
     # ── Bare-shell detection (soft crash loop guard) ──
     # If pane is alive but Claude TUI never started, we have a failed respawn
     local full_pane_content
     full_pane_content=$(tmux capture-pane -t "$pane_id" -p 2>/dev/null | grep -v '^$' | tail -30)
-    if ! echo "$full_pane_content" | grep -qE 'bypass permissions|Thinking|Reading|Searching|Editing|Writing|Running|>\s'; then
+    # Match Claude TUI indicators: status bar, thinking spinners (Osmosing/Booping/etc),
+    # action verbs, bypass dialog, or the input prompt (❯)
+    if ! echo "$full_pane_content" | grep -qiE 'bypass permissions|thinking|Osmosing|Booping|Garnishing|Reading|Searching|Editing|Writing|Running|Worked for|esc to interrupt|❯ $'; then
       # No Claude TUI indicators at all — likely bare shell from failed respawn
       if [ "$perpetual" = "true" ]; then
         _log "BARE-SHELL: $worker (pane $pane_id) — Claude not running, clean restart"

@@ -15,7 +15,7 @@ RESET='\033[0m'
 assert() {
   local name="$1" expected="$2" actual="$3"
   TOTAL=$((TOTAL + 1))
-  if echo "$actual" | grep -qF "$expected"; then
+  if echo "$actual" | grep -qF -- "$expected"; then
     echo -e "  ${GREEN}PASS${RESET} $name"
     PASS=$((PASS + 1))
   else
@@ -98,7 +98,7 @@ assert_file_exists() {
 assert_file_contains() {
   local name="$1" file="$2" expected="$3"
   TOTAL=$((TOTAL + 1))
-  if [ -f "$file" ] && grep -qF "$expected" "$file" 2>/dev/null; then
+  if [ -f "$file" ] && grep -qF -- "$expected" "$file" 2>/dev/null; then
     echo -e "  ${GREEN}PASS${RESET} $name"
     PASS=$((PASS + 1))
   else

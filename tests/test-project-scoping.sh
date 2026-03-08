@@ -16,16 +16,16 @@ PANE_REGISTRY="${CLAUDE_OPS_DIR}/state/pane-registry.json"
 
 echo "── project scoping — static analysis ──"
 
-# ── Test 1: check-flat-workers.sh scopes to project root ─────────────────────
+# ── Test 1: harness-watchdog.sh scopes to project root ───────────────────────
 # Architecture: v3 uses registry.json at $PROJECT_ROOT/.claude/workers/registry.json
 # Scoping is via file-path (PROJECT_ROOT variable), not a project_root field in pane-registry.
 TOTAL=$((TOTAL + 1))
-HITS=$(grep -n 'PROJECT_ROOT\|project_root' "$HOME/.claude-ops/scripts/check-flat-workers.sh" 2>/dev/null || true)
-if echo "$HITS" | grep -qi "project_root"; then
-  echo -e "  ${GREEN}PASS${RESET} check-flat-workers.sh scopes to project root"
+HITS=$(grep -n 'PROJECT_ROOT\|REGISTRY' "$HOME/.claude-ops/scripts/harness-watchdog.sh" 2>/dev/null || true)
+if echo "$HITS" | grep -qi "PROJECT_ROOT"; then
+  echo -e "  ${GREEN}PASS${RESET} harness-watchdog.sh scopes to project root"
   PASS=$((PASS + 1))
 else
-  echo -e "  ${RED}FAIL${RESET} check-flat-workers.sh missing project root scoping"
+  echo -e "  ${RED}FAIL${RESET} harness-watchdog.sh missing project root scoping"
   echo "    must use PROJECT_ROOT to scope registry.json path to current project"
   FAIL=$((FAIL + 1))
 fi
@@ -41,14 +41,14 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 3: deliver_tmux.sh carries from_project ─────────────────────────────
+# ── Test 3: launch-flat-worker.sh carries PROJECT_ROOT ────────────────────────
 TOTAL=$((TOTAL + 1))
-DT_SH="$HOME/.claude-ops/bus/side-effects/deliver_tmux.sh"
-if grep -q 'from_project\|project_root' "$DT_SH" 2>/dev/null; then
-  echo -e "  ${GREEN}PASS${RESET} deliver_tmux.sh uses from_project/project_root scoping"
+LF_SH="$HOME/.claude-ops/scripts/launch-flat-worker.sh"
+if grep -q 'PROJECT_ROOT' "$LF_SH" 2>/dev/null; then
+  echo -e "  ${GREEN}PASS${RESET} launch-flat-worker.sh uses PROJECT_ROOT scoping"
   PASS=$((PASS + 1))
 else
-  echo -e "  ${RED}FAIL${RESET} deliver_tmux.sh missing project scoping"
+  echo -e "  ${RED}FAIL${RESET} launch-flat-worker.sh missing PROJECT_ROOT scoping"
   FAIL=$((FAIL + 1))
 fi
 
