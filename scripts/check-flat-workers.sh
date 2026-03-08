@@ -112,6 +112,43 @@ for dir in "$WORKERS_DIR"/*/; do
 done
 
 echo
+echo "=== Pane Liveness (content delta) ==="
+
+for dir in "$WORKERS_DIR"/*/; do
+  [ ! -d "$dir" ] && continue
+  name=$(basename "$dir")
+  [ "$name" = "_archived" ] && continue
+
+  pane=""
+  if [ -f "$REGISTRY" ]; then
+    pane=$(jq -r --arg n "$name" '.[$n].pane_id // empty' "$REGISTRY" 2>/dev/null || echo "")
+  fi
+  [ -z "${pane:-}" ] && continue
+  # Only check alive panes
+  tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -q "^${pane}$" || continue
+
+  PANE_CONTENT=$(tmux capture-pane -t "$pane" -p -S -20 2>/dev/null || echo "")
+  HASH=$(echo "$PANE_CONTENT" | md5 2>/dev/null || echo "$PANE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
+  PREV_HASH_FILE="/tmp/worker-pane-${name}.hash"
+  PREV_HASH=$(cat "$PREV_HASH_FILE" 2>/dev/null || echo "")
+  echo "$HASH" > "$PREV_HASH_FILE"
+
+  if [ "$HASH" = "$PREV_HASH" ] && [ -n "$PREV_HASH" ]; then
+    STALE_COUNT_FILE="/tmp/worker-pane-${name}.stale"
+    STALE_COUNT=$(( $(cat "$STALE_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+    echo "$STALE_COUNT" > "$STALE_COUNT_FILE"
+    if [ "$STALE_COUNT" -ge 5 ]; then
+      echo "  STUCK? $name — pane unchanged for ${STALE_COUNT} consecutive checks"
+    else
+      echo "  $name — pane idle (${STALE_COUNT}/5 checks)"
+    fi
+  else
+    echo "0" > "/tmp/worker-pane-${name}.stale" 2>/dev/null || true
+    echo "  $name — pane active"
+  fi
+done
+
+echo
 echo "=== Stale Check (>45 min since last cycle) ==="
 NOW=$(date +%s)
 STALE_FOUND=0

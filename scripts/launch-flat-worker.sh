@@ -68,21 +68,26 @@ PERM_MODE="bypassPermissions"
 WINDOW_GROUP=""
 
 if [ -f "$REGISTRY" ]; then
-  # Batch-read all needed fields in one jq call (4 calls → 1)
+  # Batch-read all needed fields in one jq call
   _REG_FIELDS=$(jq -r --arg n "$WORKER" '[
     (.[$n].model // ""),
     (.[$n].permission_mode // ""),
     (.[$n].window // ""),
-    (._config.tmux_session // "")
+    (._config.tmux_session // ""),
+    (.[$n].custom.runtime // "")
   ] | join("\t")' "$REGISTRY" 2>/dev/null || echo "")
   if [ -n "$_REG_FIELDS" ]; then
-    IFS=$'\t' read -r _REG_MODEL _REG_PERM _REG_WIN _REG_SESS <<< "$_REG_FIELDS"
+    IFS=$'\t' read -r _REG_MODEL _REG_PERM _REG_WIN _REG_SESS _REG_RUNTIME <<< "$_REG_FIELDS"
     [ -n "$_REG_MODEL" ] && MODEL="$_REG_MODEL"
     [ -n "$_REG_PERM" ] && PERM_MODE="$_REG_PERM"
     [ -n "$_REG_WIN" ] && WINDOW_GROUP="$_REG_WIN"
     [ -n "$_REG_SESS" ] && TARGET_SESSION="$_REG_SESS"
+    [ -n "$_REG_RUNTIME" ] && WORKER_RUNTIME="$_REG_RUNTIME"
   fi
 fi
+
+# WORKER_RUNTIME can be set via env var (from create_worker) or registry
+WORKER_RUNTIME="${WORKER_RUNTIME:-claude}"
 
 # CLI --window overrides registry
 [ -n "$CLI_WINDOW" ] && WINDOW_GROUP="$CLI_WINDOW"
@@ -254,23 +259,44 @@ if [ -z "$DISALLOWED_TOOLS" ] && [ -f "$PERMS" ]; then
   [ -n "$_DT" ] && DISALLOWED_TOOLS="$_DT"
 fi
 
-# Launch Claude
-CLAUDE_CMD="CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME=$WORKER claude --model $MODEL"
-if [ "$PERM_MODE" = "bypassPermissions" ]; then
-  CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
-fi
-[ -n "$DISALLOWED_TOOLS" ] && CLAUDE_CMD="$CLAUDE_CMD --disallowed-tools \"$DISALLOWED_TOOLS\""
-CLAUDE_CMD="$CLAUDE_CMD --add-dir $PROJECT_ROOT/.claude/workers/$WORKER"
-tmux send-keys -t "$WORKER_PANE" "$CLAUDE_CMD"
-tmux send-keys -t "$WORKER_PANE" -H 0d
+# Launch agent (Claude or Codex)
+if [ "$WORKER_RUNTIME" = "codex" ]; then
+  CODEX_BIN="${CODEX_BIN:-codex}"
+  AGENT_CMD="WORKER_NAME=$WORKER WORKER_RUNTIME=codex PROJECT_ROOT=$PROJECT_ROOT $CODEX_BIN"
+  AGENT_CMD+=" -C $WORKTREE_DIR"
+  AGENT_CMD+=" -c model=$MODEL"
+  AGENT_CMD+=" -s workspace-write"
+  AGENT_CMD+=" --no-alt-screen"
+  AGENT_CMD+=" --add-dir $PROJECT_ROOT/.claude/workers/$WORKER"
+  tmux send-keys -t "$WORKER_PANE" "$AGENT_CMD"
+  tmux send-keys -t "$WORKER_PANE" -H 0d
 
-# Wait for Claude TUI to be ready (poll for prompt, max 60s)
-WAIT=0
-until tmux capture-pane -t "$WORKER_PANE" -p 2>/dev/null | grep -qE '❯|> $'; do
-  sleep 2; WAIT=$((WAIT+2))
-  [ "$WAIT" -ge 60 ] && { echo "WARNING: TUI timeout after 60s, proceeding anyway"; break; }
-done
-sleep 2  # extra settle time after prompt appears
+  # Wait for Codex TUI to be ready (poll for prompt, max 60s)
+  WAIT=0
+  until tmux capture-pane -t "$WORKER_PANE" -p 2>/dev/null | grep -qE '>|❯|\$'; do
+    sleep 2; WAIT=$((WAIT+2))
+    [ "$WAIT" -ge 60 ] && { echo "WARNING: Codex TUI timeout after 60s, proceeding anyway"; break; }
+  done
+  sleep 2  # extra settle time after prompt appears
+else
+  # Claude launch
+  CLAUDE_CMD="CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME=$WORKER claude --model $MODEL"
+  if [ "$PERM_MODE" = "bypassPermissions" ]; then
+    CLAUDE_CMD="$CLAUDE_CMD --dangerously-skip-permissions"
+  fi
+  [ -n "$DISALLOWED_TOOLS" ] && CLAUDE_CMD="$CLAUDE_CMD --disallowed-tools \"$DISALLOWED_TOOLS\""
+  CLAUDE_CMD="$CLAUDE_CMD --add-dir $PROJECT_ROOT/.claude/workers/$WORKER"
+  tmux send-keys -t "$WORKER_PANE" "$CLAUDE_CMD"
+  tmux send-keys -t "$WORKER_PANE" -H 0d
+
+  # Wait for Claude TUI to be ready (poll for prompt, max 60s)
+  WAIT=0
+  until tmux capture-pane -t "$WORKER_PANE" -p 2>/dev/null | grep -qE '❯|> $'; do
+    sleep 2; WAIT=$((WAIT+2))
+    [ "$WAIT" -ge 60 ] && { echo "WARNING: TUI timeout after 60s, proceeding anyway"; break; }
+  done
+  sleep 2  # extra settle time after prompt appears
+fi
 
 # Inject seed
 # Use a named buffer with PID to prevent stale buffer reuse across invocations
@@ -292,4 +318,4 @@ if tmux capture-pane -t "$WORKER_PANE" -p 2>/dev/null | grep -qE '❯'; then
   echo "(Retried Enter for $WORKER)"
 fi
 
-echo "Launched worker/$WORKER in pane $WORKER_PANE (session: $TARGET_SESSION, window: $WINDOW_GROUP, worktree: $WORKTREE_DIR)"
+echo "Launched worker/$WORKER in pane $WORKER_PANE (session: $TARGET_SESSION, window: $WINDOW_GROUP, runtime: $WORKER_RUNTIME, worktree: $WORKTREE_DIR)"

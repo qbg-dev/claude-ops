@@ -2107,13 +2107,15 @@ rm -f "${recycleScript}"
 // WORKER MANAGEMENT (1)
 // ═══════════════════════════════════════════════════════════════════
 
-type WorkerType = "implementer" | "monitor" | "coordinator" | "optimizer";
+type WorkerType = "implementer" | "monitor" | "coordinator" | "optimizer" | "verifier";
+type WorkerRuntime = "claude" | "codex";
 
 interface CreateWorkerInput {
   name: string;
   mission: string;
   type?: WorkerType;
-  model?: "sonnet" | "opus" | "haiku";
+  runtime?: WorkerRuntime;
+  model?: string;
   perpetual?: boolean;
   sleep_duration?: number;
   disallowed_tools?: string[];
@@ -2147,6 +2149,7 @@ interface CreateWorkerResult {
   error?: string;
   workerDir?: string;
   model?: string;
+  runtime?: WorkerRuntime;
   perpetual?: boolean;
   taskIds?: string[];
   tasks?: Record<string, Task>;
@@ -2156,7 +2159,8 @@ interface CreateWorkerResult {
 
 /** Core logic for creating a worker's directory and files. Exported for testing. */
 function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
-  const { name, mission, type, model, perpetual, sleep_duration, disallowed_tools, window: windowGroup, report_to, permission_mode, taskEntries = [] } = input;
+  const { name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools, window: windowGroup, report_to, permission_mode, taskEntries = [] } = input;
+  const resolvedRuntime: WorkerRuntime = runtime || "claude";
 
   // Validate
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
@@ -2191,7 +2195,7 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
   // mission.md
   writeFileSync(join(workerDir, "mission.md"), mission.trim() + "\n");
 
-  // Config — override precedence: explicit param > type template > hardcoded default
+  // Config — override precedence: explicit param > type template > runtime default > hardcoded default
   const defaultDisallowed = [
     "Bash(git checkout main*)",
     "Bash(git merge*)",
@@ -2200,7 +2204,8 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
     "Bash(git clean*)",
     "Bash(rm -rf*)",
   ];
-  const selectedModel = model ?? tpl.model ?? "opus";
+  const runtimeModelDefault = resolvedRuntime === "codex" ? "o3" : "opus";
+  const selectedModel = model ?? tpl.model ?? runtimeModelDefault;
   const resolvedDisallowed = disallowed_tools ?? tpl.disallowedTools ?? defaultDisallowed;
   const resolvedPermMode = permission_mode ?? tpl.permission_mode ?? "bypassPermissions";
   const permissions = {
@@ -2209,6 +2214,7 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
     disallowedTools: resolvedDisallowed,
     window: windowGroup || null,
     report_to: report_to || null,
+    runtime: resolvedRuntime,
   };
 
   // State — override precedence: explicit param > type template > hardcoded default
@@ -2245,7 +2251,7 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
   }
   writeFileSync(join(workerDir, "tasks.json"), JSON.stringify(tasksObj, null, 2) + "\n");
 
-  return { ok: true, workerDir, model: selectedModel, perpetual: isPerpetual, taskIds, tasks: tasksObj, state, permissions };
+  return { ok: true, workerDir, model: selectedModel, runtime: resolvedRuntime, perpetual: isPerpetual, taskIds, tasks: tasksObj, state, permissions };
 }
 
 server.registerTool(
@@ -2253,8 +2259,9 @@ server.registerTool(
   { description: "Spin up a new persistent worker with its own mission, memory, and task list. Use when you've identified a domain of work that warrants a dedicated agent — ongoing monitoring, specialized repair, continuous optimization. Set launch=true to start it immediately. Set fork_from_session=true to fork your current conversation context (inherits what you know). Set placement to control where the pane appears.", inputSchema: {
     name: z.string().describe("Worker name in kebab-case (e.g. 'chatbot-fix')"),
     mission: z.string().describe("Full mission.md content (markdown)"),
-    type: z.enum(["implementer", "monitor", "coordinator", "optimizer"]).optional().describe("Worker archetype — sets model, permissions, perpetual/sleep defaults from template. Caller still writes mission. Use get_worker_template to preview."),
-    model: z.enum(["sonnet", "opus", "haiku"]).optional().describe("LLM model (overrides type default if set)"),
+    type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("Worker archetype — sets model, permissions, perpetual/sleep defaults from template. Caller still writes mission. Use get_worker_template to preview."),
+    runtime: z.enum(["claude", "codex"]).optional().describe("Runtime engine (default: claude). Codex workers use OpenAI Codex CLI instead of Claude CLI."),
+    model: z.string().optional().describe("LLM model (overrides type/runtime default if set). Claude: sonnet, opus, haiku. Codex: o3, o4-mini."),
     perpetual: z.boolean().optional().describe("Run in perpetual loop (overrides type default if set)"),
     sleep_duration: z.number().optional().describe("Seconds between cycles, only if perpetual (overrides type default if set)"),
     disallowed_tools: z.string().optional().describe("JSON array of disallowed tool patterns (default: safe git/rm guards). Example: [\"Bash(git push*)\",\"Edit\",\"Bash(*deploy*)\"]"),
@@ -2267,7 +2274,7 @@ server.registerTool(
     direct_report: z.boolean().optional().describe("Set report_to to the calling worker instead of mission_authority (default: false)"),
     placement: z.enum(["window", "beside", "new-window"]).optional().describe("Deprecated — all workers launch into window groups. Kept for backward compat."),
   } },
-  async ({ name, mission, type, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report, placement: _placement }) => {
+  async ({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report, placement: _placement }) => {
     try {
       // Change 4: Enforce unique worker names
       const existingRegistry = readRegistry();
@@ -2314,7 +2321,7 @@ server.registerTool(
       }
 
       // Create files
-      const result = createWorkerFiles({ name, mission, type, model, perpetual, sleep_duration, disallowed_tools: disallowedTools, window: windowGroup, report_to, permission_mode, taskEntries });
+      const result = createWorkerFiles({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedTools, window: windowGroup, report_to, permission_mode, taskEntries });
       if (!result.ok) {
         return { content: [{ type: "text" as const, text: `Error: ${result.error}` }], isError: true };
       }
@@ -2327,7 +2334,7 @@ server.registerTool(
         : (report_to || missionAuthority);
 
       // Register in unified registry
-      const { state, permissions, taskIds, model: selectedModel, perpetual: isPerpetual } = result as Required<CreateWorkerResult>;
+      const { state, permissions, runtime: resolvedRuntime, taskIds, model: selectedModel, perpetual: isPerpetual } = result as Required<CreateWorkerResult>;
       withRegistryLocked((registry) => {
         ensureWorkerInRegistry(registry, name);
         const entry = registry[name] as RegistryWorkerEntry;
@@ -2341,6 +2348,7 @@ server.registerTool(
           entry.window = permissions.window;
         }
         entry.report_to = reportTo;
+        entry.custom = { ...entry.custom, runtime: resolvedRuntime || "claude" };
         if (fork_from_session) {
           entry.forked_from = WORKER_NAME;
         }
@@ -2496,7 +2504,7 @@ server.registerTool(
             if (winGroup) launchArgs.push("--window", winGroup);
             const launchResult = spawnSync("bash", launchArgs, {
               encoding: "utf-8", timeout: 120_000,
-              env: { ...process.env, PROJECT_ROOT },
+              env: { ...process.env, PROJECT_ROOT, WORKER_RUNTIME: resolvedRuntime || "claude" },
             });
             if (launchResult.status === 0) {
               const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
@@ -2518,7 +2526,7 @@ server.registerTool(
       const summary = [
         `Created worker/${name}:`,
         `  Dir: .claude/workers/${name}/`,
-        `  Model: ${selectedModel} | Perpetual: ${isPerpetual}`,
+        `  Runtime: ${resolvedRuntime} | Model: ${selectedModel} | Perpetual: ${isPerpetual}`,
         permissions.window ? `  Window: ${permissions.window}` : null,
         `  Reports to: ${reportTo}`,
         fork_from_session ? `  Forked from: ${WORKER_NAME}` : null,
@@ -2540,7 +2548,7 @@ server.registerTool(
   {
     description: "Preview a worker type template before creating. Returns mission.md (with {{PLACEHOLDERS}} showing expected structure and 三省吾身 variant), permissions defaults, and state config. Use before create_worker(type=...) to understand what to write.",
     inputSchema: {
-      type: z.enum(["implementer", "monitor", "coordinator", "optimizer"]).describe("Worker archetype to preview"),
+      type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).describe("Worker archetype to preview"),
     },
   },
   async ({ type }) => {
@@ -2924,4 +2932,5 @@ export {
   WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR, REGISTRY_PATH,
   type Task, type InboxCursor, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
+  type WorkerRuntime,
 };

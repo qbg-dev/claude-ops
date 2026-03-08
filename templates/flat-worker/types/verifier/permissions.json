@@ -1,0 +1,14 @@
+{
+  "model": "opus",
+  "permission_mode": "bypassPermissions",
+  "denyList": [
+    "Bash(git merge*)",
+    "Bash(git push*)",
+    "Bash(git checkout main*)",
+    "Bash(git reset --hard*)",
+    "Bash(git clean*)",
+    "Bash(rm -rf*)",
+    "Bash(sudo *)",
+    "Bash(*deploy-prod*)"
+  ]
+}

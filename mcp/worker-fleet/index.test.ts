@@ -16,6 +16,7 @@ import {
   WORKER_NAME, WORKERS_DIR, REGISTRY_PATH, HARNESS_LOCK_DIR,
   type Task, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
+  type WorkerRuntime,
 } from "./index";
 
 // ── Test fixtures ────────────────────────────────────────────────────
@@ -1978,5 +1979,255 @@ describe("createWorkerFiles — type templates", () => {
     expect(result.model).toBe("opus"); // hardcoded default
     expect(result.perpetual).toBe(false); // hardcoded default
     expect(result.permissions?.disallowedTools).toHaveLength(6); // default 6 rules
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Runtime parity (Claude vs Codex)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("createWorkerFiles — runtime (Claude vs Codex)", () => {
+  test("runtime=claude sets model=opus by default", () => {
+    const result = createWorkerFiles({
+      name: "rt-claude-default",
+      mission: "# Claude Worker",
+      runtime: "claude",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.runtime).toBe("claude");
+    expect(result.model).toBe("opus");
+    expect(result.permissions?.runtime).toBe("claude");
+  });
+
+  test("runtime=codex sets model=o3 by default", () => {
+    const result = createWorkerFiles({
+      name: "rt-codex-default",
+      mission: "# Codex Worker",
+      runtime: "codex",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.runtime).toBe("codex");
+    expect(result.model).toBe("o3");
+    expect(result.permissions?.runtime).toBe("codex");
+  });
+
+  test("runtime=codex with explicit model overrides default", () => {
+    const result = createWorkerFiles({
+      name: "rt-codex-o4",
+      mission: "# Codex Worker",
+      runtime: "codex",
+      model: "o4-mini",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.runtime).toBe("codex");
+    expect(result.model).toBe("o4-mini");
+  });
+
+  test("no runtime = defaults to claude", () => {
+    const result = createWorkerFiles({
+      name: "rt-no-runtime",
+      mission: "# Worker",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.runtime).toBe("claude");
+    expect(result.model).toBe("opus");
+    expect(result.permissions?.runtime).toBe("claude");
+  });
+
+  test("denyList is identical for same type regardless of runtime", () => {
+    const claudeResult = createWorkerFiles({
+      name: "rt-deny-claude",
+      mission: "# Claude Impl",
+      type: "implementer",
+      runtime: "claude",
+    });
+    const codexResult = createWorkerFiles({
+      name: "rt-deny-codex",
+      mission: "# Codex Impl",
+      type: "implementer",
+      runtime: "codex",
+    });
+    expect(claudeResult.ok).toBe(true);
+    expect(codexResult.ok).toBe(true);
+    // denyList is type-driven, not runtime-driven
+    expect(claudeResult.permissions?.disallowedTools).toEqual(codexResult.permissions?.disallowedTools);
+  });
+
+  test("runtime=codex with type=monitor uses type model (opus) not codex default", () => {
+    const result = createWorkerFiles({
+      name: "rt-codex-monitor",
+      mission: "# Codex Monitor",
+      type: "monitor",
+      runtime: "codex",
+    });
+    expect(result.ok).toBe(true);
+    // Type template model (opus) overrides runtime default (o3)
+    expect(result.model).toBe("opus");
+    expect(result.runtime).toBe("codex");
+    expect(result.perpetual).toBe(true); // from monitor template
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Verifier type
+// ═══════════════════════════════════════════════════════════════════
+
+describe("createWorkerFiles — verifier type", () => {
+  test("type=verifier sets perpetual=false, sleep_duration=0", () => {
+    const result = createWorkerFiles({
+      name: "tpl-verifier-test",
+      mission: "# Verify deployment",
+      type: "verifier",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.perpetual).toBe(false);
+    expect(result.state?.perpetual).toBe(false);
+    // sleep_duration not set when perpetual=false
+  });
+
+  test("type=verifier perpetual override works", () => {
+    const result = createWorkerFiles({
+      name: "tpl-verifier-perp",
+      mission: "# Continuous verifier",
+      type: "verifier",
+      perpetual: true,
+      sleep_duration: 600,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.perpetual).toBe(true);
+    expect(result.state?.sleep_duration).toBe(600);
+  });
+
+  test("type=verifier denyList includes deploy-prod", () => {
+    const result = createWorkerFiles({
+      name: "tpl-verifier-deny",
+      mission: "# Verifier denyList",
+      type: "verifier",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permissions?.disallowedTools).toContain("Bash(*deploy-prod*)");
+    expect(result.permissions?.disallowedTools).toContain("Bash(git merge*)");
+    expect(result.permissions?.disallowedTools).toContain("Bash(git push*)");
+  });
+
+  test("type=verifier with runtime=codex", () => {
+    const result = createWorkerFiles({
+      name: "tpl-verifier-codex",
+      mission: "# Codex Verifier",
+      type: "verifier",
+      runtime: "codex",
+    });
+    expect(result.ok).toBe(true);
+    // Type template model (opus) overrides codex default (o3)
+    expect(result.model).toBe("opus");
+    expect(result.runtime).toBe("codex");
+    expect(result.perpetual).toBe(false);
+    expect(result.permissions?.disallowedTools).toContain("Bash(*deploy-prod*)");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Cross-runtime messaging
+// ═══════════════════════════════════════════════════════════════════
+
+describe("cross-runtime messaging", () => {
+  test("Claude worker A and Codex worker B can exchange messages", () => {
+    // Create worker dirs
+    const workerA = "xrt-claude-a";
+    const workerB = "xrt-codex-b";
+    mkdirSync(join(TEST_WORKERS_DIR, workerA), { recursive: true });
+    mkdirSync(join(TEST_WORKERS_DIR, workerB), { recursive: true });
+
+    // Send from A to B
+    const sendAB = writeToInbox(workerB, { content: "hello from claude", from_name: workerA });
+    expect(sendAB.ok).toBe(true);
+
+    // Send from B to A
+    const sendBA = writeToInbox(workerA, { content: "reply from codex", from_name: workerB });
+    expect(sendBA.ok).toBe(true);
+
+    // Read B's inbox — should have A's message
+    const inboxB = readInboxFromCursor(workerB);
+    expect(inboxB.messages.length).toBeGreaterThanOrEqual(1);
+    expect(inboxB.messages.some((m: any) => m.from_name === workerA && m.content === "hello from claude")).toBe(true);
+
+    // Read A's inbox — should have B's message
+    const inboxA = readInboxFromCursor(workerA);
+    expect(inboxA.messages.length).toBeGreaterThanOrEqual(1);
+    expect(inboxA.messages.some((m: any) => m.from_name === workerB && m.content === "reply from codex")).toBe(true);
+  });
+
+  test("message format is identical regardless of runtime", () => {
+    const workerC = "xrt-fmt-claude";
+    const workerD = "xrt-fmt-codex";
+    mkdirSync(join(TEST_WORKERS_DIR, workerC), { recursive: true });
+    mkdirSync(join(TEST_WORKERS_DIR, workerD), { recursive: true });
+
+    writeToInbox(workerC, { content: "test msg", from_name: workerD, summary: "test" });
+    writeToInbox(workerD, { content: "test msg", from_name: workerC, summary: "test" });
+
+    const inboxC = readInboxFromCursor(workerC);
+    const inboxD = readInboxFromCursor(workerD);
+
+    // Both messages should have the same structure
+    const msgC = inboxC.messages[0];
+    const msgD = inboxD.messages[0];
+    expect(msgC.from_name).toBe(workerD);
+    expect(msgD.from_name).toBe(workerC);
+    // Same fields present in both
+    const keysC = Object.keys(msgC).sort();
+    const keysD = Object.keys(msgD).sort();
+    expect(keysC).toEqual(keysD);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Registry parity (Claude vs Codex)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("registry parity — Claude vs Codex", () => {
+  test("Claude worker has all required registry fields", () => {
+    const result = createWorkerFiles({
+      name: "reg-claude-test",
+      mission: "# Claude",
+      runtime: "claude",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permissions?.runtime).toBe("claude");
+    expect(result.model).toBeDefined();
+    expect(result.state).toBeDefined();
+    expect(result.permissions).toBeDefined();
+    expect(result.perpetual).toBeDefined();
+  });
+
+  test("Codex worker has all same registry fields as Claude", () => {
+    const result = createWorkerFiles({
+      name: "reg-codex-test",
+      mission: "# Codex",
+      runtime: "codex",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permissions?.runtime).toBe("codex");
+    expect(result.model).toBeDefined();
+    expect(result.state).toBeDefined();
+    expect(result.permissions).toBeDefined();
+    expect(result.perpetual).toBeDefined();
+  });
+
+  test("two workers (claude + codex) in same registry, no conflicts", () => {
+    const registry = makeProjectRegistry({});
+    const claudeEntry = ensureWorkerInRegistry(registry, "dual-claude");
+    claudeEntry.custom = { runtime: "claude" };
+    claudeEntry.model = "opus";
+
+    const codexEntry = ensureWorkerInRegistry(registry, "dual-codex");
+    codexEntry.custom = { runtime: "codex" };
+    codexEntry.model = "o3";
+
+    // Both should be retrievable
+    expect((registry["dual-claude"] as RegistryWorkerEntry).custom.runtime).toBe("claude");
+    expect((registry["dual-codex"] as RegistryWorkerEntry).custom.runtime).toBe("codex");
+    expect((registry["dual-claude"] as RegistryWorkerEntry).model).toBe("opus");
+    expect((registry["dual-codex"] as RegistryWorkerEntry).model).toBe("o3");
   });
 });
