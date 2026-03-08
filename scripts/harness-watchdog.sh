@@ -592,6 +592,32 @@ check_worker() {
     return
   fi
 
+  # ── Sleeping workers: deferred recycle — watchdog owns the respawn timer ──
+  # When a perpetual worker calls recycle() with sleep_duration > 0,
+  # the MCP sets status="sleeping" and custom.sleep_until=<ISO timestamp>.
+  # The recycle script kills the session but does NOT relaunch.
+  # Watchdog waits until sleep_until passes, then relaunches.
+  if [ "$status" = "sleeping" ]; then
+    local sleep_until
+    sleep_until=$(jq -r --arg n "$worker" '.[$n].custom.sleep_until // empty' "$REGISTRY" 2>/dev/null)
+    if [ -n "$sleep_until" ] && [ "$sleep_until" != "null" ]; then
+      local now_ts; now_ts=$(date -u +%s)
+      local wake_ts
+      wake_ts=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "${sleep_until%%.*}" +%s 2>/dev/null || echo 0)
+      if [ "$wake_ts" -gt 0 ] && [ "$now_ts" -lt "$wake_ts" ]; then
+        # Still sleeping — skip this worker
+        return
+      fi
+      # Sleep complete — clear sleeping status and relaunch
+      _log "WAKE: $worker — sleep_until ($sleep_until) reached, waking up"
+      _registry_jq_update '.[$n].status = "active" | .[$n].custom.sleep_until = null' --arg n "$worker"
+    else
+      # No sleep_until set but status is sleeping — clear it
+      _registry_jq_update '.[$n].status = "active"' --arg n "$worker"
+    fi
+    # Fall through to normal pane checks — the worker needs relaunching
+  fi
+
   # No pane registered: launch perpetual workers, skip non-perpetual
   if [ -z "$pane_id" ]; then
     if [ "$perpetual" = "true" ]; then

@@ -2,13 +2,14 @@
 /**
  * worker-fleet MCP server — Tools for worker fleet coordination.
  *
- * Tools in 5 categories:
- *   Messaging (2):  send_message, read_inbox
+ * Tools in 6 categories:
+ *   Messaging (0):  (replaced by mail_send / mail_inbox)
  *   Tasks (3):      create_task, update_task, list_tasks
  *   State (2):      get_worker_state (name="all" for fleet overview), update_state
  *   Stop Checks (3): add_stop_check, complete_stop_check, list_stop_checks
  *   Lifecycle (1):  recycle (resume=true for hot-restart, gated on stop checks)
  *   Management (5): create_worker, get_worker_template, register, deregister, standby
+ *   Mail (6):       mail_send, mail_inbox, mail_read, mail_search, mail_thread, mail_help
  *
  * Task CRUD and inbox are native TS (no shell subprocess).
  * Messaging writes inbox first (durable), then fires bus (best-effort).
@@ -22,7 +23,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync,
-  readdirSync, openSync, fstatSync, statSync, readSync, closeSync, truncateSync,
+  readdirSync, statSync,
   lstatSync, rmSync, copyFileSync, cpSync,
 } from "fs";
 import { join, basename } from "path";
@@ -50,15 +51,13 @@ function loadSeedContext(branch: string, missionAuthority: string): string {
       .replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
   } catch {
     // Fallback if template missing — minimal reminder
-    return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`read_inbox()\` first. Report to ${missionAuthority}.`;
+    return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;
   }
 }
 
 /** Project-level unified registry — replaces per-worker permissions.json, state.json, and pane-registry.json */
 const REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
 
-// Script paths (only for tools that still shell out)
-const WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
 
 // ── Worker Identity Detection ────────────────────────────────────────
 function detectWorkerName(): string {
@@ -196,6 +195,9 @@ interface RegistryWorkerEntry {
   last_commit_at?: string;
   issues_found?: number;
   issues_fixed?: number;
+
+  // Boring Mail Server token (auto-provisioned)
+  bms_token?: string;
 }
 
 interface ProjectRegistry {
@@ -438,182 +440,11 @@ function isTaskBlocked(tasks: Record<string, Task>, taskId: string): boolean {
 
 // ── Inbox Helpers ────────────────────────────────────────────────────
 
-function generateMsgId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
+// generateMsgId removed — BMS generates message IDs
 
-interface PendingReply {
-  msg_id: string;
-  from_name: string;
-  summary: string;
-  reply_type?: string;
-  _ts: string;
-}
+// inbox types, cursor, and jsonl functions removed — BMS handles all messaging
 
-interface InboxCursor {
-  offset: number;
-  last_read_at: string;
-  pending_replies?: PendingReply[];
-}
-
-function getInboxPath(worker: string): string {
-  return join(WORKERS_DIR, worker, "inbox.jsonl");
-}
-
-function getCursorPath(worker: string): string {
-  return join(WORKERS_DIR, worker, "inbox-cursor.json");
-}
-
-function readInboxCursor(worker: string): InboxCursor | null {
-  try {
-    const data = JSON.parse(readFileSync(getCursorPath(worker), "utf-8"));
-    if (typeof data?.offset === "number") return data as InboxCursor;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function writeInboxCursor(worker: string, offset: number, pending_replies?: PendingReply[]): void {
-  writeFileSync(getCursorPath(worker), JSON.stringify({
-    offset, last_read_at: new Date().toISOString(),
-    pending_replies: pending_replies || [],
-  }) + "\n");
-}
-
-/** Remove a msg_id from a worker's pending replies (called when they reply with in_reply_to) */
-function removePendingReply(worker: string, msgId: string): void {
-  const cursor = readInboxCursor(worker);
-  if (!cursor?.pending_replies?.length) return;
-  const filtered = cursor.pending_replies.filter(p => p.msg_id !== msgId);
-  if (filtered.length !== cursor.pending_replies.length) {
-    writeInboxCursor(worker, cursor.offset, filtered);
-  }
-}
-
-/** Read inbox from byte offset cursor — returns only new messages */
-function readInboxFromCursor(
-  worker: string,
-  opts: { limit?: number; since?: string; clear?: boolean } = {}
-): { messages: any[]; newOffset: number } {
-  const inboxPath = getInboxPath(worker);
-  if (!existsSync(inboxPath)) return { messages: [], newOffset: 0 };
-
-  const cursor = readInboxCursor(worker);
-  const startOffset = cursor?.offset ?? 0;
-
-  let fd: number;
-  try {
-    fd = openSync(inboxPath, "r");
-  } catch {
-    return { messages: [], newOffset: 0 };
-  }
-
-  try {
-    const stat = fstatSync(fd);
-    const fileSize = stat.size;
-
-    // File was truncated externally → reset to 0 (also clear pending replies)
-    const wasTruncated = fileSize < startOffset;
-    const readFrom = wasTruncated ? 0 : startOffset;
-    const bytesToRead = fileSize - readFrom;
-    const existingPending: PendingReply[] = wasTruncated ? [] : (cursor?.pending_replies || []);
-
-    if (bytesToRead <= 0) {
-      // No new data
-      if (opts.clear) {
-        truncateSync(inboxPath, 0);
-        writeInboxCursor(worker, 0, []);
-      }
-      return { messages: [], newOffset: fileSize };
-    }
-
-    const buffer = Buffer.alloc(bytesToRead);
-    readSync(fd, buffer, 0, bytesToRead, readFrom);
-
-    const newData = buffer.toString("utf-8");
-    let entries = newData.split("\n").filter(Boolean).map(line => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).filter(Boolean);
-
-    // Collect new pending replies from ack_required messages
-    const newPending: PendingReply[] = entries
-      .filter((e: any) => e.ack_required === true && e.msg_id && !e.in_reply_to)
-      .map((e: any) => {
-        const p: PendingReply = {
-          msg_id: e.msg_id,
-          from_name: e.from_name || "?",
-          summary: e.summary || (e.content?.slice(0, 40) + "...") || "?",
-          _ts: e._ts || new Date().toISOString(),
-        };
-        if (e.reply_type) p.reply_type = e.reply_type;
-        return p;
-      });
-    const mergedPending = [...existingPending, ...newPending];
-
-    if (opts.since) {
-      entries = entries.filter(e => {
-        const ts = e._ts || e.ts || e.timestamp || "";
-        return ts >= opts.since!;
-      });
-    }
-
-    if (opts.limit !== undefined) {
-      entries = opts.limit > 0 ? entries.slice(-opts.limit) : [];
-    }
-
-    const newOffset = fileSize;
-
-    // Write cursor with pending replies
-    writeInboxCursor(worker, opts.clear ? 0 : newOffset, opts.clear ? [] : mergedPending);
-
-    // Clear: truncate file after reading
-    if (opts.clear) {
-      try { truncateSync(inboxPath, 0); } catch {}
-    }
-
-    return { messages: entries, newOffset };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Write a message to a worker's inbox.jsonl (durable delivery) */
-function writeToInbox(
-  recipientName: string,
-  message: { content: string; summary?: string; from_name: string; ack_required?: boolean; in_reply_to?: string; reply_type?: string; options?: string[]; urgency?: string; [k: string]: any }
-): { ok: true; msg_id: string } | { ok: false; error: string } {
-  const workerDir = join(WORKERS_DIR, recipientName);
-  if (!existsSync(workerDir)) {
-    return { ok: false, error: `Worker directory not found: ${recipientName}` };
-  }
-
-  const msgId = generateMsgId();
-  const inboxPath = join(workerDir, "inbox.jsonl");
-  const payload: Record<string, any> = {
-    msg_id: msgId,
-    to: `worker/${recipientName}`,
-    from: `worker/${message.from_name}`,
-    from_name: message.from_name,
-    content: message.content,
-    summary: message.summary || message.content.slice(0, 60),
-    ack_required: message.ack_required !== false,
-    in_reply_to: message.in_reply_to || null,
-    msg_type: "message",
-    channel: "worker-message",
-    _ts: new Date().toISOString(),
-  };
-  if (message.reply_type) payload.reply_type = message.reply_type;
-  if (message.options?.length) payload.options = message.options;
-  if (message.urgency) payload.urgency = message.urgency;
-
-  try {
-    appendFileSync(inboxPath, JSON.stringify(payload) + "\n");
-    return { ok: true, msg_id: msgId };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
+// readInboxFromCursor and writeToInbox removed — BMS handles all messaging
 
 /** Write an escalation entry to the triage queue (.claude/triage/queue.jsonl) */
 function writeToTriageQueue(
@@ -872,7 +703,7 @@ Worker config: ${workerDir}/
 
 Read these files NOW in this order:
 1. ${workerDir}/mission.md — your mission and goals (you own this file — update it as your mission evolves)
-2. Call \`read_inbox()\` — check for messages before anything else
+2. Call \`mail_inbox()\` — check for messages before anything else
 3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
 
 Your MEMORY.md is auto-loaded by Claude (see "persistent auto memory directory" in your context).
@@ -1058,6 +889,7 @@ function getCachedDiagnostics(): DiagnosticIssue[] {
 
 /** Append lint warnings/errors to every tool response (cached 10s) */
 function withLint(result: { content: { type: "text"; text: string }[] }): typeof result {
+  refreshBmsUnread(); // fire-and-forget
   let text = result.content[0]?.text || "";
 
   // 1. Diagnostics lint (errors only — warnings are noise)
@@ -1068,40 +900,10 @@ function withLint(result: { content: { type: "text"; text: string }[] }): typeof
       errors.map(i => `  ✘ [${i.check}] ${i.message}${i.fix ? ` → ${i.fix}` : ""}`).join("\n");
   }
 
-  // 2. Pending reply reminder
-  const cursor = readInboxCursor(WORKER_NAME);
-  let pending = cursor?.pending_replies || [];
-  if (pending.length > 0) {
-    // Auto-prune pending replies from workers that no longer exist
-    const before = pending.length;
-    pending = pending.filter(p => {
-      const senderDir = join(WORKERS_DIR, p.from_name);
-      return existsSync(senderDir);
-    });
-    if (pending.length !== before) {
-      writeInboxCursor(WORKER_NAME, cursor!.offset, pending);
-    }
-    if (pending.length > 0) {
-      text += `\n\n⚠ ${pending.length} PENDING REPLY(S):\n` +
-        pending.map(p => {
-          const typeTag = p.reply_type ? `[${p.reply_type}] ` : "";
-          return `  ${typeTag}${p.msg_id} from ${p.from_name}: "${p.summary}"`;
-        }).join("\n") +
-        `\nReply: send_message(to=<sender>, in_reply_to="<msg_id>", content="...", summary="...")`;
-    }
+  // 2. BMS unread nudge (cached, non-blocking)
+  if (_bmsUnreadCount > 0) {
+    text += `\n\n📬 ${_bmsUnreadCount} unread mail — call mail_inbox() to read`;
   }
-
-  // 3. Unread inbox nudge (lightweight — stat only, no file read)
-  try {
-    const inboxPath = getInboxPath(WORKER_NAME);
-    if (existsSync(inboxPath)) {
-      const fileSize = statSync(inboxPath).size;
-      const cursorOffset = cursor?.offset || 0;
-      if (fileSize > cursorOffset) {
-        text += `\n\n📬 New inbox messages available — call read_inbox() to see them`;
-      }
-    }
-  } catch {}
 
   return { content: [{ type: "text" as const, text }] };
 }
@@ -1115,275 +917,8 @@ const server = new McpServer({
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// MESSAGING TOOLS (3)
+// MESSAGING — removed (replaced by mail_send / mail_inbox below)
 // ═══════════════════════════════════════════════════════════════════
-
-server.registerTool(
-  "send_message",
-  { description: `Send a message to another worker, the human operator, or the entire fleet. Each message is written to the recipient's durable inbox (persists across restarts) and delivered instantly via tmux overlay if their pane is live.
-
-Messages require a reply by default — the recipient is reminded at recycle/standby until they reply with in_reply_to. Set fyi=true for informational messages that need no response.
-
-Routing:
-- Worker name (e.g. "merger"): direct message to a specific worker.
-- "report": message whoever you report_to.
-- "direct_reports": fan-out to all workers who report_to you.
-- "all": broadcast to every worker in the fleet (expensive — use sparingly).
-- "user": escalate to the human operator (writes to triage queue + fires desktop notification).
-- Raw pane ID (e.g. "%42"): tmux-only delivery, no inbox persistence.
-
-Escalate to user when: (1) design/architecture decisions need human judgment, (2) security or auth changes arise, (3) business logic changes affect end users, (4) new product surface area is added, (5) functionality is being removed, (6) external coordination is needed, (7) you're blocked and need product direction. When in doubt, escalate — false alarms are cheap, unauthorized changes are not.`, inputSchema: {
-    to: z.string().describe('Recipient: worker name, "report", "direct_reports", "all" (fleet broadcast), "user" (human escalation), or raw pane ID "%NN"'),
-    content: z.string().describe("Message body text"),
-    summary: z.string().describe("5-10 word preview shown in inbox listings and notifications"),
-    fyi: z.boolean().optional().describe("If true, no reply expected (informational only). Default: false (reply expected — recipient is reminded until they respond)"),
-    in_reply_to: z.string().optional().describe("msg_id of a message you are replying to. Marks that message as acknowledged and clears it from your pending replies"),
-    reply_type: z.string().optional().describe("Hint for the recipient on what kind of reply you expect: 'ack' (simple acknowledgment), 'e2e_verify' (verify on main test and confirm), 'review' (review and provide feedback)"),
-    options: z.array(z.string()).optional().describe("Structured choices presented as a numbered list. Useful for approval flows (e.g. ['APPROVED', 'REVISE', 'REJECT'])"),
-    context: z.string().optional().describe("Supplementary context appended after the main content. Supports markdown and tables for structured background information"),
-    urgency: z.enum(["low", "normal", "high"]).optional().describe("Message priority level. 'high' triggers immediate attention; 'low' can wait until next cycle. Default: 'normal'"),
-  } },
-  async ({ to, content, summary, fyi, in_reply_to, reply_type, options, context, urgency }) => {
-    // Build structured body from content + context + options
-    const body = buildMessageBody(content, context, options);
-    // Broadcast path: to="all" sends to every worker's inbox (defaults to fyi=true)
-    if (to === "all") {
-      const broadcastFyi = fyi !== false; // broadcasts are FYI unless explicitly fyi=false
-      const failures: string[] = [];
-      const successes: string[] = [];
-      try {
-        const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true })
-          .filter(d => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_"))
-          .map(d => d.name)
-          .filter(name => name !== WORKER_NAME);
-        for (const name of dirs) {
-          const result = writeToInbox(name, { content: body, summary, from_name: WORKER_NAME, ack_required: !broadcastFyi, reply_type, options, urgency });
-          if (result.ok) successes.push(name);
-          else failures.push(`${name}: ${result.error}`);
-        }
-      } catch (e: any) {
-        return { content: [{ type: "text" as const, text: `Error listing workers: ${e.message}` }], isError: true };
-      }
-      // Tmux instant delivery (best-effort) — use paste-buffer per worker, not send-keys
-      // send-keys interprets newlines as Enter, fragmenting multi-line messages
-      const tmuxDelivered: string[] = [];
-      try {
-        const registry = readRegistry();
-        for (const workerName of successes) {
-          const entry = registry[workerName] as RegistryWorkerEntry | undefined;
-          const paneId = entry?.pane_id;
-          if (paneId && isPaneAlive(paneId)) {
-            try {
-              tmuxSendMessage(paneId, `[broadcast from ${WORKER_NAME}] ${body}`);
-              tmuxDelivered.push(workerName);
-            } catch {}
-          }
-        }
-      } catch {}
-      let msg = `Broadcast to ${successes.length} workers`;
-      if (failures.length > 0) msg += `\nFailed: ${failures.join(", ")}`;
-      return { content: [{ type: "text" as const, text: msg }] };
-    }
-
-    // User escalation path: to="user" writes to triage queue + fires notification
-    if (to === "user") {
-      const result = writeToTriageQueue(body, summary, WORKER_NAME, { options, urgency });
-      if (!result.ok) {
-        return { content: [{ type: "text" as const, text: `Error writing to triage queue: ${result.error}` }], isError: true };
-      }
-      // Fire desktop notification via notify with --no-triage to avoid duplicate triage entry
-      try {
-        execSync(
-          `"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`,
-          { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
-        );
-      } catch {}
-      return withLint({ content: [{ type: "text" as const, text: `Escalated to user [${result.id}] — written to triage queue + notification sent` }] });
-    }
-
-    const resolved = resolveRecipient(to);
-
-    if (resolved.error) {
-      return { content: [{ type: "text" as const, text: `Error: ${resolved.error}` }], isError: true };
-    }
-
-    // Multi-worker (direct_reports) — durable inbox to each child + best-effort tmux
-    if (resolved.type === "multi_worker") {
-      const workerNames = resolved.workerNames || [];
-      const inboxSuccesses: string[] = [];
-      const inboxFailures: string[] = [];
-      const tmuxSuccesses: string[] = [];
-
-      for (const childName of workerNames) {
-        // Durable inbox (critical path)
-        const inboxRes = writeToInbox(childName, {
-          content: body, summary, from_name: WORKER_NAME,
-          ack_required: !fyi, in_reply_to, reply_type, options, urgency,
-        });
-        if (inboxRes.ok) {
-          inboxSuccesses.push(childName);
-        } else {
-          inboxFailures.push(childName);
-        }
-
-        // Best-effort tmux overlay
-        try {
-          const registry = readRegistry();
-          const childEntry = registry[childName] as RegistryWorkerEntry | undefined;
-          if (childEntry?.pane_id && isPaneAlive(childEntry.pane_id)) {
-            tmuxSendMessage(childEntry.pane_id, `[msg from ${WORKER_NAME}] ${body}`);
-            tmuxSuccesses.push(childName);
-          }
-        } catch {}
-      }
-
-      let result = inboxSuccesses.length > 0
-        ? `Inbox delivered to ${inboxSuccesses.length} direct reports: ${inboxSuccesses.join(", ")}`
-        : "No direct reports to deliver to";
-      if (tmuxSuccesses.length > 0) result += `\nTmux overlay: ${tmuxSuccesses.join(", ")}`;
-      if (inboxFailures.length > 0) result += `\nInbox failed: ${inboxFailures.join(", ")}`;
-      return { content: [{ type: "text" as const, text: result }], isError: inboxSuccesses.length === 0 };
-    }
-
-    // Legacy multi-pane (shouldn't hit this anymore, kept for safety)
-    if (resolved.type === "multi_pane") {
-      const paneIds = resolved.paneIds!;
-      const successes: string[] = [];
-      const failures: string[] = [];
-      for (const pId of paneIds) {
-        if (!isPaneAlive(pId)) continue;
-        try {
-          tmuxSendMessage(pId, `[msg from ${WORKER_NAME}] ${body}`);
-          successes.push(pId);
-        } catch {
-          failures.push(pId);
-        }
-      }
-      let result = successes.length > 0
-        ? `Sent to ${successes.length} panes: ${successes.join(", ")}`
-        : "No live panes to deliver to";
-      if (failures.length > 0) result += `\nFailed: ${failures.join(", ")}`;
-      return { content: [{ type: "text" as const, text: result }], isError: successes.length === 0 };
-    }
-
-    // Raw pane ID or report pane — tmux-only delivery (no inbox)
-    if (resolved.type === "pane") {
-      if (!isPaneAlive(resolved.paneId!)) {
-        return { content: [{ type: "text" as const, text: `Error: Pane ${resolved.paneId} is dead (not found in tmux)` }], isError: true };
-      }
-      try {
-        tmuxSendMessage(resolved.paneId!, `[msg from ${WORKER_NAME}] ${body}`);
-        const label = to === "report" ? `report (pane ${resolved.paneId})` : `pane ${resolved.paneId}`;
-        return { content: [{ type: "text" as const, text: `Sent to ${label} (tmux-only, no inbox)` }] };
-      } catch (e: any) {
-        return { content: [{ type: "text" as const, text: `Error sending to pane: ${e.message}` }], isError: true };
-      }
-    }
-
-    // Worker name — durable inbox + best-effort bus
-    const recipientName = resolved.workerName!;
-
-    // Pane-alive check: warn before writing if worker has no live pane
-    let paneWarning = "";
-    try {
-      const registry = readRegistry();
-      const entry = registry[recipientName] as RegistryWorkerEntry | undefined;
-      const paneId = entry?.pane_id;
-      if (!paneId || !isPaneAlive(paneId)) {
-        paneWarning = `\nWARNING: Worker '${recipientName}' has no active pane — message queued in inbox but won't be received until the worker is restarted.`;
-      }
-    } catch { /* registry read failed, skip check */ }
-
-    // Step 1: Write to inbox (critical — must succeed)
-    const inboxResult = writeToInbox(recipientName, {
-      content: body, summary, from_name: WORKER_NAME,
-      ack_required: !fyi,
-      in_reply_to,
-      reply_type,
-      options,
-      urgency,
-    });
-    if (!inboxResult.ok) {
-      return { content: [{ type: "text" as const, text: `Error: ${inboxResult.error}` }], isError: true };
-    }
-
-    // If replying to a message, mark it as acked in our pending replies
-    if (in_reply_to) {
-      removePendingReply(WORKER_NAME, in_reply_to);
-    }
-
-    // Step 2: Tmux instant delivery (best-effort)
-    // Prefer direct pane_id from registry.json (flat workers don't appear in pane-registry.json)
-    try {
-      const registry = readRegistry();
-      const entry = registry[recipientName] as RegistryWorkerEntry | undefined;
-      const paneId = entry?.pane_id;
-      if (paneId && isPaneAlive(paneId)) {
-        tmuxSendMessage(paneId, `[msg from ${WORKER_NAME}] ${body}`);
-      } else {
-        // Fall back to worker-message.sh (uses legacy pane-registry.json)
-        const args = ["send", recipientName, body];
-        if (summary) args.push("--summary", summary);
-        runScript(WORKER_MESSAGE_SH, args, { timeout: 10_000 });
-      }
-    } catch {
-      // Tmux delivery failed — inbox already delivered, that's fine
-    }
-
-    const ackNote = fyi ? " (fyi, no reply needed)" : "";
-    const replyNote = in_reply_to ? ` (acked ${in_reply_to})` : "";
-    const typeNote = reply_type ? ` (reply_type: ${reply_type})` : "";
-    return withLint({ content: [{ type: "text" as const, text: `Message sent to ${recipientName} [${inboxResult.msg_id}]${ackNote}${replyNote}${typeNote}${paneWarning}` }] });
-  }
-);
-
-
-server.registerTool(
-  "read_inbox",
-  { description: "Read messages from your durable inbox. Call at the start of every cycle — messages may contain instructions, merge notifications, or approval requests that should be acted on before starting new work. Uses a cursor internally so repeated calls return only new messages (no duplicates, no data loss across restarts). Also appends a summary of any pending replies you owe (messages with ack_required that you haven't replied to yet). Use clear=true only to explicitly purge the entire inbox — this is rarely needed.", inputSchema: {
-    limit: z.number().optional().describe("Maximum number of messages to return. Omit to return all unread messages"),
-    since: z.string().optional().describe("ISO 8601 timestamp — return only messages received after this time (e.g. '2026-03-07T00:00:00Z')"),
-    clear: z.boolean().optional().describe("If true, permanently delete all messages after reading. Default: false. Use sparingly — messages are the audit trail"),
-  } },
-  async ({ limit, since, clear }) => {
-    try {
-      const { messages } = readInboxFromCursor(WORKER_NAME, { limit, since, clear });
-
-      if (messages.length === 0) {
-        return withLint({ content: [{ type: "text" as const, text: clear ? "Inbox cleared (was empty)" : "No new messages" }] });
-      }
-
-      const formatted = messages.map(m => {
-        const from = m.from_name || m.from || "?";
-        const type = m.msg_type || "message";
-        const text = m.content || m.message || "";
-        const ts = m._ts || m.ts || "";
-        const id = m.msg_id ? ` [${m.msg_id}]` : "";
-        const ackTag = (m.ack_required === true) ? " [NEEDS REPLY]" : "";
-        const replyTag = m.in_reply_to ? ` (reply to ${m.in_reply_to})` : "";
-        return `[${type}]${id} from ${from}${ts ? ` at ${ts}` : ""}${ackTag}${replyTag}: ${text}`;
-      }).join("\n");
-
-      // Append pending replies summary
-      const cursor = readInboxCursor(WORKER_NAME);
-      const pending = cursor?.pending_replies || [];
-      let pendingSuffix = "";
-      if (pending.length > 0) {
-        pendingSuffix = `\n\n--- ${pending.length} PENDING REPLIES ---\n` +
-          pending.map(p => {
-            const typeTag = p.reply_type ? `[${p.reply_type}] ` : "";
-            return `  ${typeTag}${p.msg_id} from ${p.from_name}: "${p.summary}" (${p._ts})`;
-          }).join("\n") +
-          `\nReply with: send_message(to=<sender>, in_reply_to="<msg_id>", content="...", summary="...")`;
-      }
-
-      const suffix = clear ? " (inbox cleared)" : "";
-      return withLint({ content: [{ type: "text" as const, text: `${messages.length} messages${suffix}:\n${formatted}${pendingSuffix}` }] });
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
 
 // ═══════════════════════════════════════════════════════════════════
 // TASK TOOLS (3) — native TS, no shell subprocess
@@ -1913,12 +1448,13 @@ server.registerTool(
 
 server.registerTool(
   "recycle",
-  { description: "Restart yourself in the same tmux pane to get a fresh context window. Two modes: (1) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session. Use at the end of each work cycle. (2) resume=true (hot restart): exits and immediately resumes the same session ID — preserves full conversation history but reloads MCP config, model changes, and tool definitions. Blocked by pending stop checks unless force=true. Also warns about unreplied messages that will carry over.", inputSchema: {
+  { description: "Restart yourself in the same tmux pane to get a fresh context window. Three modes: (1) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session. (2) resume=true (hot restart): resume same session ID — preserves full conversation history but reloads MCP config. (3) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds (no immediate relaunch). Use sleep_seconds to override sleep_duration for this cycle. Blocked by pending stop checks unless force=true.", inputSchema: {
     message: z.string().optional().describe("Handoff context for the next instance. Include: what was accomplished, what remains, any blockers or decisions needed. Written to handoff.md and injected into the next session's seed"),
     resume: z.boolean().optional().describe("If true, hot-restart: resume the same session (keeps conversation history, reloads MCP/model config). If false (default), cold-restart with a fresh seed"),
     force: z.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle"),
+    sleep_seconds: z.number().optional().describe("Override sleep_duration for this recycle only. The watchdog will respawn after this many seconds. 0 = immediate restart (no sleep). Only applies to perpetual workers"),
   } },
-  async ({ message, resume, force }) => {
+  async ({ message, resume, force, sleep_seconds }) => {
     // 0. Gate on stop checks
     const pendingChecks = [...stopChecks.values()].filter(c => !c.completed);
     if (pendingChecks.length > 0 && !force) {
@@ -1938,17 +1474,24 @@ server.registerTool(
       return { content: [{ type: "text" as const, text: "Error: Could not find own pane in registry. Are you running in tmux?" }], isError: true };
     }
 
-    // 1b. Check for unreplied messages
-    const recycleCursor = readInboxCursor(WORKER_NAME);
-    const pendingReplies = recycleCursor?.pending_replies || [];
-    const pendingWarning = pendingReplies.length > 0
-      ? `\n\nWARNING: ${pendingReplies.length} unreplied message(s):\n` +
-        pendingReplies.map(p => {
-          const typeTag = p.reply_type ? `[${p.reply_type}] ` : "";
-          return `  - ${typeTag}[${p.msg_id}] from ${p.from_name}: "${p.summary}" (${p._ts})`;
-        }).join("\n") +
-        `\nReply before recycling, or these will carry over to next cycle.`
-      : "";
+    // 1b. Check for unread mail (best-effort)
+    let pendingWarning = "";
+    try {
+      const bmsToken = (getWorkerEntry(WORKER_NAME) as any)?.bms_token;
+      if (bmsToken) {
+        const resp = await fetch(`${BMS_URL}/api/messages?label=UNREAD&maxResults=1`, {
+          headers: { Authorization: `Bearer ${bmsToken}` },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (resp.ok) {
+          const data = await resp.json() as any;
+          const unread = data?._diagnostics?.unread_count || 0;
+          if (unread > 0) {
+            pendingWarning = `\n\nWARNING: ${unread} unread mail — call mail_inbox() before recycling.`;
+          }
+        }
+      }
+    } catch {}
 
     // 2. Get session ID for transcript reference
     const sessionId = getSessionId(ownPane.paneId);
@@ -1981,10 +1524,17 @@ server.registerTool(
         ? `[${WORKER_NAME}] Cycle complete: ${message}`
         : `[${WORKER_NAME}] Cycle complete (no summary provided)`;
 
-      // Notify mission_authority (operator equivalent)
+      // Notify mission_authority via BMS (best-effort)
       const operatorName = config?.mission_authority || null;
       if (operatorName && operatorName !== WORKER_NAME) {
-        writeToInbox(operatorName, { content: cycleReport, summary: `${WORKER_NAME} cycle done`, from_name: WORKER_NAME });
+        getBmsToken().then(async () => {
+          const toIds = await resolveBmsRecipients([operatorName]);
+          await bmsRequest("POST", "/api/messages/send", {
+            to: toIds, subject: `${WORKER_NAME} cycle done`,
+            body: cycleReport, cc: [], thread_id: null, in_reply_to: null,
+            reply_by: null, labels: ["CYCLE-REPORT"], attachments: [],
+          });
+        }).catch(() => {});
       }
     } catch {
       // Best-effort notification — don't block recycle if it fails
@@ -2052,6 +1602,79 @@ rm -f "${reloadScript}" "$RESUME_CMD_FILE"
     const workerDir = join(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
     const rt = getWorkerRuntime();
 
+    // 6. Check if this is a perpetual worker that should defer to watchdog
+    const entry = getWorkerEntry(WORKER_NAME);
+    const isPerpetual = entry?.perpetual === true;
+    const registrySleepDur = entry?.sleep_duration ?? 1800;
+    // sleep_seconds param overrides registry sleep_duration for this cycle
+    // sleep_seconds=0 means "immediate restart, no sleep"
+    const effectiveSleep = sleep_seconds !== undefined ? sleep_seconds : registrySleepDur;
+    const shouldDeferToWatchdog = isPerpetual && effectiveSleep > 0;
+
+    if (shouldDeferToWatchdog) {
+      // ── Deferred recycle: kill session, let watchdog respawn after sleep ──
+      const sleepUntil = new Date(Date.now() + effectiveSleep * 1000).toISOString();
+
+      // Set status=sleeping and sleep_until in registry
+      withRegistryLocked((registry) => {
+        const w = registry[WORKER_NAME] as RegistryWorkerEntry;
+        if (w) {
+          w.status = "sleeping";
+          w.custom = w.custom || {};
+          w.custom.sleep_until = sleepUntil;
+          w.custom.last_recycle_at = new Date().toISOString();
+        }
+      });
+
+      // Generate exit-only script (no relaunch — watchdog handles that)
+      const recycleScript = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
+      writeFileSync(recycleScript, `#!/bin/bash
+# Auto-generated SLEEP recycle for ${WORKER_NAME} — watchdog will respawn after ${effectiveSleep}s
+set -uo pipefail
+PANE_ID="${ownPane.paneId}"
+sleep 5
+tmux send-keys -t "$PANE_ID" "${rt.exitCommand}"
+tmux send-keys -t "$PANE_ID" -H 0d
+WAIT=0
+while [ "$WAIT" -lt 30 ]; do
+  sleep 2; WAIT=$((WAIT+2))
+  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
+  [ -z "$PANE_PID" ] && break
+  AGENT_RUNNING=false
+  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+    [[ "$cmd" == *${rt.binary}* ]] && AGENT_RUNNING=true && break
+  done
+  [ "$AGENT_RUNNING" = "false" ] && break
+done
+rm -f "${recycleScript}"
+`);
+
+      try {
+        execSync(`nohup bash "${recycleScript}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
+          shell: "/bin/bash", timeout: 5000,
+        });
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Error spawning recycle: ${e.message}` }], isError: true };
+      }
+
+      const wakeTime = new Date(Date.now() + effectiveSleep * 1000);
+      const wakeStr = `${wakeTime.getHours().toString().padStart(2, "0")}:${wakeTime.getMinutes().toString().padStart(2, "0")}`;
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Recycling initiated. Watchdog will respawn in ${effectiveSleep}s (~${wakeStr}).\n` +
+            `Handoff: ${message ? "written to handoff.md" : "none"}\n` +
+            `Transcript: ${transcriptPath || "unknown"}\n` +
+            `Status: sleeping (until ${sleepUntil})\n` +
+            `Do NOT send any more tool calls — /exit will be sent shortly.` +
+            pendingWarning,
+        }],
+      };
+    }
+
+    // ── Immediate recycle (non-perpetual or sleep_seconds=0) ──
+
     // 7. Generate seed file (includes handoff + transcript path)
     const seedHandoff = message || "";
     const seedTranscript = transcriptPath
@@ -2064,7 +1687,6 @@ rm -f "${reloadScript}" "$RESUME_CMD_FILE"
     // 8. Create recycle script
     // Key fix: use /exit via tmux instead of kill — keeps pane alive
     const recycleScript = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
-    const entry = getWorkerEntry(WORKER_NAME);
     const permMode = entry?.permission_mode || "bypassPermissions";
     const disallowed = Array.isArray(entry?.disallowed_tools) ? entry!.disallowed_tools.join(",") : "";
     const effort = entry?.custom?.reasoning_effort as ReasoningEffort | undefined;
@@ -2955,16 +2577,25 @@ server.registerTool(
       } catch {}
     }
 
-    // Check for unreplied messages
-    const standbyCursor = readInboxCursor(targetName);
-    const standbyPending = standbyCursor?.pending_replies || [];
-    const standbyPendingWarning = standbyPending.length > 0
-      ? `\n  WARNING: ${standbyPending.length} unreplied message(s):\n` +
-        standbyPending.map(p => {
-          const typeTag = p.reply_type ? `[${p.reply_type}] ` : "";
-          return `    - ${typeTag}[${p.msg_id}] from ${p.from_name}: "${p.summary}"`;
-        }).join("\n")
-      : "";
+    // Check for unread BMS mail (best-effort)
+    let standbyPendingWarning = "";
+    try {
+      const targetEntry = getWorkerEntry(targetName);
+      const bmsToken = (targetEntry as any)?.bms_token;
+      if (bmsToken) {
+        const resp = await fetch(`${BMS_URL}/api/messages?label=UNREAD&maxResults=1`, {
+          headers: { Authorization: `Bearer ${bmsToken}` },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (resp.ok) {
+          const data = await resp.json() as any;
+          const unread = data?._diagnostics?.unread_count || 0;
+          if (unread > 0) {
+            standbyPendingWarning = `\n  WARNING: ${unread} unread mail in ${targetName}'s inbox`;
+          }
+        }
+      }
+    } catch {}
 
     // Set status = standby and move pane
     const paneId = existing.pane_id;
@@ -3168,7 +2799,7 @@ server.registerTool(
   "deep_review",
   {
     description:
-      "Launch a Bugbot-style multi-pass code review pipeline. Creates a DEDICATED tmux session with 3 windows: coordinator (1 pane), workers-1 (4 tiled), workers-2 (4 tiled). Session name: dr-{worktree}-{commit-words}-{hash}. Default: reviews HEAD commit.",
+      "Launch a multi-pass deep code review pipeline. Total workers = passes × focus areas (default: 2×8=16). Each focus area gets `passes` independent workers seeing different randomized diff orderings. Voting within focus groups (≥2/passes). Creates DEDICATED tmux session: coordinator window + worker windows (4 panes each). 8 default focus areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness). Configurable via `focus` param. Finds bugs, security issues, performance problems, design concerns, UX gaps, completeness issues, and improvements. Sentinel-file completion + optional notify callback. Auto-fallback for empty diffs.",
     inputSchema: {
       commit: z
         .string()
@@ -3189,11 +2820,19 @@ server.registerTool(
       passes: z
         .number()
         .optional()
-        .describe("Number of parallel review passes (default: 8)"),
+        .describe("Passes PER focus area (default: 2). Total workers = passes × focus areas. E.g. passes:3 + 2 focus = 6 workers."),
       session_name: z
         .string()
         .optional()
         .describe("Custom tmux session name (overrides auto-naming from worktree+commit)"),
+      notify: z
+        .string()
+        .optional()
+        .describe("Worker name or 'user' to notify on completion. Desktop notification always fires."),
+      focus: z
+        .array(z.string())
+        .optional()
+        .describe("Custom focus areas. Each focus gets `passes` independent workers. Examples: ['security', 'performance', 'ux-impact']. Tailor to review goals — e.g. ['security', 'auth', 'scope-bypass'] for auth review. Default: 8 areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness)"),
     },
   },
   async ({
@@ -3203,6 +2842,8 @@ server.registerTool(
     pr_number,
     passes,
     session_name,
+    notify,
+    focus,
   }: {
     commit?: string;
     base_branch?: string;
@@ -3210,6 +2851,8 @@ server.registerTool(
     pr_number?: string;
     passes?: number;
     session_name?: string;
+    notify?: string;
+    focus?: string[];
   }) => {
     try {
       const scriptPath = join(CLAUDE_OPS, "scripts", "deep-review.sh");
@@ -3225,6 +2868,8 @@ server.registerTool(
         args.push("--uncommitted");
       } else if (base_branch) {
         args.push("--base", base_branch);
+      } else if (commit) {
+        args.push("--commit", commit);
       } else {
         const headSha = execSync("git rev-parse HEAD", {
           encoding: "utf-8",
@@ -3238,6 +2883,12 @@ server.registerTool(
       }
       if (session_name) {
         args.push("--session-name", session_name);
+      }
+      if (notify) {
+        args.push("--notify", notify);
+      }
+      if (focus?.length) {
+        args.push("--focus", focus.join(","));
       }
 
       const launchResult = spawnSync("bash", [scriptPath, ...args], {
@@ -3258,6 +2909,19 @@ server.registerTool(
       const sessionDir = tmuxSessionMatch ? tmuxSessionMatch[1] : "unknown";
       const reviewSessionMatch = stdout.match(/tmux switch-client -t (\S+)/);
       const reviewSession = reviewSessionMatch ? reviewSessionMatch[1] : session_name || "dr-unknown";
+      const passesPerFocus = passes || 2;
+      const numFocus = focus?.length || 8;
+      const totalWorkers = passesPerFocus * numFocus;
+      const numWorkerWindows = Math.ceil(totalWorkers / 4);
+
+      const windowLines: string[] = [];
+      windowLines.push(`  Window 0: coordinator (1 pane, ${process.env.DEEP_REVIEW_COORD_MODEL || "sonnet"})`);
+      for (let w = 1; w <= numWorkerWindows; w++) {
+        const first = (w - 1) * 4 + 1;
+        const last = Math.min(w * 4, totalWorkers);
+        const count = last - first + 1;
+        windowLines.push(`  Window ${w}: workers-${w} (${count} panes tiled, ${process.env.DEEP_REVIEW_WORKER_MODEL || "opus"})`);
+      }
 
       return {
         content: [{
@@ -3266,17 +2930,18 @@ server.registerTool(
             `Deep review pipeline launched.`,
             ``,
             `tmux session: ${reviewSession}`,
-            `  Window 0: coordinator (1 pane, ${process.env.DEEP_REVIEW_COORD_MODEL || "sonnet"})`,
-            `  Window 1: workers-1 (4 panes tiled, ${process.env.DEEP_REVIEW_WORKER_MODEL || "opus"})`,
-            `  Window 2: workers-2 (4 panes tiled, ${process.env.DEEP_REVIEW_WORKER_MODEL || "opus"})`,
+            ...windowLines,
             ``,
             `Session dir: ${sessionDir}`,
-            `Passes: ${passes || 8} workers`,
+            `Workers: ${totalWorkers} (${numFocus} focus × ${passesPerFocus} passes)`,
+            `Focus: ${focus?.length ? focus.join(", ") : "security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness"}`,
+            `Completion: sentinel files at ${sessionDir}/pass-{1..${totalWorkers}}.done`,
+            notify ? `Notify: ${notify} (on completion)` : `Notify: desktop only`,
             ``,
             `Attach: tmux switch-client -t ${reviewSession}`,
             `        tmux a -t ${reviewSession}`,
             ``,
-            `Pipeline: ${passes || 8} parallel passes -> bucket -> majority vote (>=2/${passes || 8}) -> validate -> dedup -> autofix -> report`,
+            `Pipeline: ${totalWorkers} workers -> bucket -> majority vote (>=2/${passesPerFocus} per focus group) -> validate -> dedup -> autofix -> report + notify`,
             `Report: ${sessionDir}/report.md`,
           ].join("\n"),
         }],
@@ -3288,6 +2953,492 @@ server.registerTool(
         isError: true,
       };
     }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// BORING MAIL SERVER — Gmail-conformant inter-agent email
+// ═══════════════════════════════════════════════════════════════════
+// HTTP proxy to boring-mail-server (Rust + Dolt, runs on kevinster via SSH tunnel).
+// Each worker auto-provisions an account on first use. Tokens cached in /tmp/bms-dogfood/tokens.json.
+
+const BMS_URL = process.env.BMS_URL || "http://127.0.0.1:8025";
+
+/** Cached BMS unread count — refreshed by mail_inbox calls and background poll */
+let _bmsUnreadCount = 0;
+let _bmsUnreadLastCheck = 0;
+
+/** Refresh BMS unread count (fire-and-forget, non-blocking) */
+function refreshBmsUnread(): void {
+  const now = Date.now();
+  if (now - _bmsUnreadLastCheck < 30_000) return; // throttle to 30s
+  _bmsUnreadLastCheck = now;
+
+  const entry = getWorkerEntry(WORKER_NAME);
+  const bmsToken = (entry as any)?.bms_token;
+  if (!bmsToken) return;
+
+  fetch(`${BMS_URL}/api/messages?label=UNREAD&maxResults=1`, {
+    headers: { Authorization: `Bearer ${bmsToken}` },
+    signal: AbortSignal.timeout(3000),
+  }).then(r => r.ok ? r.json() : null).then((data: any) => {
+    if (data) _bmsUnreadCount = data?._diagnostics?.unread_count || data?.messages?.length || 0;
+  }).catch(() => {});
+}
+
+/** Get or auto-provision a BMS bearer token for the current worker.
+ *  Tokens are stored in registry.json under each worker's `bms_token` field. */
+async function getBmsToken(): Promise<string> {
+  // Check registry first
+  const registry = readRegistry();
+  const entry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
+  if (entry?.bms_token) return entry.bms_token;
+
+  // Auto-register with the mail server
+  const resp = await fetch(`${BMS_URL}/api/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: WORKER_NAME, bio: `Fleet worker: ${WORKER_NAME}` }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    // 409 = already registered but we lost the token
+    if (resp.status === 409) {
+      throw new Error(`BMS account '${WORKER_NAME}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
+    }
+    throw new Error(`BMS register failed (${resp.status}): ${errText}`);
+  }
+
+  const data = await resp.json() as any;
+  const token = data.bearerToken as string;
+
+  // Persist to registry
+  try {
+    withRegistryLocked((reg) => {
+      if (!reg[WORKER_NAME]) ensureWorkerInRegistry(reg, WORKER_NAME);
+      (reg[WORKER_NAME] as any).bms_token = token;
+    });
+  } catch {}
+
+  return token;
+}
+
+/** HTTP helper for BMS API calls */
+async function bmsRequest(method: string, path: string, body?: any): Promise<any> {
+  const token = await getBmsToken();
+  const url = `${BMS_URL}${path}`;
+  const opts: RequestInit = {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  };
+
+  const resp = await fetch(url, opts);
+  const text = await resp.text();
+
+  if (!resp.ok) {
+    throw new Error(`BMS ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function bmsTextResult(data: any): { content: { type: "text"; text: string }[] } {
+  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  return { content: [{ type: "text" as const, text }] };
+}
+
+/** Cache: name → account UUID. Populated lazily from /api/directory. */
+let _bmsDirectoryCache: Record<string, string> | null = null;
+let _bmsDirectoryCacheTime = 0;
+const BMS_DIR_CACHE_TTL = 60_000; // 1 minute
+
+async function resolveBmsAccountId(name: string): Promise<string> {
+  // If it looks like a UUID already, pass through
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) return name;
+  // If it's a list: prefix, pass through
+  if (name.startsWith("list:")) return name;
+
+  const now = Date.now();
+  if (!_bmsDirectoryCache || now - _bmsDirectoryCacheTime > BMS_DIR_CACHE_TTL) {
+    const token = await getBmsToken();
+    const resp = await fetch(`${BMS_URL}/api/directory`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (resp.ok) {
+      const data = await resp.json() as any;
+      _bmsDirectoryCache = {};
+      for (const acct of data.directory || []) {
+        _bmsDirectoryCache[acct.name] = acct.id;
+      }
+      _bmsDirectoryCacheTime = now;
+    }
+  }
+
+  const id = _bmsDirectoryCache?.[name];
+  if (!id) throw new Error(`BMS account '${name}' not found in directory`);
+  return id;
+}
+
+async function resolveBmsRecipients(names: string[]): Promise<string[]> {
+  return Promise.all(names.map(resolveBmsAccountId));
+}
+
+// ── mail_send — unified messaging (BMS durable + tmux instant) ──────
+
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "mail_send",
+  {
+    description: `Send a message to another worker, the human operator, or the entire fleet. Messages are durably stored in boring-mail-server (persist across restarts, searchable, threaded) and delivered instantly via tmux overlay if the recipient's pane is live.
+
+Routing:
+- Worker name (e.g. "merger"): direct message via BMS email + tmux push.
+- "report": message whoever you report_to (resolved from registry).
+- "direct_reports": fan-out to all workers who report_to you.
+- "all": broadcast to every registered worker (expensive — use sparingly).
+- "user": escalate to the human operator (triage queue + desktop notification, NOT via BMS).
+- Raw pane ID (e.g. "%42"): tmux-only delivery, no durable storage.
+
+Escalate to user when: (1) design/architecture decisions need human judgment, (2) security or auth changes arise, (3) business logic changes affect end users, (4) new product surface area, (5) removing functionality, (6) external coordination needed, (7) blocked and need product direction. When in doubt, escalate.`,
+    inputSchema: {
+      to: z.string().describe('Recipient: worker name, "report", "direct_reports", "all", "user", or raw pane ID "%NN"'),
+      subject: z.string().describe("Email subject line (5-15 words)"),
+      body: z.string().describe("Message body"),
+      cc: z.array(z.string()).optional().describe("CC recipients (worker names)"),
+      thread_id: z.string().optional().describe("Thread ID to reply in (continues a conversation)"),
+      in_reply_to: z.string().optional().describe("Message ID being replied to (marks it acknowledged)"),
+      reply_by: z.string().optional().describe("ISO timestamp deadline for reply"),
+      labels: z.array(z.string()).optional().describe("Additional labels (e.g. URGENT, MERGE-REQUEST)"),
+    },
+  },
+  async ({ to, subject, body, cc, thread_id, in_reply_to, reply_by, labels }: {
+    to: string; subject: string; body: string; cc?: string[]; thread_id?: string;
+    in_reply_to?: string; reply_by?: string; labels?: string[];
+  }) => {
+    // User escalation path: triage queue + desktop notification (not BMS)
+    if (to === "user") {
+      const result = writeToTriageQueue(body, subject, WORKER_NAME, { urgency: labels?.includes("URGENT") ? "high" : undefined });
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: `Error writing to triage queue: ${result.error}` }], isError: true };
+      }
+      try {
+        execSync(
+          `"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} "Worker Escalation"`,
+          { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
+        );
+      } catch {}
+      return withLint({ content: [{ type: "text" as const, text: `Escalated to user [${result.id}] — triage queue + notification` }] });
+    }
+
+    // Raw pane ID — tmux-only, no BMS
+    if (to.startsWith("%")) {
+      if (!isPaneAlive(to)) {
+        return { content: [{ type: "text" as const, text: `Error: Pane ${to} is dead` }], isError: true };
+      }
+      try {
+        tmuxSendMessage(to, `[msg from ${WORKER_NAME}] ${body}`);
+        return { content: [{ type: "text" as const, text: `Sent to pane ${to} (tmux-only, no BMS)` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+
+    // Resolve fleet routing → list of worker names
+    let recipientNames: string[] = [];
+    if (to === "all") {
+      try {
+        recipientNames = readdirSync(WORKERS_DIR, { withFileTypes: true })
+          .filter(d => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_"))
+          .map(d => d.name)
+          .filter(name => name !== WORKER_NAME);
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Error listing workers: ${e.message}` }], isError: true };
+      }
+    } else if (to === "report" || to === "direct_reports") {
+      const resolved = resolveRecipient(to);
+      if (resolved.error) {
+        return { content: [{ type: "text" as const, text: `Error: ${resolved.error}` }], isError: true };
+      }
+      if (resolved.type === "multi_worker") {
+        recipientNames = resolved.workerNames || [];
+      } else if (resolved.workerName) {
+        recipientNames = [resolved.workerName];
+      }
+    } else {
+      recipientNames = [to];
+    }
+
+    if (recipientNames.length === 0) {
+      return { content: [{ type: "text" as const, text: "No recipients resolved" }], isError: true };
+    }
+
+    // Send via BMS (durable delivery)
+    const bmsSuccesses: string[] = [];
+    const bmsFailures: string[] = [];
+    const tmuxDelivered: string[] = [];
+    let lastMsgId = "";
+
+    for (const name of recipientNames) {
+      try {
+        const toIds = await resolveBmsRecipients([name]);
+        const ccIds = cc ? await resolveBmsRecipients(cc) : [];
+        const result = await bmsRequest("POST", "/api/messages/send", {
+          to: toIds, subject, body,
+          cc: ccIds, thread_id: thread_id || null, in_reply_to: in_reply_to || null,
+          reply_by: reply_by || null, labels: labels || [], attachments: [],
+        });
+        lastMsgId = result?.id || "";
+        bmsSuccesses.push(name);
+      } catch (e: any) {
+        bmsFailures.push(`${name}: ${e.message?.slice(0, 80)}`);
+      }
+    }
+
+    // Tmux instant delivery (best-effort overlay)
+    const registry = (() => { try { return readRegistry(); } catch { return {} as any; } })();
+    for (const name of bmsSuccesses) {
+      try {
+        const entry = registry[name] as RegistryWorkerEntry | undefined;
+        const paneId = entry?.pane_id;
+        if (paneId && isPaneAlive(paneId)) {
+          const prefix = recipientNames.length > 1 ? `[broadcast from ${WORKER_NAME}]` : `[mail from ${WORKER_NAME}]`;
+          tmuxSendMessage(paneId, `${prefix} ${subject}: ${body}`);
+          tmuxDelivered.push(name);
+        }
+      } catch {}
+    }
+
+    // Build result
+    if (bmsSuccesses.length === 0) {
+      return { content: [{ type: "text" as const, text: `Failed to send to all recipients:\n${bmsFailures.join("\n")}` }], isError: true };
+    }
+
+    const parts: string[] = [];
+    if (recipientNames.length === 1) {
+      let paneWarning = "";
+      const entry = registry[recipientNames[0]] as RegistryWorkerEntry | undefined;
+      if (entry && (!entry.pane_id || !isPaneAlive(entry.pane_id))) {
+        paneWarning = ` (WARNING: no active pane — queued in BMS inbox)`;
+      }
+      parts.push(`Sent to ${recipientNames[0]} [${lastMsgId}]${paneWarning}`);
+    } else {
+      parts.push(`Sent to ${bmsSuccesses.length}/${recipientNames.length} workers`);
+      if (tmuxDelivered.length > 0) parts.push(`Tmux overlay: ${tmuxDelivered.join(", ")}`);
+      if (bmsFailures.length > 0) parts.push(`Failed: ${bmsFailures.join(", ")}`);
+    }
+
+    return withLint({ content: [{ type: "text" as const, text: parts.join("\n") }] });
+  }
+);
+
+// ── mail_inbox — read from BMS ──────────────────────────────────────
+
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "mail_inbox",
+  {
+    description: "Read messages from your BMS inbox. Call at the start of every cycle — messages may contain instructions, merge notifications, or approval requests that should be acted on before starting new work. Returns messages with sender, subject, labels, and timestamps. Use label='UNREAD' for unread-only.",
+    inputSchema: {
+      label: z.string().optional().describe("Label filter (default: UNREAD). Common: INBOX, UNREAD, SENT, STARRED, TRASH"),
+      maxResults: z.number().optional().describe("Max messages to return (default: 20)"),
+      pageToken: z.string().optional().describe("Pagination token from previous response"),
+    },
+  },
+  async ({ label, maxResults, pageToken }: { label?: string; maxResults?: number; pageToken?: string }) => {
+    try {
+      let path = `/api/messages?label=${label || "UNREAD"}&maxResults=${maxResults || 20}`;
+      if (pageToken) path += `&pageToken=${encodeURIComponent(pageToken)}`;
+      const result = await bmsRequest("GET", path);
+      return withLint(bmsTextResult(result));
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+// ── mail_read — get full message by ID ──────────────────────────────
+
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "mail_read",
+  {
+    description: "Get full email details by ID. Auto-removes UNREAD label.",
+    inputSchema: {
+      id: z.string().describe("Message ID"),
+    },
+  },
+  async ({ id }: { id: string }) => {
+    try {
+      const result = await bmsRequest("GET", `/api/messages/${encodeURIComponent(id)}`);
+      return bmsTextResult(result);
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+// ── mail_search — full-text search ──────────────────────────────────
+
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "mail_search",
+  {
+    description: "Full-text search emails with Gmail query syntax. Supports from:, to:, subject:, has:attachment, label:, date ranges.",
+    inputSchema: {
+      q: z.string().describe("Search query using Gmail syntax"),
+      maxResults: z.number().optional().describe("Max results (default: 20)"),
+    },
+  },
+  async ({ q, maxResults }: { q: string; maxResults?: number }) => {
+    try {
+      const result = await bmsRequest("GET", `/api/search?q=${encodeURIComponent(q)}&maxResults=${maxResults || 20}`);
+      return bmsTextResult(result);
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+// ── mail_thread — get full thread ───────────────────────────────────
+
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "mail_thread",
+  {
+    description: "Get a full email thread with all its messages.",
+    inputSchema: {
+      id: z.string().describe("Thread ID"),
+    },
+  },
+  async ({ id }: { id: string }) => {
+    try {
+      const result = await bmsRequest("GET", `/api/threads/${encodeURIComponent(id)}`);
+      return bmsTextResult(result);
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: e.message }], isError: true };
+    }
+  }
+);
+
+// ── Management reference (1) — on-demand CLI docs ───────────────────
+
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "mail_help",
+  {
+    description: "Get boring-mail-server CLI documentation for management operations: token reset, label management, trash, threads, directory, profile, mailing lists, and raw curl examples. Call this when you need to do something beyond send/read/search.",
+    inputSchema: {},
+  },
+  async () => {
+    const token = await getBmsToken().catch(() => "<your-bms-token>");
+    return bmsTextResult(`# Boring Mail Server — Management CLI
+
+Server: ${BMS_URL}
+Your account: ${WORKER_NAME}
+Your token: ${token}
+
+## Token Management
+
+  # Reset your bearer token (invalidates old one, returns new)
+  curl -sf -X POST "${BMS_URL}/api/accounts/me/reset-token" \\
+    -H "Authorization: Bearer $TOKEN"
+  # Response: {"bearerToken":"<new-uuid>","id":"...","name":"..."}
+  # After reset, update registry.json: bms_token field for your worker
+
+## Label Operations
+
+  # List labels with counts
+  curl -sf "${BMS_URL}/api/labels" -H "Authorization: Bearer $TOKEN"
+
+  # Add/remove labels on a message
+  curl -sf -X POST "${BMS_URL}/api/messages/<msg-id>/modify" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+    -d '{"addLabelIds":["STARRED"],"removeLabelIds":["UNREAD"]}'
+
+  # Create custom label
+  curl -sf -X POST "${BMS_URL}/api/labels" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+    -d '{"name":"MY-LABEL"}'
+
+  # Delete custom label
+  curl -sf -X DELETE "${BMS_URL}/api/labels/MY-LABEL" \\
+    -H "Authorization: Bearer $TOKEN"
+
+## Message Management
+
+  # Trash a message
+  curl -sf -X POST "${BMS_URL}/api/messages/<msg-id>/trash" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+
+  # Permanently delete
+  curl -sf -X DELETE "${BMS_URL}/api/messages/<msg-id>" \\
+    -H "Authorization: Bearer $TOKEN"
+
+  # Batch modify labels
+  curl -sf -X POST "${BMS_URL}/api/messages/batchModify" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+    -d '{"ids":["id1","id2"],"addLabelIds":["STARRED"],"removeLabelIds":[]}'
+
+## Threads
+
+  # List threads by label
+  curl -sf "${BMS_URL}/api/threads?label=INBOX&maxResults=20" \\
+    -H "Authorization: Bearer $TOKEN"
+
+## Directory & Profile
+
+  # List all accounts
+  curl -sf "${BMS_URL}/api/directory" -H "Authorization: Bearer $TOKEN"
+
+  # Search accounts
+  curl -sf "${BMS_URL}/api/directory?q=merger" -H "Authorization: Bearer $TOKEN"
+
+  # View own profile
+  curl -sf "${BMS_URL}/api/accounts/me" -H "Authorization: Bearer $TOKEN"
+
+  # Update bio
+  curl -sf -X PUT "${BMS_URL}/api/accounts/me" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+    -d '{"bio":"I handle code reviews"}'
+
+## Mailing Lists
+
+  # Create list
+  curl -sf -X POST "${BMS_URL}/api/lists" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+    -d '{"name":"team-all","description":"All team members"}'
+
+  # Subscribe (self)
+  curl -sf -X POST "${BMS_URL}/api/lists/<list-id>/subscribe" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+
+  # Send to list (use list:name in to field)
+  # mail_send(to=["list:team-all"], subject="...", body="...")
+
+## Blob Attachments
+
+  # Upload blob
+  curl -sf -X POST "${BMS_URL}/api/blobs" \\
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/octet-stream" \\
+    --data-binary @file.txt
+
+  # Download blob
+  curl -sf "${BMS_URL}/api/blobs/<sha256-hash>" -H "Authorization: Bearer $TOKEN" -o file.txt
+
+## Health & Analytics
+
+  curl -sf "${BMS_URL}/health"
+  curl -sf "${BMS_URL}/api/analytics" -H "Authorization: Bearer $TOKEN"
+`);
   }
 );
 
@@ -3310,14 +3461,14 @@ if (import.meta.main) {
 // ── Exports for testing ──────────────────────────────────────────────
 export {
   readTasks, writeTasks, nextTaskId, isTaskBlocked, getTasksPath,
-  writeToInbox, writeToTriageQueue, buildMessageBody, readInboxFromCursor, readInboxCursor, writeInboxCursor,
+  writeToTriageQueue, buildMessageBody,
   resolveRecipient, isPaneAlive, readJsonFile, acquireLock, releaseLock,
   findOwnPane, getSessionId, getWorkerModel, getWorktreeDir, generateSeedContent,
   runDiagnostics, createWorkerFiles, _setWorkersDir,
   readRegistry, getWorkerEntry, withRegistryLocked, ensureWorkerInRegistry,
   lintRegistry, _replaceMemorySection, getReportTo, canUpdateWorker,
   WORKER_NAME, WORKERS_DIR, HARNESS_LOCK_DIR, REGISTRY_PATH,
-  type Task, type InboxCursor, type DiagnosticIssue,
+  type Task, type DiagnosticIssue,
   type RegistryConfig, type RegistryWorkerEntry, type ProjectRegistry,
   type WorkerRuntime, type ReasoningEffort, type RuntimeConfig,
   getWorkerRuntime, RUNTIMES,
