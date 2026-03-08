@@ -76,14 +76,6 @@
       "description": "Touches liveness timestamp on every prompt for watchdog stuck detection"
     },
     {
-      "id": "post-tool-publisher",
-      "event": "PostToolUse",
-      "path": "~/.claude-ops/hooks/publishers/post-tool-publisher.sh",
-      "required": true,
-      "category": "core",
-      "description": "Publishes tool usage events to event bus and tool logs"
-    },
-    {
       "id": "subagent-start",
       "event": "SubagentStart",
       "path": "~/.claude-ops/hooks/publishers/subagent-lifecycle.sh",

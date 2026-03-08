@@ -58,7 +58,6 @@ const REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
 
 // Script paths (only for tools that still shell out)
 const WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
-const CHECK_WORKERS_SH = join(CLAUDE_OPS, "scripts/check-flat-workers.sh");
 
 // ── Worker Identity Detection ────────────────────────────────────────
 function detectWorkerName(): string {
@@ -188,8 +187,6 @@ interface RegistryWorkerEntry {
 
   // Flat org — everyone reports to someone (default: chief-of-staff)
   report_to?: string | null;
-  assigned_by?: string | null;  // deprecated alias for report_to
-  parent?: string | null;       // deprecated alias for report_to
   forked_from?: string | null;  // set when created with fork_from_session=true
 
   // Optional commit tracking
@@ -207,9 +204,9 @@ interface ProjectRegistry {
 
 const LINT_ENABLED = process.env.WORKER_FLEET_LINT !== "0";
 
-/** Resolve report_to with backward compat (assigned_by → parent → config.mission_authority) */
+/** Resolve report_to (falls back to config.mission_authority) */
 function getReportTo(w: RegistryWorkerEntry, config?: RegistryConfig): string | null {
-  return w.report_to || w.assigned_by || w.parent || config?.mission_authority || null;
+  return w.report_to || config?.mission_authority || null;
 }
 
 /** Check if caller has authority to update target worker's state */
@@ -1006,16 +1003,6 @@ function runDiagnostics(): DiagnosticIssue[] {
     issues.push(...lintIssues);
   } catch {}
 
-  // ── Required scripts ──
-  const requiredScripts: [string, string][] = [
-    [CHECK_WORKERS_SH, "get_worker_state(name='all')"],
-  ];
-  for (const [scriptPath, toolName] of requiredScripts) {
-    if (!existsSync(scriptPath)) {
-      issues.push({ severity: "warning", check: `script.${toolName}`, message: `Script missing for ${toolName}: ${scriptPath}`, fix: `Ensure file exists at ${scriptPath}` });
-    }
-  }
-
   // ── Git hooks ──
   // Verify required hooks are installed in the worktree (or main repo for main-branch workers)
   try {
@@ -1115,9 +1102,6 @@ function withLint(result: { content: { type: "text"; text: string }[] }): typeof
   return { content: [{ type: "text" as const, text }] };
 }
 
-function withPendingReminder(result: { content: { type: "text"; text: string }[] }): typeof result {
-  return withLint(result);
-}
 
 // ── MCP Server ───────────────────────────────────────────────────────
 
@@ -1190,7 +1174,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
           { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
         );
       } catch {}
-      return withPendingReminder({ content: [{ type: "text" as const, text: `Escalated to user [${result.id}] — written to triage queue + notification sent` }] });
+      return withLint({ content: [{ type: "text" as const, text: `Escalated to user [${result.id}] — written to triage queue + notification sent` }] });
     }
 
     const resolved = resolveRecipient(to);
@@ -1292,7 +1276,7 @@ Use to="user" to escalate to the human operator (writes to triage queue + deskto
     const ackNote = fyi ? " (fyi, no reply needed)" : "";
     const replyNote = in_reply_to ? ` (acked ${in_reply_to})` : "";
     const typeNote = reply_type ? ` (reply_type: ${reply_type})` : "";
-    return withPendingReminder({ content: [{ type: "text" as const, text: `Message sent to ${recipientName} [${inboxResult.msg_id}]${ackNote}${replyNote}${typeNote}${paneWarning}` }] });
+    return withLint({ content: [{ type: "text" as const, text: `Message sent to ${recipientName} [${inboxResult.msg_id}]${ackNote}${replyNote}${typeNote}${paneWarning}` }] });
   }
 );
 
@@ -1406,7 +1390,7 @@ server.registerTool(
       if (blockedByList.length > 0) suffix += ` (after: ${blockedByList.join(",")})`;
       if (blocks) suffix += ` (blocks: ${blocks})`;
 
-      return withPendingReminder({ content: [{ type: "text" as const, text: `Added ${taskId}: ${subject}${suffix}` }] });
+      return withLint({ content: [{ type: "text" as const, text: `Added ${taskId}: ${subject}${suffix}` }] });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -1508,7 +1492,7 @@ server.registerTool(
       }
 
       writeTasks(WORKER_NAME, tasks);
-      return withPendingReminder({ content: [{ type: "text" as const, text: `Updated ${task_id}: ${changes.join(", ")}` }] });
+      return withLint({ content: [{ type: "text" as const, text: `Updated ${task_id}: ${changes.join(", ")}` }] });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -1571,7 +1555,7 @@ server.registerTool(
         return { content: [{ type: "text" as const, text: "No tasks found" }] };
       }
 
-      return withPendingReminder({ content: [{ type: "text" as const, text: `${totalCount} tasks:\n${results.join("\n")}` }] });
+      return withLint({ content: [{ type: "text" as const, text: `${totalCount} tasks:\n${results.join("\n")}` }] });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -1731,7 +1715,7 @@ server.registerTool(
       } catch {}
 
       const prefix = targetName !== WORKER_NAME ? `${targetName}.` : "state.";
-      return withPendingReminder({ content: [{ type: "text" as const, text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
+      return withLint({ content: [{ type: "text" as const, text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
     }
@@ -2272,9 +2256,8 @@ server.registerTool(
     tasks: z.string().optional().describe("JSON array of tasks: [{subject, description?, priority?}]"),
     fork_from_session: z.boolean().optional().describe("Fork the caller's Claude session so the new worker inherits conversation context (default: false). Requires launch=true."),
     direct_report: z.boolean().optional().describe("Set report_to to the calling worker instead of mission_authority (default: false)"),
-    placement: z.enum(["window", "beside", "new-window"]).optional().describe("Deprecated — all workers launch into window groups. Kept for backward compat."),
   } },
-  async ({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report, placement: _placement }) => {
+  async ({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report }) => {
     try {
       // Change 4: Enforce unique worker names
       const existingRegistry = readRegistry();
@@ -2374,24 +2357,10 @@ server.registerTool(
 
       // ── Launch helpers (shared by all placement modes) ──
 
-      /** Create a tmux pane based on placement strategy. Returns pane ID or null. */
-      function createPane(pl: string, cwd: string): string | null {
+      /** Create a tmux pane in the named window group. Returns pane ID or null. */
+      function createPane(_pl: string, cwd: string): string | null {
         const ownPane = findOwnPane();
         const tmuxSession = ownPane?.paneTarget?.split(":")[0] || "w";
-        if (pl === "beside") {
-          if (!ownPane) return null;
-          return execSync(
-            `tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${cwd}"`,
-            { encoding: "utf-8", timeout: 5000 }
-          ).trim();
-        }
-        if (pl === "new-window") {
-          return execSync(
-            `tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${cwd}"`,
-            { encoding: "utf-8", timeout: 5000 }
-          ).trim();
-        }
-        // "window" — join named window group
         const winName = windowGroup || "workers";
         const winCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
         const windows = (winCheck.stdout || "").split("\n").map(w => w.trim());

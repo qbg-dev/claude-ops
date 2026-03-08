@@ -1658,18 +1658,8 @@ describe("getReportTo", () => {
     expect(getReportTo(entry)).toBe("chief-of-staff");
   });
 
-  test("falls back to assigned_by when report_to is null", () => {
-    const entry = makeRegistryEntry({ report_to: null, assigned_by: "manager" });
-    expect(getReportTo(entry)).toBe("manager");
-  });
-
-  test("falls back to parent when report_to and assigned_by are null", () => {
-    const entry = { ...makeRegistryEntry(), report_to: null, assigned_by: null, parent: "old-parent" } as any;
-    expect(getReportTo(entry)).toBe("old-parent");
-  });
-
-  test("falls back to config.mission_authority when all fields are null", () => {
-    const entry = makeRegistryEntry({ report_to: null, assigned_by: null });
+  test("falls back to config.mission_authority when report_to is null", () => {
+    const entry = makeRegistryEntry({ report_to: null });
     const config: RegistryConfig = {
       commit_notify: [], merge_authority: "merger",
       deploy_authority: "merger", mission_authority: "chief-of-staff",
@@ -1678,14 +1668,9 @@ describe("getReportTo", () => {
     expect(getReportTo(entry, config)).toBe("chief-of-staff");
   });
 
-  test("returns null when all fields empty and no config", () => {
-    const entry = makeRegistryEntry({ report_to: null, assigned_by: null });
+  test("returns null when report_to is null and no config", () => {
+    const entry = makeRegistryEntry({ report_to: null });
     expect(getReportTo(entry)).toBeNull();
-  });
-
-  test("report_to takes priority over assigned_by", () => {
-    const entry = makeRegistryEntry({ report_to: "primary", assigned_by: "secondary" });
-    expect(getReportTo(entry)).toBe("primary");
   });
 });
 

@@ -41,17 +41,20 @@ CURSOR_FILE="$_wdir/inbox-cursor.json"
 # No inbox file = nothing to check
 [ ! -f "$INBOX_FILE" ] && { hook_pass; exit 0; }
 
-# ── Check 1: Unread messages ──
-_total=$(wc -l < "$INBOX_FILE" 2>/dev/null | tr -d ' ')
-_cursor=0
+# ── Check 1: Unread messages (compare file size to byte-offset cursor) ──
+_file_size=$(wc -c < "$INBOX_FILE" 2>/dev/null | tr -d ' ')
+_cursor_offset=0
 if [ -f "$CURSOR_FILE" ]; then
-  _cursor=$(jq -r '.cursor // 0' "$CURSOR_FILE" 2>/dev/null || echo "0")
+  _cursor_offset=$(jq -r '.offset // 0' "$CURSOR_FILE" 2>/dev/null || echo "0")
 fi
-_unread=$((_total - _cursor))
+_has_unread=0
+[ "$_file_size" -gt "$_cursor_offset" ] && _has_unread=1
 
-if [ "$_unread" -gt 0 ]; then
+if [ "$_has_unread" -gt 0 ]; then
+  # Count unread lines from cursor offset forward
+  _unread=$(tail -c +"$((_cursor_offset + 1))" "$INBOX_FILE" 2>/dev/null | wc -l | tr -d ' ')
   # Extract summaries of unread messages for context
-  _summaries=$(tail -n "$_unread" "$INBOX_FILE" \
+  _summaries=$(tail -c +"$((_cursor_offset + 1))" "$INBOX_FILE" \
     | jq -r 'select(.from_name) | "  - [\(.from_name)]: \(.summary // .content[:80])"' 2>/dev/null \
     | head -5)
   _block_msg="## Unread inbox messages ($_unread)

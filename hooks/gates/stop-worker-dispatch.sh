@@ -122,18 +122,6 @@ TASKS_FILE="$_wdir/tasks.json"
 _status=$(jq -r '.status // "running"' "$_wstate" 2>/dev/null || echo "running")
 [ "$_status" = "stopped" ] && { hook_pass; exit 0; }
 
-# Vision gate
-_vision_approved=$(jq -r '.vision_approved // false' "$_wstate" 2>/dev/null || echo "false")
-if [ "$_vision_approved" != "true" ]; then
-  if [ ! -f "$_wdir/vision.html" ]; then
-    hook_block "$(echo -e "## ${_wname}: Phase 0 — Vision Required\n\nCreate vision.html before any implementation.\n1. Read template: ~/.claude-ops/templates/vision.html.tmpl\n2. Fill in using your mission.md, tasks.json, state.json, MEMORY.md\n3. Include a Generalizations section (3-5 proposed improvements beyond your backlog)\n4. Write to: .claude/workers/${_wname}/vision.html\n5. Open it: open .claude/workers/${_wname}/vision.html\n\nEscape: touch ${_SESSION_DIR}/allow-stop")"
-    exit 0
-  else
-    hook_block "$(echo -e "## ${_wname}: Phase 0 — Vision Awaiting Approval\n\nvision.html exists. Waiting for Warren to set vision_approved: true in state.json.\nRevise if feedback given. Do not implement until approved.\n\nEscape: touch ${_SESSION_DIR}/allow-stop")"
-    exit 0
-  fi
-fi
-
 # ── Stop checks gate (file-persisted by MCP add_stop_check) ──
 _sc_file="/tmp/claude-stop-checks-${_wname}.json"
 if [ -f "$_sc_file" ]; then

@@ -1,13 +1,13 @@
 {
-  "version": 3,
+  "version": 4,
   "event_types": {
     "cell-message": {
-      "side_effects": ["deliver_tmux", "notify_assignee", "notify_tmux_if_urgent", "inject_directive_if_flagged", "append_outbox"],
-      "description": "Direct message between agents. Delivers to recipient tmux pane, writes to inbox, appends to sender outbox."
+      "side_effects": ["notify_assignee", "notify_tmux_if_urgent"],
+      "description": "Direct message between agents. MCP handles inbox write + tmux delivery; bus is trace-only."
     },
     "announcement": {
-      "side_effects": ["notify_assignee", "inject_directive_if_flagged", "notify_tmux_if_urgent", "append_outbox"],
-      "description": "Broadcast-style message to agent or group. Appends to sender outbox."
+      "side_effects": ["notify_assignee", "notify_tmux_if_urgent"],
+      "description": "Broadcast-style message to agent or group."
     },
     "worker.started": {
       "side_effects": ["notify_assignee"],
@@ -23,7 +23,7 @@
     },
     "worker.transition": {
       "side_effects": ["notify_assignee", "notify_tmux_if_urgent"],
-      "description": "Worker changed lifecycle type (execution→optimization→monitoring)."
+      "description": "Worker changed lifecycle type."
     },
     "worker.regression": {
       "side_effects": ["notify_assignee", "notify_tmux_if_urgent"],
@@ -31,23 +31,15 @@
     },
     "task.started": {
       "side_effects": ["update_tasks_json"],
-      "description": "Worker started an assigned task. Payload: {harness, worker, task_id}."
+      "description": "Worker started an assigned task."
     },
     "task.completed": {
       "side_effects": ["update_tasks_json", "notify_assignee"],
-      "description": "Worker completed an assigned task. Payload: {harness, worker, task_id, summary}."
-    },
-    "sidecar.proposal": {
-      "side_effects": ["notify_assignee"],
-      "description": "Sidecar proposes a new worker for operator approval."
-    },
-    "sidecar.cycle": {
-      "side_effects": [],
-      "description": "Sidecar completed a cycle phase."
+      "description": "Worker completed an assigned task."
     },
     "prompt": {
-      "side_effects": ["sync_harness_inbox", "worker-prompt-notify"],
-      "description": "User prompt event. worker-prompt-notify fires when harness is a worker (canonical contains /)."
+      "side_effects": [],
+      "description": "User prompt event (trace only)."
     },
     "file-edit": {
       "side_effects": [],
@@ -79,15 +71,15 @@
     },
     "agent.stopped": {
       "side_effects": [],
-      "description": "Agent stopped gracefully (hook_pass fired, graceful-stop sentinel written)."
+      "description": "Agent stopped gracefully."
     },
     "agent.respawned": {
       "side_effects": ["notify_tmux_if_urgent"],
-      "description": "Watchdog respawned agent after graceful sleep window elapsed."
+      "description": "Watchdog respawned agent after sleep window elapsed."
     },
     "agent.crash": {
       "side_effects": ["notify_assignee"],
-      "description": "Pane or process died without graceful-stop sentinel — likely a crash."
+      "description": "Pane or process died without graceful-stop sentinel."
     },
     "agent.stuck": {
       "side_effects": ["notify_assignee"],
@@ -99,31 +91,31 @@
     },
     "agent.crash-loop": {
       "side_effects": ["notify_assignee", "notify_tmux_if_urgent"],
-      "description": ">3 crashes per hour for same canonical — watchdog stopped retrying."
+      "description": ">3 crashes per hour — watchdog stopped retrying."
     },
     "agent.state-changed": {
       "side_effects": [],
-      "description": "Observability event for agent state.json mutations."
+      "description": "Observability trace for state mutations."
     },
     "agent.memory-updated": {
       "side_effects": [],
-      "description": "Observability event for agent MEMORY.md edits."
+      "description": "Observability trace for MEMORY.md edits."
     },
     "agent.policy-appended": {
       "side_effects": [],
-      "description": "Audit trail for policy.json context injections."
+      "description": "Audit trail for policy context injections."
     },
     "agent.issue-filed": {
       "side_effects": ["notify_human_agent"],
-      "description": "Agent filed a GitHub issue via report-issue --github. Payload: {id, github_url, title, reporter}."
+      "description": "Agent filed a GitHub issue."
     },
     "notification": {
       "side_effects": ["notify_human_agent"],
-      "description": "Operator notification request. Payload: {message, title?, url?}. Side-effect calls terminal-notifier."
+      "description": "Operator notification. Side-effect calls terminal-notifier."
     }
   },
   "filters": {
-    "messages": "cell-message|worker\\.|sidecar\\.|announcement",
+    "messages": "cell-message|worker\\.|announcement",
     "telemetry": "file-edit|tool-call|deploy|error|prompt|config-change",
     "workers": "worker\\.",
     "lifecycle": "session\\.",

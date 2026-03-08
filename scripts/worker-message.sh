@@ -89,7 +89,7 @@ else
   _FALLBACK_SIG="[from ${OWN_TARGET:-?}]"
 fi
 
-# ── Durable bus emit (cell-message → deliver_tmux + notify_assignee + append_outbox side-effects) ──
+# ── Durable bus emit (cell-message → notify_assignee side-effect; MCP handles inbox + tmux delivery) ──
 # $1=to (e.g. "worker/chatbot-tools")  $2=content  $3=summary  [$4=msg_type override]
 _bus_emit() {
   [ "$_BUS_AVAILABLE" = "false" ] && return 1

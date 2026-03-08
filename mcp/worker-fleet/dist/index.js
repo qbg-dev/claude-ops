@@ -18644,7 +18644,6 @@ class ExperimentalMcpServerTasks {
     return mcpServerInternal._createRegisteredTool(name, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 }
-
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 class McpServer {
   constructor(serverInfo, options) {
@@ -19366,7 +19365,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "node:process";
+import process2 from "process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -19455,6 +19454,7 @@ class StdioServerTransport {
     });
   }
 }
+
 // index.ts
 import {
   readFileSync,
@@ -19495,7 +19495,6 @@ function loadSeedContext(branch, missionAuthority) {
 }
 var REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
 var WORKER_MESSAGE_SH = join(CLAUDE_OPS, "scripts/worker-message.sh");
-var CHECK_WORKERS_SH = join(CLAUDE_OPS, "scripts/check-flat-workers.sh");
 function detectWorkerName() {
   if (process.env.WORKER_NAME)
     return process.env.WORKER_NAME;
@@ -19573,7 +19572,7 @@ function readJsonFile(path) {
 }
 var LINT_ENABLED = process.env.WORKER_FLEET_LINT !== "0";
 function getReportTo(w, config2) {
-  return w.report_to || w.assigned_by || w.parent || config2?.mission_authority || null;
+  return w.report_to || config2?.mission_authority || null;
 }
 function canUpdateWorker(callerName, targetName, registry2) {
   if (callerName === targetName)
@@ -20237,14 +20236,6 @@ function runDiagnostics() {
     const lintIssues = lintRegistry(registry2);
     issues.push(...lintIssues);
   } catch {}
-  const requiredScripts = [
-    [CHECK_WORKERS_SH, "get_worker_state(name='all')"]
-  ];
-  for (const [scriptPath, toolName] of requiredScripts) {
-    if (!existsSync(scriptPath)) {
-      issues.push({ severity: "warning", check: `script.${toolName}`, message: `Script missing for ${toolName}: ${scriptPath}`, fix: `Ensure file exists at ${scriptPath}` });
-    }
-  }
   try {
     const worktreeDir = getWorktreeDir();
     let gitDir;
@@ -20333,9 +20324,6 @@ Reply: send_message(to=<sender>, in_reply_to="<msg_id>", content="...", summary=
   } catch {}
   return { content: [{ type: "text", text }] };
 }
-function withPendingReminder(result) {
-  return withLint(result);
-}
 var server = new McpServer({
   name: "worker-fleet",
   version: "2.0.0"
@@ -20390,7 +20378,7 @@ Failed: ${failures.join(", ")}`;
     try {
       execSync(`"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${summary || content.slice(0, 60)}`)} "Worker Escalation"`, { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" });
     } catch {}
-    return withPendingReminder({ content: [{ type: "text", text: `Escalated to user [${result.id}] \u2014 written to triage queue + notification sent` }] });
+    return withLint({ content: [{ type: "text", text: `Escalated to user [${result.id}] \u2014 written to triage queue + notification sent` }] });
   }
   const resolved = resolveRecipient(to);
   if (resolved.error) {
@@ -20477,7 +20465,7 @@ WARNING: Worker '${recipientName}' has no active pane \u2014 message queued in i
   const ackNote = fyi ? " (fyi, no reply needed)" : "";
   const replyNote = in_reply_to ? ` (acked ${in_reply_to})` : "";
   const typeNote = reply_type ? ` (reply_type: ${reply_type})` : "";
-  return withPendingReminder({ content: [{ type: "text", text: `Message sent to ${recipientName} [${inboxResult.msg_id}]${ackNote}${replyNote}${typeNote}${paneWarning}` }] });
+  return withLint({ content: [{ type: "text", text: `Message sent to ${recipientName} [${inboxResult.msg_id}]${ackNote}${replyNote}${typeNote}${paneWarning}` }] });
 });
 server.registerTool("read_inbox", { description: "Read messages sent to you by other workers or the user. Call at the start of every cycle to act on pending instructions before checking tasks. Uses a cursor so repeated calls only return new messages \u2014 no data loss on restart. Use clear=true only if you want to explicitly purge old messages.", inputSchema: {
   limit: exports_external.number().optional().describe("Max messages to return (default: all)"),
@@ -20569,7 +20557,7 @@ server.registerTool("create_task", { description: "Track a unit of work you've i
       suffix += ` (after: ${blockedByList.join(",")})`;
     if (blocks)
       suffix += ` (blocks: ${blocks})`;
-    return withPendingReminder({ content: [{ type: "text", text: `Added ${taskId}: ${subject}${suffix}` }] });
+    return withLint({ content: [{ type: "text", text: `Added ${taskId}: ${subject}${suffix}` }] });
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
@@ -20671,7 +20659,7 @@ server.registerTool("update_task", { description: "Advance a task through its li
       return { content: [{ type: "text", text: `No changes specified for ${task_id}` }] };
     }
     writeTasks(WORKER_NAME, tasks);
-    return withPendingReminder({ content: [{ type: "text", text: `Updated ${task_id}: ${changes.join(", ")}` }] });
+    return withLint({ content: [{ type: "text", text: `Updated ${task_id}: ${changes.join(", ")}` }] });
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
@@ -20723,7 +20711,7 @@ server.registerTool("list_tasks", { description: "Survey available work before s
     if (results.length === 0) {
       return { content: [{ type: "text", text: "No tasks found" }] };
     }
-    return withPendingReminder({ content: [{ type: "text", text: `${totalCount} tasks:
+    return withLint({ content: [{ type: "text", text: `${totalCount} tasks:
 ${results.join(`
 `)}` }] });
   } catch (e) {
@@ -20876,7 +20864,7 @@ server.registerTool("update_state", { description: "Persist state across recycle
       execSync(`source "${CLAUDE_OPS}/lib/event-bus.sh" && bus_publish "agent.state-changed" '${payload.replace(/'/g, "'\\''")}'`, { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash" });
     } catch {}
     const prefix = targetName !== WORKER_NAME ? `${targetName}.` : "state.";
-    return withPendingReminder({ content: [{ type: "text", text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
+    return withLint({ content: [{ type: "text", text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
@@ -21321,21 +21309,12 @@ server.registerTool("create_worker", { description: "Spin up a new persistent wo
   launch: exports_external.boolean().optional().describe("Auto-launch in tmux after creation (default: false)"),
   tasks: exports_external.string().optional().describe("JSON array of tasks: [{subject, description?, priority?}]"),
   fork_from_session: exports_external.boolean().optional().describe("Fork the caller's Claude session so the new worker inherits conversation context (default: false). Requires launch=true."),
-  direct_report: exports_external.boolean().optional().describe("Set report_to to the calling worker instead of mission_authority (default: false)"),
-  placement: exports_external.enum(["window", "beside", "new-window"]).optional().describe("Deprecated \u2014 all workers launch into window groups. Kept for backward compat.")
-} }, async ({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report, placement: _placement }) => {
+  direct_report: exports_external.boolean().optional().describe("Set report_to to the calling worker instead of mission_authority (default: false)")
+} }, async ({ name, mission, type, runtime, model, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, report_to, permission_mode, launch, tasks: tasksJson, fork_from_session, direct_report }) => {
   try {
-    let createPane = function(pl, cwd) {
+    let createPane = function(_pl, cwd) {
       const ownPane = findOwnPane();
       const tmuxSession = ownPane?.paneTarget?.split(":")[0] || "w";
-      if (pl === "beside") {
-        if (!ownPane)
-          return null;
-        return execSync(`tmux split-window -h -t "${ownPane.paneTarget}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-      }
-      if (pl === "new-window") {
-        return execSync(`tmux new-window -t "${tmuxSession}" -n "${name}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
-      }
       const winName = windowGroup || "workers";
       const winCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
       const windows = (winCheck.stdout || "").split(`
@@ -21881,7 +21860,7 @@ async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
 }
-if (__require.main == __require.module) {
+if (import.meta.main) {
   main().catch((e) => {
     console.error("worker-fleet MCP server fatal:", e);
     process.exit(1);
