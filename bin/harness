@@ -4,18 +4,44 @@
  * Claude Code inspired: clean, minimal, blue accents.
  *
  * Usage:
- *   harness              # interactive REPL
- *   harness inbox        # one-shot
- *   harness read <n>     # one-shot
- *   harness fleet        # one-shot
+ *   harness                     # interactive REPL
+ *   harness inbox               # one-shot
+ *   harness read <n>            # one-shot
+ *   harness fleet               # one-shot
+ *   harness as <worker> inbox   # compound one-shot
+ *   harness threads             # one-shot
+ *   harness dir                 # one-shot
  */
 
 import { readFileSync } from "fs";
 import { createInterface } from "readline";
 
+// ── Theme (Claude Code palette — 256-color) ──
+
+const ESC = "\x1b[";
+const RESET = `${ESC}0m`;
+const BOLD = `${ESC}1m`;
+const DIM = `${ESC}2m`;
+const ITALIC = `${ESC}3m`;
+
+const BLUE = `${ESC}38;5;75m`;
+const CYAN = `${ESC}38;5;116m`;
+const GREEN = `${ESC}38;5;114m`;
+const YELLOW = `${ESC}38;5;222m`;
+const RED = `${ESC}38;5;203m`;
+const GRAY = `${ESC}38;5;241m`;
+const LIGHT_GRAY = `${ESC}38;5;248m`;
+const WHITE = `${ESC}38;5;255m`;
+const MUTED = `${ESC}38;5;244m`;
+const ORANGE = `${ESC}38;5;215m`;
+const MAGENTA = `${ESC}38;5;176m`;
+
+const W = 68; // content width
+
+// ── Config ──
+
 const BMS_URL = process.env.BMS_URL || "http://127.0.0.1:8025";
 
-// Resolve project root: env > well-known Wechat path > git > cwd
 const PROJECT_ROOT = process.env.PROJECT_ROOT ||
   (() => {
     const wellKnown = `${process.env.HOME}/Desktop/zPersonalProjects/Wechat`;
@@ -24,12 +50,62 @@ const PROJECT_ROOT = process.env.PROJECT_ROOT ||
   })();
 const REGISTRY_PATH = `${PROJECT_ROOT}/.claude/workers/registry.json`;
 
-// Resolve or auto-provision BMS user token
-let TOKEN = process.env.BMS_TOKEN || "";
-if (!TOKEN) {
-  try { TOKEN = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8")).user?.bms_token || ""; } catch {}
+// ── Types ──
+
+interface ActiveContext {
+  name: string;
+  token: string;
+  display: string; // for prompt
 }
-if (!TOKEN) {
+
+// ── BMS Client ──
+
+function getToken(): string { return activeContext.token; }
+
+async function bms(method: string, path: string, body?: any): Promise<any> {
+  const r = await fetch(`${BMS_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(5000),
+  });
+  if (r.status === 401) throw new Error(`401 Unauthorized — token may be expired for ${activeContext.name}`);
+  if (!r.ok) throw new Error(`BMS ${r.status}: ${(await r.text().catch(() => "")).slice(0, 80)}`);
+  return r.json();
+}
+
+// ── Registry & Token Map ──
+
+let tokenMap: Map<string, string> = new Map();
+let registry: Record<string, any> = {};
+
+function loadRegistry(): Record<string, any> {
+  try { return JSON.parse(readFileSync(REGISTRY_PATH, "utf-8")); }
+  catch { return {}; }
+}
+
+function loadTokenMap(): Map<string, string> {
+  const map = new Map<string, string>();
+  const reg = loadRegistry();
+  registry = reg;
+  for (const [name, w] of Object.entries(reg)) {
+    if (name === "_config") continue;
+    const worker = w as any;
+    if (worker.bms_token) map.set(name, worker.bms_token);
+  }
+  return map;
+}
+
+// Resolve or auto-provision BMS user token
+function resolveUserToken(): string {
+  let token = process.env.BMS_TOKEN || "";
+  if (!token) {
+    try { token = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8")).user?.bms_token || ""; } catch {}
+  }
+  return token;
+}
+
+async function autoProvisionUser(): Promise<string> {
   try {
     const resp = await fetch(`${BMS_URL}/api/accounts`, {
       method: "POST",
@@ -39,16 +115,17 @@ if (!TOKEN) {
     });
     if (resp.ok) {
       const acct = await resp.json() as any;
-      TOKEN = acct.bearerToken;
+      const token = acct.bearerToken;
       try {
         const reg = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
         reg.user = reg.user || {};
-        reg.user.bms_token = TOKEN;
+        reg.user.bms_token = token;
         reg.user.bms_id = acct.id;
         reg.user.status = "active";
         const { writeFileSync } = await import("fs");
         writeFileSync(REGISTRY_PATH, JSON.stringify(reg, null, 2) + "\n");
       } catch {}
+      return token;
     } else if (resp.status === 409) {
       process.stderr.write("BMS user account exists but token not in registry.\n");
       process.exit(1);
@@ -60,54 +137,84 @@ if (!TOKEN) {
     process.stderr.write(`Cannot reach BMS at ${BMS_URL}: ${e.message}\n`);
     process.exit(1);
   }
+  return "";
 }
 
-// ── ANSI ──
-const ESC = "\x1b[";
-const RESET = `${ESC}0m`;
-const BOLD = `${ESC}1m`;
-const DIM = `${ESC}2m`;
-const ITALIC = `${ESC}3m`;
+// ── Markdown Renderer ──
 
-// Claude Code palette — 256-color
-const BLUE = `${ESC}38;5;75m`;      // primary accent
-const BLUE_BG = `${ESC}48;5;236m`;  // subtle card bg
-const CYAN = `${ESC}38;5;116m`;
-const GREEN = `${ESC}38;5;114m`;
-const YELLOW = `${ESC}38;5;222m`;
-const RED = `${ESC}38;5;203m`;
-const GRAY = `${ESC}38;5;241m`;
-const LIGHT_GRAY = `${ESC}38;5;248m`;
-const WHITE = `${ESC}38;5;255m`;
-const MUTED = `${ESC}38;5;244m`;
-const ORANGE = `${ESC}38;5;215m`;
+function renderMarkdown(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inCodeBlock = false;
 
-const W = 68; // content width
+  for (const line of lines) {
+    // Fenced code blocks
+    if (line.trimStart().startsWith("```")) {
+      inCodeBlock = !inCodeBlock;
+      if (inCodeBlock) {
+        out.push(`  ${GRAY}┌${"─".repeat(W - 2)}${RESET}`);
+      } else {
+        out.push(`  ${GRAY}└${"─".repeat(W - 2)}${RESET}`);
+      }
+      continue;
+    }
 
-// ── Styled output helpers ──
+    if (inCodeBlock) {
+      out.push(`  ${GRAY}│${RESET} ${DIM}${line}${RESET}`);
+      continue;
+    }
+
+    let rendered = line;
+
+    // Headings
+    if (rendered.match(/^## /)) {
+      rendered = rendered.replace(/^## (.+)/, `${BOLD}${BLUE}$1${RESET}`);
+      out.push(`  ${rendered}`);
+      continue;
+    }
+    if (rendered.match(/^### /)) {
+      rendered = rendered.replace(/^### (.+)/, `${CYAN}$1${RESET}`);
+      out.push(`  ${rendered}`);
+      continue;
+    }
+
+    // Blockquotes
+    if (rendered.match(/^> /)) {
+      rendered = rendered.replace(/^> (.*)/, `${GRAY}│${RESET} ${ITALIC}${MUTED}$1${RESET}`);
+      out.push(`  ${rendered}`);
+      continue;
+    }
+
+    // Inline formatting
+    rendered = rendered
+      .replace(/\*\*(.+?)\*\*/g, `${BOLD}${WHITE}$1${RESET}`)
+      .replace(/`(.+?)`/g, `${CYAN}$1${RESET}`)
+      .replace(/\[(.+?)\]\((.+?)\)/g, `${BLUE}$1${RESET} ${MUTED}($2)${RESET}`)
+      .replace(/^- /, `${MUTED}  ·${RESET} `)
+      .replace(/^\* /, `${MUTED}  ·${RESET} `);
+
+    out.push(`  ${rendered}`);
+  }
+
+  // Close unclosed code block
+  if (inCodeBlock) out.push(`  ${GRAY}└${"─".repeat(W - 2)}${RESET}`);
+
+  return out.join("\n");
+}
+
+// ── Styled Output Helpers ──
+
 const o = (s: string) => process.stdout.write(s + "\n");
 const blank = () => o("");
 const hr = () => o(`  ${GRAY}${"─".repeat(W)}${RESET}`);
 const thinHr = () => o(`  ${DIM}${GRAY}${"╌".repeat(W)}${RESET}`);
 const pad = (s: string, n: number) => {
-  // Pad ignoring ANSI codes
   const vis = s.replace(/\x1b\[[0-9;]*m/g, "");
   return s + " ".repeat(Math.max(0, n - vis.length));
 };
 
-// ── BMS client ──
-async function bms(method: string, path: string, body?: any): Promise<any> {
-  const r = await fetch(`${BMS_URL}${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!r.ok) throw new Error(`BMS ${r.status}: ${(await r.text().catch(() => "")).slice(0, 80)}`);
-  return r.json();
-}
+// ── Directory Cache ──
 
-// ── Directory cache (resolve account names) ──
 let directoryCache: Record<string, string> = {};
 async function resolveDirectory() {
   if (Object.keys(directoryCache).length) return;
@@ -120,7 +227,6 @@ async function resolveDirectory() {
 }
 
 function senderName(msg: any): string {
-  // BMS returns `from` as either a UUID string or an object {id, name, displayName}
   const fromId = typeof msg.from === "string" ? msg.from : (msg.from?.id || msg.fromId);
   if (typeof msg.from === "object" && msg.from) {
     const display = msg.from.displayName || msg.from.name;
@@ -130,8 +236,22 @@ function senderName(msg: any): string {
   return fromId?.slice(0, 8) || "?";
 }
 
-// ── Cached messages ──
+function recipientNames(msg: any): string {
+  const toList = msg.to || [];
+  return toList.map((t: any) => {
+    if (typeof t === "object" && t) return t.displayName || t.name || t.id?.slice(0, 8);
+    if (typeof t === "string" && directoryCache[t]) return directoryCache[t];
+    return typeof t === "string" ? t.slice(0, 8) : "?";
+  }).join(", ");
+}
+
+// ── State ──
+
 let cachedMessages: any[] = [];
+let cachedThreads: any[] = [];
+
+let activeContext: ActiveContext = { name: "user", token: "", display: "" };
+const userToken = { value: "" }; // stored separately so `as me` can restore
 
 async function ensureCache() {
   if (cachedMessages.length) return;
@@ -139,7 +259,8 @@ async function ensureCache() {
   cachedMessages = data.messages || [];
 }
 
-// ── Time formatting ──
+// ── Time Formatting ──
+
 function timeAgo(iso: string): string {
   if (!iso) return "";
   const ms = Date.now() - new Date(iso).getTime();
@@ -166,14 +287,12 @@ async function cmdInbox() {
     return;
   }
 
-  const unreadCount = data._diagnostics?.unread_count || msgs.length;
-  o(`  ${BOLD}${BLUE}Inbox${RESET}  ${MUTED}${msgs.length} message${msgs.length !== 1 ? "s" : ""}${RESET}`);
+  const ctxLabel = activeContext.name !== "user" ? ` ${MUTED}(${activeContext.name})${RESET}` : "";
+  o(`  ${BOLD}${BLUE}Inbox${RESET}${ctxLabel}  ${MUTED}${msgs.length} message${msgs.length !== 1 ? "s" : ""}${RESET}`);
   blank();
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
-    // List endpoint has: id, from (uuid), subject, snippet, internalDate, threadId
-    // labelIds only available on detail — use subject heuristic for escalation indicator
     const isEsc = m.subject?.toLowerCase().includes("escalation") || m.subject?.toLowerCase().includes("blocked");
 
     const num = `${MUTED}${(i + 1).toString().padStart(2)}${RESET}`;
@@ -188,7 +307,7 @@ async function cmdInbox() {
   }
 
   blank();
-  o(`  ${MUTED}${DIM}r${RESET}${MUTED}ead ${DIM}<n>${RESET}${MUTED}  ·  re${DIM}p${RESET}${MUTED}ly ${DIM}<n>${RESET}${MUTED}  ·  ${DIM}a${RESET}${MUTED}rchive ${DIM}<n>${RESET}`);
+  o(`  ${MUTED}${DIM}r${RESET}${MUTED}ead ${DIM}<n>${RESET}${MUTED}  ·  re${DIM}p${RESET}${MUTED}ly ${DIM}<n>${RESET}${MUTED}  ·  ${DIM}a${RESET}${MUTED}rchive ${DIM}<n>${RESET}${MUTED}  ·  ${DIM}t${RESET}${MUTED}hreads  ·  ${DIM}as${RESET}${MUTED} <worker>${RESET}`);
   blank();
 }
 
@@ -213,15 +332,7 @@ async function cmdRead(n: number) {
   hr();
   blank();
 
-  for (const line of (msg.body || "").split("\n")) {
-    let out = line
-      .replace(/^## (.+)/, `${BOLD}${BLUE}$1${RESET}`)
-      .replace(/^### (.+)/, `${CYAN}$1${RESET}`)
-      .replace(/\*\*(.+?)\*\*/g, `${BOLD}$1${RESET}`)
-      .replace(/`(.+?)`/g, `${CYAN}$1${RESET}`)
-      .replace(/^- /, `${MUTED}  ·${RESET} `);
-    o(`  ${out}`);
-  }
+  o(renderMarkdown(msg.body || ""));
   blank();
 }
 
@@ -252,6 +363,35 @@ async function cmdArchive(n: number) {
   cachedMessages.splice(n - 1, 1);
 }
 
+async function cmdStar(n: number) {
+  await ensureCache();
+  if (!cachedMessages[n - 1]) {
+    o(`  ${RED}No message #${n}${RESET}`);
+    return;
+  }
+  const msg = cachedMessages[n - 1];
+  const isStarred = (msg.labelIds || []).includes("STARRED");
+  if (isStarred) {
+    await bms("POST", `/api/messages/${msg.id}/modify`, { removeLabelIds: ["STARRED"], addLabelIds: [] });
+    o(`  ${MUTED}Unstarred${RESET} ${(msg.subject || "(no subject)").slice(0, 40)}`);
+  } else {
+    await bms("POST", `/api/messages/${msg.id}/modify`, { addLabelIds: ["STARRED"], removeLabelIds: [] });
+    o(`  ${YELLOW}★ Starred${RESET} ${(msg.subject || "(no subject)").slice(0, 40)}`);
+  }
+}
+
+async function cmdTrash(n: number) {
+  await ensureCache();
+  if (!cachedMessages[n - 1]) {
+    o(`  ${RED}No message #${n}${RESET}`);
+    return;
+  }
+  const msg = cachedMessages[n - 1];
+  await bms("POST", `/api/messages/${msg.id}/trash`);
+  o(`  ${RED}Trashed${RESET} ${MUTED}${(msg.subject || "(no subject)").slice(0, 40)}${RESET}`);
+  cachedMessages.splice(n - 1, 1);
+}
+
 async function cmdSend(to: string, subject: string, body: string) {
   await resolveDirectory();
   const dir = await bms("GET", "/api/directory").catch(() => ({ directory: [] }));
@@ -266,10 +406,142 @@ async function cmdSend(to: string, subject: string, body: string) {
   o(`  ${GREEN}Sent to ${to}${RESET} ${MUTED}${subject}${RESET}`);
 }
 
-async function cmdFleet() {
-  let reg: any;
-  try { reg = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8")); }
-  catch { o(`  ${RED}Cannot read registry.${RESET}`); return; }
+async function cmdSent() {
+  await resolveDirectory();
+  const data = await bms("GET", "/api/messages?label=SENT&maxResults=50");
+  const msgs = data.messages || [];
+  cachedMessages = msgs;
+
+  blank();
+  if (!msgs.length) {
+    o(`  ${MUTED}No sent messages.${RESET}`);
+    blank();
+    return;
+  }
+
+  const ctxLabel = activeContext.name !== "user" ? ` ${MUTED}(${activeContext.name})${RESET}` : "";
+  o(`  ${BOLD}${BLUE}Sent${RESET}${ctxLabel}  ${MUTED}${msgs.length} message${msgs.length !== 1 ? "s" : ""}${RESET}`);
+  blank();
+
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const num = `${MUTED}${(i + 1).toString().padStart(2)}${RESET}`;
+    const to = recipientNames(m) || "?";
+    const time = `${GRAY}${timeAgo(m.internalDate)}${RESET}`;
+    const toStr = pad(`${MAGENTA}→ ${to}${RESET}`, 18);
+    const subj = (m.subject || "(no subject)").slice(0, 42);
+    o(`  ${num}  ${BLUE}·${RESET} ${toStr} ${WHITE}${subj}${RESET}  ${time}`);
+  }
+  blank();
+}
+
+async function cmdThreads() {
+  await resolveDirectory();
+  const data = await bms("GET", "/api/threads?label=INBOX&maxResults=20");
+  const threads = data.threads || [];
+  cachedThreads = threads;
+
+  blank();
+  if (!threads.length) {
+    o(`  ${MUTED}No threads.${RESET}`);
+    blank();
+    return;
+  }
+
+  const ctxLabel = activeContext.name !== "user" ? ` ${MUTED}(${activeContext.name})${RESET}` : "";
+  o(`  ${BOLD}${BLUE}Threads${RESET}${ctxLabel}  ${MUTED}${threads.length} conversation${threads.length !== 1 ? "s" : ""}${RESET}`);
+  blank();
+
+  for (let i = 0; i < threads.length; i++) {
+    const t = threads[i];
+    const num = `${MUTED}${(i + 1).toString().padStart(2)}${RESET}`;
+    const msgCount = t.messageCount || t.messages?.length || "?";
+    const subj = (t.subject || t.snippet || "(no subject)").slice(0, 38);
+    const time = `${GRAY}${timeAgo(t.internalDate || t.lastMessageDate)}${RESET}`;
+
+    // Participant names
+    const participants = (t.participants || [])
+      .map((p: any) => {
+        if (typeof p === "string") return directoryCache[p] || p.slice(0, 8);
+        return p.displayName || p.name || p.id?.slice(0, 8) || "?";
+      })
+      .slice(0, 3)
+      .join(", ");
+
+    const partStr = pad(`${CYAN}${participants || "?"}${RESET}`, 22);
+    const countStr = `${MUTED}${msgCount} msg${msgCount !== 1 ? "s" : ""}${RESET}`;
+
+    o(`  ${num}  ${BLUE}·${RESET} ${partStr} ${WHITE}${subj}${RESET}  ${countStr}  ${time}`);
+  }
+
+  blank();
+  o(`  ${MUTED}${DIM}th${RESET}${MUTED}read ${DIM}<n>${RESET}${MUTED} to view full thread${RESET}`);
+  blank();
+}
+
+async function cmdThread(n: number) {
+  await resolveDirectory();
+
+  if (!cachedThreads.length) {
+    // Try to load threads first
+    const data = await bms("GET", "/api/threads?label=INBOX&maxResults=20");
+    cachedThreads = data.threads || [];
+  }
+
+  if (!cachedThreads[n - 1]) {
+    o(`  ${RED}No thread #${n}${RESET} ${MUTED}(${cachedThreads.length} threads)${RESET}`);
+    return;
+  }
+
+  const thread = await bms("GET", `/api/threads/${cachedThreads[n - 1].id}`);
+  if (!thread) { o(`  ${RED}Thread not found.${RESET}`); return; }
+
+  const msgs = thread.messages || [];
+  const subject = thread.subject || msgs[0]?.subject || "(no subject)";
+
+  blank();
+  o(`  ${BOLD}${WHITE}${subject}${RESET}`);
+  o(`  ${MUTED}${msgs.length} message${msgs.length !== 1 ? "s" : ""} in thread${RESET}`);
+  blank();
+
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const from = senderName(m);
+    const time = timeAgo(m.internalDate);
+
+    o(`  ${BOLD}${CYAN}${from}${RESET}  ${GRAY}${time}${RESET}`);
+    hr();
+    o(renderMarkdown(m.body || m.snippet || ""));
+    if (i < msgs.length - 1) {
+      blank();
+      thinHr();
+      blank();
+    }
+  }
+  blank();
+}
+
+async function cmdLabels() {
+  const data = await bms("GET", "/api/labels");
+  const labels = data.labels || data || [];
+
+  blank();
+  o(`  ${BOLD}${BLUE}Labels${RESET}`);
+  blank();
+
+  for (const l of labels) {
+    const name = l.name || l.id;
+    const total = l.messagesTotal ?? l.total ?? "?";
+    const unread = l.messagesUnread ?? l.unread ?? 0;
+    const unreadBadge = unread > 0 ? ` ${BOLD}${ORANGE}${unread}${RESET}` : "";
+    o(`  ${pad(`${WHITE}${name}${RESET}`, 20)} ${MUTED}${total}${RESET}${unreadBadge}`);
+  }
+  blank();
+}
+
+async function cmdFleet(showAll = false) {
+  const reg = loadRegistry();
+  if (!Object.keys(reg).length) { o(`  ${RED}Cannot read registry.${RESET}`); return; }
 
   const workers = Object.entries(reg)
     .filter(([k]) => k !== "_config" && k !== "user")
@@ -280,9 +552,9 @@ async function cmdFleet() {
       pane: w.pane_id || "",
       runtime: w.custom?.runtime || "claude",
       sleep_until: w.custom?.sleep_until,
+      hasBms: !!w.bms_token,
     }))
     .sort((a, b) => {
-      // Active first, then sleeping, then rest
       const order: Record<string, number> = { active: 0, sleeping: 1, standby: 2 };
       return (order[a.status] ?? 3) - (order[b.status] ?? 3) || a.name.localeCompare(b.name);
     });
@@ -291,8 +563,7 @@ async function cmdFleet() {
   const sleeping = workers.filter(w => w.status === "sleeping").length;
   const idle = workers.filter(w => !["active", "sleeping", "standby"].includes(w.status)).length;
 
-  // Only show active/sleeping/standby by default
-  const visible = workers.filter(w => ["active", "sleeping", "standby"].includes(w.status));
+  const visible = showAll ? workers : workers.filter(w => ["active", "sleeping", "standby"].includes(w.status));
 
   blank();
   o(`  ${BOLD}${BLUE}Fleet${RESET}  ${MUTED}${active} active${sleeping ? ` · ${sleeping} sleeping` : ""}${idle ? ` · ${idle} idle` : ""}${RESET}`);
@@ -306,9 +577,10 @@ async function cmdFleet() {
 
   for (const w of visible) {
     const statusColors: Record<string, string> = {
-      active: GREEN, sleeping: YELLOW, standby: MUTED, exited: GRAY,
+      active: GREEN, sleeping: YELLOW, standby: MUTED, exited: GRAY, idle: GRAY,
     };
     const sc = statusColors[w.status] || GRAY;
+    const isIdle = !["active", "sleeping", "standby"].includes(w.status);
 
     let statusStr = `${sc}${w.status}${RESET}`;
     if (w.status === "sleeping" && w.sleep_until) {
@@ -318,10 +590,12 @@ async function cmdFleet() {
     }
 
     const perp = w.perpetual ? `${MUTED}♻${RESET}` : " ";
-    const nameStr = `${WHITE}${w.name}${RESET}`;
+    const nameColor = isIdle ? GRAY : WHITE;
+    const nameStr = `${nameColor}${w.name}${RESET}`;
     const paneStr = w.pane ? `${GRAY}${w.pane}${RESET}` : "";
+    const bmsStr = w.hasBms ? `${DIM}${BLUE}✉${RESET}` : " ";
 
-    o(`  ${perp} ${pad(nameStr, 26)} ${pad(statusStr, 14)} ${paneStr}`);
+    o(`  ${perp} ${pad(nameStr, 26)} ${pad(statusStr, 14)} ${bmsStr} ${paneStr}`);
   }
   blank();
 }
@@ -352,29 +626,190 @@ async function cmdSearch(query: string) {
   blank();
 }
 
-function cmdHelp() {
+async function cmdAs(workerName: string) {
+  if (workerName === "me" || workerName === "user") {
+    activeContext = { name: "user", token: userToken.value, display: "" };
+    cachedMessages = [];
+    cachedThreads = [];
+    directoryCache = {};
+    o(`  ${GREEN}Switched to own inbox${RESET}`);
+    return;
+  }
+
+  const token = tokenMap.get(workerName);
+  if (!token) {
+    // Try fuzzy match
+    const matches = [...tokenMap.keys()].filter(k => k.includes(workerName));
+    if (matches.length === 1) {
+      const match = matches[0];
+      activeContext = { name: match, token: tokenMap.get(match)!, display: match };
+      cachedMessages = [];
+      cachedThreads = [];
+      directoryCache = {};
+      o(`  ${GREEN}Switched to ${CYAN}${match}${GREEN}'s inbox${RESET}`);
+      return;
+    }
+    if (matches.length > 1) {
+      o(`  ${YELLOW}Ambiguous:${RESET} ${matches.join(", ")}`);
+      return;
+    }
+    // Check if worker exists but has no token
+    if (registry[workerName]) {
+      o(`  ${YELLOW}${workerName} has no BMS account${RESET}`);
+    } else {
+      o(`  ${RED}Unknown worker: ${workerName}${RESET}`);
+    }
+    return;
+  }
+
+  activeContext = { name: workerName, token, display: workerName };
+  cachedMessages = [];
+  cachedThreads = [];
+  directoryCache = {};
+  o(`  ${GREEN}Switched to ${CYAN}${workerName}${GREEN}'s inbox${RESET}`);
+}
+
+function cmdWho() {
   blank();
-  o(`  ${BOLD}${BLUE}harness${RESET} ${MUTED}worker fleet CLI${RESET}`);
+  const isSelf = activeContext.name === "user";
+  o(`  ${BOLD}${WHITE}Identity${RESET}`);
   blank();
-  const cmds = [
-    ["inbox", "i", "Show inbox"],
-    ["read <n>", "r", "Read message #n"],
-    ["reply <n> <msg>", "re", "Reply to message #n"],
-    ["archive <n>", "a", "Archive message #n"],
-    ["fleet", "f", "Worker fleet status"],
-    ["search <query>", "s", "Search messages"],
-    ["send <to> <subj>", "", "Send a message"],
-    ["help", "?", "This help"],
-    ["quit", "q", "Exit"],
-  ];
-  for (const [cmd, alias, desc] of cmds) {
-    const aliasStr = alias ? `${MUTED}(${alias})${RESET}` : "    ";
-    o(`  ${WHITE}${pad(cmd, 20)}${RESET} ${pad(aliasStr, 6)} ${MUTED}${desc}${RESET}`);
+  o(`  ${MUTED}Account:${RESET}  ${CYAN}${activeContext.name}${RESET}${isSelf ? ` ${MUTED}(operator)${RESET}` : ""}`);
+  o(`  ${MUTED}Token:${RESET}    ${GRAY}${activeContext.token.slice(0, 8)}…${RESET}`);
+  o(`  ${MUTED}BMS:${RESET}      ${GRAY}${BMS_URL}${RESET}`);
+  if (!isSelf) {
+    o(`  ${MUTED}Worker:${RESET}   ${registry[activeContext.name]?.status || "?"} ${registry[activeContext.name]?.pane_id ? `(${registry[activeContext.name].pane_id})` : ""}`);
+  }
+  blank();
+
+  // Show available identities
+  const withTokens = [...tokenMap.keys()].sort();
+  o(`  ${MUTED}Available (${withTokens.length}):${RESET} ${withTokens.map(n => n === activeContext.name ? `${BOLD}${CYAN}${n}${RESET}` : `${GRAY}${n}${RESET}`).join(` ${MUTED}·${RESET} `)}`);
+  blank();
+}
+
+async function cmdDir() {
+  await resolveDirectory();
+  let analytics: any = null;
+  try { analytics = await bms("GET", "/api/analytics"); } catch {}
+
+  const dir = await bms("GET", "/api/directory").catch(() => ({ directory: [] }));
+  const accs = dir.directory || dir || [];
+
+  blank();
+  o(`  ${BOLD}${BLUE}Directory${RESET}  ${MUTED}${accs.length} accounts${RESET}`);
+  blank();
+
+  // Build stats map from analytics
+  const statsMap = new Map<string, { sent: number; received: number }>();
+  if (analytics?.perAccount) {
+    for (const [id, s] of Object.entries(analytics.perAccount) as any) {
+      statsMap.set(id, { sent: s.sent || 0, received: s.received || 0 });
+    }
+  }
+
+  for (const a of accs) {
+    const name = a.displayName || a.name;
+    const hasToken = tokenMap.has(a.name);
+    const stats = statsMap.get(a.id);
+    const nameStr = pad(`${hasToken ? CYAN : LIGHT_GRAY}${name}${RESET}`, 24);
+    const tokenBadge = hasToken ? `${DIM}${BLUE}✉${RESET}` : " ";
+    const statsStr = stats
+      ? `${MUTED}↑${stats.sent} ↓${stats.received}${RESET}`
+      : `${DIM}${GRAY}—${RESET}`;
+    const bio = a.bio ? `${DIM}${GRAY}${a.bio.slice(0, 30)}${RESET}` : "";
+
+    o(`  ${tokenBadge} ${nameStr} ${pad(statsStr, 14)} ${bio}`);
   }
   blank();
 }
 
+async function cmdStats() {
+  let analytics: any;
+  try { analytics = await bms("GET", "/api/analytics"); }
+  catch (e: any) { o(`  ${RED}${e.message}${RESET}`); return; }
+
+  blank();
+  o(`  ${BOLD}${BLUE}Fleet Analytics${RESET}`);
+  blank();
+
+  const g = analytics.global || analytics;
+  if (g.totalMessages != null) o(`  ${MUTED}Total messages:${RESET}  ${WHITE}${g.totalMessages}${RESET}`);
+  if (g.totalThreads != null) o(`  ${MUTED}Total threads:${RESET}   ${WHITE}${g.totalThreads}${RESET}`);
+  if (g.totalAccounts != null) o(`  ${MUTED}Accounts:${RESET}        ${WHITE}${g.totalAccounts}${RESET}`);
+  if (g.activeToday != null) o(`  ${MUTED}Active today:${RESET}    ${WHITE}${g.activeToday}${RESET}`);
+
+  if (analytics.perAccount) {
+    await resolveDirectory();
+    blank();
+    o(`  ${BOLD}${WHITE}Per-Account Activity${RESET}`);
+    blank();
+    const entries = Object.entries(analytics.perAccount) as [string, any][];
+    const sorted = entries
+      .filter(([, s]) => (s.sent || 0) + (s.received || 0) > 0)
+      .sort((a, b) => ((b[1].sent || 0) + (b[1].received || 0)) - ((a[1].sent || 0) + (a[1].received || 0)));
+
+    for (const [id, s] of sorted.slice(0, 15)) {
+      const name = directoryCache[id] || id.slice(0, 12);
+      const total = (s.sent || 0) + (s.received || 0);
+      const bar = "█".repeat(Math.min(20, Math.ceil(total / 2)));
+      o(`  ${pad(`${CYAN}${name}${RESET}`, 20)} ${GREEN}${bar}${RESET} ${MUTED}${total}${RESET}`);
+    }
+  }
+  blank();
+}
+
+function cmdHelp() {
+  blank();
+  o(`  ${BOLD}${BLUE}harness${RESET} ${MUTED}v1.0 — worker fleet CLI${RESET}`);
+  blank();
+
+  const sections = [
+    { title: "Messages", cmds: [
+      ["inbox", "i", "Show inbox"],
+      ["read <n>", "r, o", "Read message #n"],
+      ["reply <n> <msg>", "re", "Reply to message #n"],
+      ["archive <n>", "a", "Archive message #n"],
+      ["star <n>", "", "Star/unstar message"],
+      ["trash <n>", "", "Trash message"],
+      ["sent", "", "Show sent messages"],
+      ["search <query>", "s", "Search messages"],
+      ["send <to> <subj>", "", "Send a message"],
+    ]},
+    { title: "Threads", cmds: [
+      ["threads", "t", "List conversation threads"],
+      ["thread <n>", "th", "View full thread"],
+    ]},
+    { title: "Context", cmds: [
+      ["as <worker>", "", "Switch to worker's inbox"],
+      ["as me", "", "Return to own inbox"],
+      ["who", "w", "Show current identity"],
+    ]},
+    { title: "Fleet", cmds: [
+      ["fleet", "f", "Worker fleet status"],
+      ["fleet all", "f all", "Include idle workers"],
+      ["dir", "d", "BMS account directory"],
+      ["labels", "l", "Label counts"],
+      ["stats", "", "Fleet analytics"],
+    ]},
+    { title: "General", cmds: [
+      ["help", "?", "This help"],
+      ["quit", "q", "Exit"],
+    ]},
+  ];
+
+  for (const sec of sections) {
+    o(`  ${BOLD}${WHITE}${sec.title}${RESET}`);
+    for (const [cmd, alias, desc] of sec.cmds) {
+      const aliasStr = alias ? `${MUTED}(${alias})${RESET}` : "    ";
+      o(`    ${pad(`${LIGHT_GRAY}${cmd}${RESET}`, 22)} ${pad(aliasStr, 10)} ${MUTED}${desc}${RESET}`);
+    }
+    blank();
+  }
+}
+
 // ── Dispatch ──
+
 async function dispatch(input: string): Promise<boolean> {
   const parts = input.trim().split(/\s+/);
   const cmd = parts[0]?.toLowerCase();
@@ -383,7 +818,7 @@ async function dispatch(input: string): Promise<boolean> {
   try {
     switch (cmd) {
       case "inbox": case "i": await cmdInbox(); break;
-      case "read": case "r": {
+      case "read": case "r": case "open": case "o": {
         const n = parseInt(parts[1]);
         if (!n) { o(`  ${MUTED}Usage: read <n>${RESET}`); break; }
         await cmdRead(n); break;
@@ -399,7 +834,42 @@ async function dispatch(input: string): Promise<boolean> {
         if (!n) { o(`  ${MUTED}Usage: archive <n>${RESET}`); break; }
         await cmdArchive(n); break;
       }
-      case "fleet": case "f": await cmdFleet(); break;
+      case "star": {
+        const n = parseInt(parts[1]);
+        if (!n) { o(`  ${MUTED}Usage: star <n>${RESET}`); break; }
+        await cmdStar(n); break;
+      }
+      case "trash": {
+        const n = parseInt(parts[1]);
+        if (!n) { o(`  ${MUTED}Usage: trash <n>${RESET}`); break; }
+        await cmdTrash(n); break;
+      }
+      case "sent": await cmdSent(); break;
+      case "threads": case "t": await cmdThreads(); break;
+      case "thread": case "th": {
+        const n = parseInt(parts[1]);
+        if (!n) { o(`  ${MUTED}Usage: thread <n>${RESET}`); break; }
+        await cmdThread(n); break;
+      }
+      case "as": {
+        const target = parts[1];
+        if (!target) { o(`  ${MUTED}Usage: as <worker> | as me${RESET}`); break; }
+        await cmdAs(target);
+        // Support compound: `as chief-of-staff inbox`
+        if (parts[2]) {
+          await dispatch(parts.slice(2).join(" "));
+        }
+        break;
+      }
+      case "who": case "w": cmdWho(); break;
+      case "dir": case "d": await cmdDir(); break;
+      case "labels": case "l": await cmdLabels(); break;
+      case "stats": await cmdStats(); break;
+      case "fleet": case "f": {
+        const showAll = parts[1]?.toLowerCase() === "all";
+        await cmdFleet(showAll);
+        break;
+      }
       case "search": case "s": {
         const q = parts.slice(1).join(" ");
         if (!q) { o(`  ${MUTED}Usage: search <query>${RESET}`); break; }
@@ -418,7 +888,7 @@ async function dispatch(input: string): Promise<boolean> {
       case "help": case "h": case "?": cmdHelp(); break;
       case "quit": case "q": case "exit": return false;
       default:
-        o(`  ${MUTED}Unknown: ${cmd}${RESET}`);
+        o(`  ${MUTED}Unknown: ${cmd} — type ${DIM}?${RESET}${MUTED} for help${RESET}`);
     }
   } catch (e: any) {
     o(`  ${RED}${e.message}${RESET}`);
@@ -427,7 +897,17 @@ async function dispatch(input: string): Promise<boolean> {
 }
 
 // ── Main ──
+
 async function main() {
+  // Load token map from registry
+  tokenMap = loadTokenMap();
+
+  // Resolve user token
+  let tok = resolveUserToken();
+  if (!tok) tok = await autoProvisionUser();
+  userToken.value = tok;
+  activeContext = { name: "user", token: tok, display: "" };
+
   const args = process.argv.slice(2);
 
   // One-shot mode
@@ -438,15 +918,22 @@ async function main() {
 
   // Interactive REPL
   blank();
-  o(`  ${BOLD}${BLUE}harness${RESET}  ${MUTED}v0.2${RESET}`);
+  o(`  ${BOLD}${BLUE}harness${RESET}  ${MUTED}v1.0${RESET}  ${DIM}${GRAY}${tokenMap.size} workers with tokens${RESET}`);
   blank();
 
   await cmdInbox();
 
+  function getPrompt(): string {
+    if (activeContext.name !== "user") {
+      return `  ${CYAN}${activeContext.name}${BLUE}>${RESET} `;
+    }
+    return `  ${BLUE}>${RESET} `;
+  }
+
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: `  ${BLUE}>${RESET} `,
+    prompt: getPrompt(),
     historySize: 100,
   });
 
@@ -455,6 +942,8 @@ async function main() {
   rl.on("line", async (line) => {
     const cont = await dispatch(line);
     if (!cont) { rl.close(); return; }
+    // Update prompt (context may have changed)
+    rl.setPrompt(getPrompt());
     rl.prompt();
   });
 
