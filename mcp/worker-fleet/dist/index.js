@@ -21134,10 +21134,13 @@ If you need specific details from before compaction (like exact code snippets, e
     const worktreeDir2 = getWorktreeDir();
     const rt2 = getWorkerRuntime();
     const resumeCmd = rt2.buildResumeCmd({ model: model2, permissionMode: "bypassPermissions", workerDir: workerDir2, sessionId: sessionId2 });
+    const resumeCmdFile = `/tmp/resume-cmd-${WORKER_NAME}-${Date.now()}.txt`;
+    writeFileSync(resumeCmdFile, `echo 'Continue from where you left off.' | ${resumeCmd}`);
     const reloadScript = `/tmp/reload-${WORKER_NAME}-${Date.now()}.sh`;
     writeFileSync(reloadScript, `#!/bin/bash
 set -uo pipefail
 PANE_ID="${ownPane.paneId}"
+RESUME_CMD_FILE="${resumeCmdFile}"
 sleep 3
 tmux send-keys -t "$PANE_ID" "${rt2.exitCommand}"
 tmux send-keys -t "$PANE_ID" -H 0d
@@ -21157,11 +21160,11 @@ sleep 2
 tmux send-keys -t "$PANE_ID" "cd ${worktreeDir2}"
 tmux send-keys -t "$PANE_ID" -H 0d
 sleep 1
-tmux set-buffer -b reload-cmd "echo 'Continue from where you left off.' | ${resumeCmd}"
-tmux paste-buffer -b reload-cmd -t "$PANE_ID"
+# Use load-buffer to avoid shell quoting issues with resume command
+tmux load-buffer -b "resume-$$" "$RESUME_CMD_FILE"
+tmux paste-buffer -b "resume-$$" -t "$PANE_ID" -d
 tmux send-keys -t "$PANE_ID" -H 0d
-tmux delete-buffer -b reload-cmd 2>/dev/null || true
-rm -f "${reloadScript}"
+rm -f "${reloadScript}" "$RESUME_CMD_FILE"
 `);
     execSync(`nohup bash "${reloadScript}" > /dev/null 2>&1 &`, { shell: "/bin/bash", timeout: 5000 });
     return {
@@ -21190,12 +21193,15 @@ If you need specific details from before compaction (like exact code snippets, e
   const effort = entry?.custom?.reasoning_effort;
   const agentLaunchCmd = rt.buildLaunchCmd({ model, permissionMode: permMode, disallowedTools: disallowed || undefined, workerDir, reasoningEffort: effort });
   const tuiPatternStr = rt.tuiReadyPattern.source;
+  const launchCmdFile = `/tmp/launch-cmd-${WORKER_NAME}-${Date.now()}.txt`;
+  writeFileSync(launchCmdFile, agentLaunchCmd);
   writeFileSync(recycleScript, `#!/bin/bash
 # Auto-generated recycle script for ${WORKER_NAME} (runtime: ${rt.type})
 set -uo pipefail
 PANE_ID="${ownPane.paneId}"
 PANE_TARGET="${ownPane.paneTarget}"
 SEED_FILE="${seedFile}"
+LAUNCH_CMD_FILE="${launchCmdFile}"
 
 # Wait for MCP tool response to propagate to TUI
 sleep 5
@@ -21226,8 +21232,11 @@ tmux send-keys -t "$PANE_ID" "cd ${worktreeDir}"
 tmux send-keys -t "$PANE_ID" -H 0d
 sleep 1
 
-# Launch agent
-tmux send-keys -t "$PANE_ID" "${agentLaunchCmd}"
+# Launch agent via tmux buffer (avoids shell quoting issues with parens in --disallowed-tools)
+LAUNCH_BUFFER="launch-${WORKER_NAME}-$$"
+tmux load-buffer -b "$LAUNCH_BUFFER" "$LAUNCH_CMD_FILE"
+tmux paste-buffer -b "$LAUNCH_BUFFER" -t "$PANE_ID" -d
+sleep 1
 tmux send-keys -t "$PANE_ID" -H 0d
 
 # Wait for TUI ready (poll for statusline, max 90s)
@@ -21246,7 +21255,7 @@ sleep 2
 tmux send-keys -t "$PANE_ID" -H 0d
 
 # Cleanup
-rm -f "${recycleScript}"
+rm -f "${recycleScript}" "$LAUNCH_CMD_FILE"
 `);
   try {
     execSync(`nohup bash "${recycleScript}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
