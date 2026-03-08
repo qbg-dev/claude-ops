@@ -14,6 +14,8 @@ source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null || true
 
 INPUT=$(cat)
 hook_parse_input "$INPUT"
+# Subagents don't have inboxes — let them stop freely
+_is_subagent && { hook_pass; exit 0; }
 
 # Find own pane + resolve worker identity
 OWN_PANE_ID=$(hook_find_own_pane 2>/dev/null || echo "")

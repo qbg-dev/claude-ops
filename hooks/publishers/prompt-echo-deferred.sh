@@ -21,6 +21,8 @@ DEBUG_LOG="$(_echo_logs_dir)/echo-hooks.log"
 log() { echo "[$(date -Iseconds)] SUBMIT: $1" >> "$DEBUG_LOG"; }
 
 INPUT=$(cat)
+# Subagents don't participate in echo chains
+echo "$INPUT" | jq -e '.agent_id // empty' &>/dev/null && exit 0
 log "Hook started"
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 if [[ -z "$SESSION_ID" ]]; then
@@ -41,10 +43,17 @@ find "$HARNESS_STATE_DIR/sessions" -name "echo-state.json" -mmin +120 -delete 2>
 # Uses perl for non-greedy XML-style matching (bash regex can't do this reliably)
 FULL_CHAIN=()
 
-while IFS= read -r line; do
+# Use null-delimited output so multi-line content stays as one item
+while IFS= read -r -d '' line; do
   [[ -z "$line" ]] && continue
-  REPEAT=$(echo "$line" | cut -d$'\t' -f1)
-  CONTENT=$(echo "$line" | cut -d$'\t' -f2-)
+  REPEAT=$(printf '%s' "$line" | head -1 | cut -d$'\t' -f1)
+  CONTENT=$(printf '%s' "$line" | head -1 | cut -d$'\t' -f2-)
+  # Re-attach remaining lines (content after the first line)
+  REST=$(printf '%s' "$line" | tail -n +2)
+  if [[ -n "$REST" ]]; then
+    CONTENT="${CONTENT}
+${REST}"
+  fi
   [[ -z "$REPEAT" ]] && REPEAT=1
   (( REPEAT > 10 )) && REPEAT=10
 
@@ -58,7 +67,7 @@ while IFS= read -r line; do
   done
 
   log "ECHO: repeat=$REPEAT, content='${CONTENT:0:80}'"
-done < <(printf '%s' "$PROMPT" | perl -0777 -ne 'while (/<echo(\d*)>\s*(.*?)\s*<\/echo\d*>/gsi) { print(($1 eq "" ? 1 : $1) . "\t" . $2 . "\n"); }')
+done < <(printf '%s' "$PROMPT" | perl -0777 -ne 'while (/<echo(\d*)>\s*(.*?)\s*<\/echo\d*>/gsi) { print(($1 eq "" ? 1 : $1) . "\t" . $2 . "\0"); }')
 
 # Build JSON array from FULL_CHAIN preserving newlines within items
 # Uses null-delimited printf + jq -Rs to avoid splitting on newlines

@@ -325,13 +325,28 @@ worker_pane_register() {
 # Replaces 5 inline copies of 6-8 line pane detection across hooks.
 hook_find_own_pane() {
   local search_pid=${1:-$$}
+  # Per-session cache (5 min TTL) — avoids 3x process-tree walks per tool call
+  local _cache="$HARNESS_STATE_DIR/sessions/${_HOOK_SESSION_ID:-unknown}/pane-cache"
+  if [ -f "$_cache" ]; then
+    local _cached_pane _cached_ts
+    read -r _cached_pane _cached_ts < "$_cache" 2>/dev/null || true
+    local _now; _now=$(date +%s)
+    if [ $((_now - ${_cached_ts:-0})) -lt 300 ]; then
+      echo "$_cached_pane"; return
+    fi
+  fi
   local pane_map
   pane_map=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null)
   [ -z "$pane_map" ] && return
   while [ "$search_pid" -gt 1 ]; do
     local match
     match=$(echo "$pane_map" | awk -v pid="$search_pid" '$1 == pid {print $2; exit}')
-    [ -n "$match" ] && echo "$match" && return
+    if [ -n "$match" ]; then
+      # Cache the result
+      mkdir -p "$(dirname "$_cache")" 2>/dev/null || true
+      echo "$match $(date +%s)" > "$_cache" 2>/dev/null || true
+      echo "$match"; return
+    fi
     search_pid=$(ps -o ppid= -p "$search_pid" 2>/dev/null | tr -d ' ')
   done
 }
@@ -371,6 +386,10 @@ hook_parse_input() {
   _HOOK_AGENT_ID=$(echo "$input" | jq -r '.agent_id // ""' 2>/dev/null || echo "")
   _HOOK_AGENT_TYPE=$(echo "$input" | jq -r '.agent_type // ""' 2>/dev/null || echo "")
 }
+
+# Fast subagent detection — true when hook fires inside a subagent context.
+# Use after hook_parse_input: `_is_subagent && { hook_pass; exit 0; }`
+_is_subagent() { [ -n "${_HOOK_AGENT_ID:-}" ]; }
 
 # Emit a block decision as JSON. Replaces python3 json.dumps({'decision':'block',...}).
 # Also publishes stop.blocked event to bus if event-bus.sh is sourced.

@@ -19,6 +19,8 @@ DEBUG_LOG="$(_echo_logs_dir)/echo-hooks.log"
 log() { echo "[$(date -Iseconds)] STOP: $1" >> "$DEBUG_LOG"; }
 
 INPUT=$(cat)
+# Subagents don't participate in echo chains
+echo "$INPUT" | jq -e '.agent_id // empty' &>/dev/null && exit 0
 log "Stop hook started"
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 if [[ -z "$SESSION_ID" ]]; then

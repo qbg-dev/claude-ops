@@ -20,6 +20,8 @@ INPUT=$(cat)
 
 # Parse session ID
 hook_parse_input "$INPUT"
+# Subagents stop freely — they return results to their parent
+_is_subagent && { hook_pass; exit 0; }
 SESSION_ID="$_HOOK_SESSION_ID"
 [ -z "$SESSION_ID" ] && { hook_pass; exit 0; }
 

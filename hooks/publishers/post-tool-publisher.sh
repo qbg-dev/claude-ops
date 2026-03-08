@@ -11,6 +11,8 @@ source "$HOME/.claude-ops/lib/pane-resolve.sh"
 source "$HOME/.claude-ops/lib/event-bus.sh"
 
 hook_parse_input "$INPUT"
+# Subagent tool traces are noise — lifecycle hooks capture the aggregate
+_is_subagent && { echo '{}'; exit 0; }
 SESSION_ID="$_HOOK_SESSION_ID"
 TOOL_NAME="$_HOOK_TOOL_NAME"
 

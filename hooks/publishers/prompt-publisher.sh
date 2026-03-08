@@ -14,6 +14,8 @@ INPUT=$(cat)
 
 # Parse core fields
 hook_parse_input "$INPUT"
+# Subagent "prompts" are Agent tool tasks, not user prompts — skip publishing
+_is_subagent && { echo '{}'; exit 0; }
 SESSION_ID="$_HOOK_SESSION_ID"
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty' 2>/dev/null)
 CWD=$(echo "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)

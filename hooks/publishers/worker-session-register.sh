@@ -17,6 +17,8 @@ GIT_FILE=$(git rev-parse --git-dir 2>/dev/null || echo "")
 [ -f "$GIT_FILE" ] || exit 0  # flat workers are worktrees — .git is a FILE, not a dir
 
 INPUT=$(cat)
+# Subagents share parent's session — already registered
+echo "$INPUT" | jq -e '.agent_id // empty' &>/dev/null && exit 0
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
 [ -z "$SESSION_ID" ] && exit 0
 
