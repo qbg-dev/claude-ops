@@ -8,7 +8,6 @@
 #   export SIDECAR_NAME="mod-customer" PROJECT_ROOT="/path/to/project"
 #   source ~/.claude-ops/lib/worker-dispatch.sh
 #   worker_discover
-#   worker_launch "miniapp-ux-v2"
 #   worker_health "miniapp-ux-v2"
 #
 # Dependencies:
@@ -167,96 +166,6 @@ worker_discover() {
   _parse_workers_json "$harness_dir"
 }
 
-# worker_launch — Idempotent: launch worker if not running, skip if alive.
-# Usage: worker_launch <name> [model] [--monitor] [--mode MODE] [--allowed-tools CSV]
-# Sets WORKER_PANE on success.
-worker_launch() {
-  local worker="${1:?Usage: worker_launch <name> [model] [--monitor]}"
-  local model="${2:-$WORKER_DEFAULT_MODEL}"
-  local with_monitor=false
-  local launch_mode="bypassPermissions"
-  local allowed_tools_csv=""
-  shift 2 2>/dev/null || true
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --monitor) with_monitor=true; shift ;;
-      --mode) launch_mode="$2"; shift 2 ;;
-      --allowed-tools) allowed_tools_csv="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-
-  local sidecar="${SIDECAR_NAME:?SIDECAR_NAME must be set}"
-  local project="${PROJECT_ROOT:?PROJECT_ROOT must be set}"
-
-  # Per-worker launch lock
-  local lockdir="$HARNESS_LOCK_DIR/worker-launch-$worker"
-  _lock "$lockdir"
-
-  # Check if already running
-  local existing_pane
-  existing_pane=$(_find_worker_pane "$worker") || true
-  if [ -n "$existing_pane" ] && _is_claude_alive_in_pane "$existing_pane"; then
-    WORKER_PANE="$existing_pane"
-    export WORKER_PANE
-    _unlock "$lockdir"
-    worker_sync_state "$worker" "alive"
-    echo "ALREADY_RUNNING|$existing_pane"
-    return 0
-  fi
-
-  # Verify seed script exists
-  local seed_script="$project/.claude/scripts/${worker}-seed.sh"
-  if [ ! -f "$seed_script" ]; then
-    _unlock "$lockdir"
-    echo "ERROR: No seed script for worker: $seed_script" >&2
-    return 1
-  fi
-
-  # Resolve claude command from model string + permission mode
-  local resolved_model chrome_flag=""
-  case "$model" in
-    cdo|cdoc|opus) resolved_model="opus"; chrome_flag="--chrome" ;;
-    cds|sonnet)    resolved_model="sonnet"; chrome_flag="--chrome" ;;
-    cdh|haiku)     resolved_model="haiku" ;;
-    *)             resolved_model="$model" ;;
-  esac
-
-  local claude_cmd
-  if [ "$launch_mode" = "bypassPermissions" ]; then
-    claude_cmd="claude --dangerously-skip-permissions --model $resolved_model${chrome_flag:+ $chrome_flag}"
-  elif [ -n "$allowed_tools_csv" ]; then
-    # mode=default with explicit allowed tools → least-privilege
-    claude_cmd="claude --model $resolved_model --allowedTools '$allowed_tools_csv'${chrome_flag:+ $chrome_flag}"
-  else
-    # mode=default without allowed tools → will prompt for every tool use
-    claude_cmd="claude --model $resolved_model${chrome_flag:+ $chrome_flag}"
-  fi
-
-  # Use idempotent flag so harness_launch returns 0 if already running
-  export WORKER_DISPATCH_IDEMPOTENT=true
-  export CLAUDE_CMD="$claude_cmd"
-
-  # TODO: worker_launch() is unused — watchdog uses launch-flat-worker.sh directly
-  echo "ERROR: worker_launch() is deprecated. Use launch-flat-worker.sh instead." >&2
-  _unlock "$lockdir"
-  return 1
-
-  local launch_args=("$worker" "$project")
-  [ "$with_monitor" = true ] && launch_args+=(--monitor)
-
-  if harness_launch "${launch_args[@]}"; then
-    _unlock "$lockdir"
-    worker_sync_state "$worker" "alive"
-    echo "LAUNCHED|${WORKER_PANE:-unknown}"
-    return 0
-  else
-    _unlock "$lockdir"
-    echo "ERROR: Failed to launch worker: $worker" >&2
-    return 1
-  fi
-}
-
 # worker_health — Returns alive|dead|no_pane|idle + pane target.
 # Output: status|pane_target
 worker_health() {
@@ -299,75 +208,6 @@ worker_health_all() {
     IFS='|' read -r w_status w_pane <<< "$health"
     echo "$name|$w_status|$w_pane"
   done
-}
-
-# worker_send_message — Send a signed tmux message to a worker.
-# LEGACY WRAPPER: Now routes through outbox via worker_send().
-# Usage: worker_send_message <name> <type> <content>
-# Types: REGRESSION, TASK, CONTEXT, PERMISSION
-worker_send_message() {
-  local worker="${1:?Usage: worker_send_message <name> <type> <content>}"
-  local msg_type="${2:?Usage: worker_send_message <name> <type> <content>}"
-  local content="${3:?Usage: worker_send_message <name> <type> <content>}"
-  worker_send "$worker" urgent "$msg_type: $content"
-}
-
-# worker_inject_context — Write to worker's policy.json → inject.tool_context.
-# LEGACY WRAPPER: Now routes through outbox via worker_send().
-# Usage: worker_inject_context <name> <key> <text>
-worker_inject_context() {
-  local worker="${1:?Usage: worker_inject_context <name> <key> <text>}"
-  local key="${2:?Usage: worker_inject_context <name> <key> <text>}"
-  local text="${3:?Usage: worker_inject_context <name> <key> <text>}"
-  local sidecar="${SIDECAR_NAME:?SIDECAR_NAME must be set}"
-  # Atomic write to policy.json + bus observability event
-  local tagged="[SIDECAR:${sidecar}] ${text}"
-  harness_inject_policy "$worker" "tool_context" "$key" "$tagged" "always"
-}
-
-# worker_inject_journal — v3: routes to worker's inbox.jsonl via worker_send().
-# No journal.md in v3. Kept for API compatibility.
-# Usage: worker_inject_journal <name> <text>
-worker_inject_journal() {
-  local worker="${1:?Usage: worker_inject_journal <name> <text>}"
-  local text="${2:?Usage: worker_inject_journal <name> <text>}"
-  # v3: send as directive to inbox (materialized by bus side-effects)
-  worker_send "$worker" directive "$text"
-}
-
-# worker_add_task — Add task to worker's progress.json (idempotent).
-# LEGACY WRAPPER: Now routes through outbox via worker_send().
-# Usage: worker_add_task <name> <task_id> <desc> [blocked_by]
-# blocked_by: comma-separated task IDs (optional)
-worker_add_task() {
-  local worker="${1:?Usage: worker_add_task <name> <task_id> <desc> [blocked_by]}"
-  local task_id="${2:?Usage: worker_add_task <name> <task_id> <desc> [blocked_by]}"
-  local desc="${3:?Usage: worker_add_task <name> <task_id> <desc> [blocked_by]}"
-  local blocked_by="${4:-}"
-  local sidecar="${SIDECAR_NAME:?SIDECAR_NAME must be set}"
-  local project="${PROJECT_ROOT:?PROJECT_ROOT must be set}"
-  local progress
-  progress=$(harness_progress_path "$worker" "$project")
-  # Idempotent check — if task exists, report and skip
-  if [ -n "$progress" ] && [ -f "$progress" ]; then
-    local existing
-    existing=$(jq -r --arg tid "$task_id" '.tasks[$tid].status // empty' "$progress" 2>/dev/null)
-    if [ -n "$existing" ]; then
-      echo "EXISTS|$worker|$task_id"
-      return 0
-    fi
-  fi
-  # Outbox-first: queue for router
-  worker_send "$worker" task "$task_id" "$desc" "$blocked_by"
-  # Direct write for immediate effect (backward compat)
-  if [ -n "$progress" ] && [ -f "$progress" ]; then
-    local blocked_json="[]"
-    [ -n "$blocked_by" ] && blocked_json=$(echo "$blocked_by" | tr ',' '\n' | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
-    local tmp="${progress}.tmp.$$"
-    jq --arg tid "$task_id" --arg d "$desc" --argjson bb "$blocked_json" --arg cb "$sidecar" \
-      '.tasks[$tid] = {"status":"pending","description":$d,"blockedBy":$bb,"metadata":{"created_by":$cb}}' \
-      "$progress" > "$tmp" 2>/dev/null && mv "$tmp" "$progress"
-  fi
 }
 
 # worker_read_progress — Read worker's task graph summary.

@@ -13,9 +13,7 @@
 #
 # Delivery is two-layer:
 #   1. Instant  — tmux send-keys (best-effort, fires even if bus unavailable)
-#   2. Durable  — bus_publish "cell-message" → side-effects:
-#                   notify_assignee  → recipient's inbox.jsonl (survives worker sleep)
-#                   append_outbox    → sender's outbox.jsonl (audit trail)
+#   2. Durable  — bus_publish "cell-message" → notify_assignee side-effect
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

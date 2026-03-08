@@ -28,6 +28,7 @@ import {
 import { join, basename } from "path";
 import { execSync, spawnSync, spawn } from "child_process";
 import { randomUUID } from "crypto";
+import { acquireLock, releaseLock } from "../shared/lock-utils.js";
 
 // ── Configuration ────────────────────────────────────────────────────
 const HOME = process.env.HOME!;
@@ -378,29 +379,7 @@ function lintRegistry(registry: ProjectRegistry): DiagnosticIssue[] {
   return issues;
 }
 
-/** mkdir-based spinlock matching fleet-jq.sh convention */
-function acquireLock(lockPath: string, maxWaitMs = 10_000): boolean {
-  const start = Date.now();
-  while (true) {
-    try {
-      mkdirSync(lockPath, { recursive: false });
-      return true;
-    } catch {
-      if (Date.now() - start > maxWaitMs) {
-        try { rmSync(lockPath, { recursive: true, force: true }); } catch {}
-        try { mkdirSync(lockPath, { recursive: false }); return true; } catch {}
-        return false;
-      }
-      // Synchronous 100ms sleep without spawning a subprocess
-      // (Bun runtime provides sleepSync; globalThis cast avoids tsc error without bun-types)
-      (globalThis as any).Bun.sleepSync(100);
-    }
-  }
-}
-
-function releaseLock(lockPath: string) {
-  try { rmSync(lockPath, { recursive: true, force: true }); } catch {}
-}
+// acquireLock + releaseLock imported from ../shared/lock-utils.ts
 
 // ── Task CRUD Helpers ────────────────────────────────────────────────
 

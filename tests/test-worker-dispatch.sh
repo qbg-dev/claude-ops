@@ -192,95 +192,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 4: Context injection writes valid JSON ───────────────
-worker_inject_context "worker-alpha" "test-key" "test context value" > /dev/null
-
-TOTAL=$((TOTAL + 1))
-POLICY="$TMPDIR/.claude/harness/worker-alpha/policy.json"
-if jq empty "$POLICY" 2>/dev/null; then
-  echo -e "  ${GREEN}PASS${RESET} Context injection: policy.json is valid JSON"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Context injection: policy.json is invalid JSON"
-  FAIL=$((FAIL + 1))
-fi
-
-# Test that the key was actually injected
-TOTAL=$((TOTAL + 1))
-INJECTED_VAL=$(jq -r '.inject.tool_context["test-key"].inject // empty' "$POLICY")
-if echo "$INJECTED_VAL" | grep -q "test context value"; then
-  echo -e "  ${GREEN}PASS${RESET} Context injection: key present with correct value"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Context injection: key not found or wrong value"
-  echo "    got: $INJECTED_VAL"
-  FAIL=$((FAIL + 1))
-fi
-
-# ── Test 5: Task creation in worker's progress.json ───────────
-worker_add_task "worker-alpha" "sidecar-task-1" "Test task from sidecar" > /dev/null
-
-TOTAL=$((TOTAL + 1))
-PROGRESS="$TMPDIR/.claude/harness/worker-alpha/tasks.json"
-TASK_STATUS=$(jq -r '.tasks["sidecar-task-1"].status // empty' "$PROGRESS")
-if [ "$TASK_STATUS" = "pending" ]; then
-  echo -e "  ${GREEN}PASS${RESET} Task creation: task appears in progress.json"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Task creation: task not found (status=$TASK_STATUS)"
-  FAIL=$((FAIL + 1))
-fi
-
-# Verify metadata
-TOTAL=$((TOTAL + 1))
-CREATED_BY=$(jq -r '.tasks["sidecar-task-1"].metadata.created_by // empty' "$PROGRESS")
-if [ "$CREATED_BY" = "$SIDECAR_NAME_TEST" ]; then
-  echo -e "  ${GREEN}PASS${RESET} Task creation: metadata has correct created_by"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Task creation: created_by=$CREATED_BY, expected $SIDECAR_NAME_TEST"
-  FAIL=$((FAIL + 1))
-fi
-
-# ── Test 6: Task creation is idempotent ───────────────────────
-TOTAL=$((TOTAL + 1))
-RESULT=$(worker_add_task "worker-alpha" "sidecar-task-1" "Duplicate attempt")
-if echo "$RESULT" | grep -q "EXISTS"; then
-  echo -e "  ${GREEN}PASS${RESET} Task creation: idempotent (duplicate returns EXISTS)"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Task creation: idempotent check failed ($RESULT)"
-  FAIL=$((FAIL + 1))
-fi
-
-# ── Test 7: Task creation with blockedBy ──────────────────────
-worker_add_task "worker-alpha" "sidecar-task-2" "Blocked task" "task-1,task-2" > /dev/null
-
-TOTAL=$((TOTAL + 1))
-BLOCKED=$(jq -r '.tasks["sidecar-task-2"].blockedBy | join(",")' "$PROGRESS")
-if [ "$BLOCKED" = "task-1,task-2" ]; then
-  echo -e "  ${GREEN}PASS${RESET} Task creation: blockedBy correctly set"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Task creation: blockedBy=$BLOCKED, expected task-1,task-2"
-  FAIL=$((FAIL + 1))
-fi
-
-# ── Test 8: worker_inject_journal routes directive to outbox (v3) ────────────
-# In v3, worker_inject_journal routes via worker_send → outbox.jsonl (not journal.md).
-worker_inject_journal "worker-alpha" "Please fix the regression in the billing module." > /dev/null
-
-TOTAL=$((TOTAL + 1))
-OUTBOX="$TMPDIR/.claude/harness/$SIDECAR_NAME_TEST/outbox.jsonl"
-if [ -f "$OUTBOX" ] && jq -e 'select(.type == "directive" and .to == "worker-alpha")' "$OUTBOX" > /dev/null 2>&1; then
-  echo -e "  ${GREEN}PASS${RESET} Journal append: directive queued in sidecar outbox"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Journal append: directive not found in outbox ($OUTBOX)"
-  FAIL=$((FAIL + 1))
-fi
-
-# ── Test 9: State sync updates sidecar's workers[] ────────────
+# ── Test 4: State sync updates sidecar's workers[] ────────────
 worker_sync_state "worker-alpha" "alive"
 
 TOTAL=$((TOTAL + 1))
@@ -360,17 +272,6 @@ if [ "$SOLO_COUNT" -eq 1 ]; then
   PASS=$((PASS + 1))
 else
   echo -e "  ${RED}FAIL${RESET} JSON parser: expected 1 worker, got $SOLO_COUNT"
-  FAIL=$((FAIL + 1))
-fi
-
-# ── Test 15: Context injection includes sidecar attribution ───
-TOTAL=$((TOTAL + 1))
-if echo "$INJECTED_VAL" | grep -q "\[SIDECAR:$SIDECAR_NAME_TEST\]"; then
-  echo -e "  ${GREEN}PASS${RESET} Context injection: includes sidecar attribution"
-  PASS=$((PASS + 1))
-else
-  echo -e "  ${RED}FAIL${RESET} Context injection: missing sidecar attribution"
-  echo "    got: $INJECTED_VAL"
   FAIL=$((FAIL + 1))
 fi
 

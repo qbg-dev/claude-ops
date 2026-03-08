@@ -194,10 +194,8 @@ if [ -n "$BUS_PAYLOAD" ]; then
   }
 fi
 
-# ── Worker → coordinator notification handled by bus side-effect ───────
-# worker-prompt-notify.sh is registered in schema.json for the "prompt" event type.
-# It fires automatically when the harness field in the bus event is a worker canonical
-# (contains "/"), e.g. "hq-v3/ui-patrol". No inline code needed here.
+# ── Worker → coordinator notification ─────────────────────────────────
+# Prompt events are trace-only in schema v4 (no side-effects).
 
 # ── Always return pass-through ─────────────────────────────────────────
 echo '{}'

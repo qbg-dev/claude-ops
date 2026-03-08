@@ -2,8 +2,7 @@
 # worker-bus-emit.sh — Emit structured worker messages to the event bus.
 #
 # Workers call this to send status updates, deploy requests, blockers, etc.
-# Messages appear on the bus as `worker.message` events and get materialized
-# into per-worker outbox files by worker-outbox-sync.sh.
+# Messages appear on the bus as `worker.message` events.
 #
 # Usage:
 #   bash worker-bus-emit.sh <msg_type> <message> [--severity info|warning|urgent]

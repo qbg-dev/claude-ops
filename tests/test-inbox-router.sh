@@ -13,10 +13,7 @@
 #   9. Inbox-router resolves tag-based targets
 #  10. worker_send() appends to outbox
 #  11. harness_note() appends broadcast to outbox
-#  12. Legacy wrapper worker_inject_context() → worker_send
-#  13. Legacy wrapper worker_add_task() → worker_send
-#  14. Legacy wrapper worker_inject_journal() → worker_send
-#  15. Legacy wrapper worker_send_message() → worker_send
+#  12-15. (Legacy wrappers removed — deprecated functions deleted)
 #  16. Context-injector inbox scan (reads inbox.jsonl)
 #  17. Context-injector acceptance summary
 #  18. Context-injector file-edit aggregation from other harnesses
@@ -428,84 +425,7 @@ test_route_directive_to_journal
 # TEST SUITE 3: Legacy Wrapper Backward Compatibility
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "=== Suite 3: Legacy Wrapper Backward Compatibility ==="
-
-test_legacy_inject_context() {
-  setup_test_env
-  export SIDECAR_NAME="test-sidecar"
-  mkdir -p "$PROJECT_ROOT/.claude/harness/test-sidecar"
-  touch "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl"
-  source "$SCRIPT_DIR/lib/worker-dispatch.sh"
-
-  local result
-  result=$(worker_inject_context "test-harness" "my-key" "my value" 2>/dev/null)
-  assert_contains "$result" "QUEUED" "21. Legacy worker_inject_context routes through worker_send"
-
-  local outbox
-  outbox=$(cat "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl")
-  assert_contains "$outbox" '"type": "context"' "22. Legacy wrapper generates context type"
-
-  cleanup_test_env
-}
-
-test_legacy_add_task() {
-  setup_test_env
-  export SIDECAR_NAME="test-sidecar"
-  mkdir -p "$PROJECT_ROOT/.claude/harness/test-sidecar"
-  touch "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl"
-  source "$SCRIPT_DIR/lib/worker-dispatch.sh"
-
-  local result
-  result=$(worker_add_task "test-harness" "task-1" "Do something" 2>/dev/null)
-  assert_contains "$result" "QUEUED" "23. Legacy worker_add_task routes through worker_send"
-
-  local outbox
-  outbox=$(cat "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl")
-  assert_contains "$outbox" '"type": "task"' "24. Legacy wrapper generates task type"
-
-  cleanup_test_env
-}
-
-test_legacy_inject_journal() {
-  setup_test_env
-  export SIDECAR_NAME="test-sidecar"
-  mkdir -p "$PROJECT_ROOT/.claude/harness/test-sidecar"
-  touch "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl"
-  source "$SCRIPT_DIR/lib/worker-dispatch.sh"
-
-  local result
-  result=$(worker_inject_journal "test-harness" "Some directive" 2>/dev/null)
-  assert_contains "$result" "QUEUED" "25. Legacy worker_inject_journal routes through worker_send"
-
-  local outbox
-  outbox=$(cat "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl")
-  assert_contains "$outbox" '"type": "directive"' "26. Legacy wrapper generates directive type"
-
-  cleanup_test_env
-}
-
-test_legacy_send_message() {
-  setup_test_env
-  export SIDECAR_NAME="test-sidecar"
-  mkdir -p "$PROJECT_ROOT/.claude/harness/test-sidecar"
-  touch "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl"
-  source "$SCRIPT_DIR/lib/worker-dispatch.sh"
-
-  local result
-  result=$(worker_send_message "test-harness" "REGRESSION" "Dashboard broken" 2>/dev/null)
-  assert_contains "$result" "QUEUED" "27. Legacy worker_send_message routes through worker_send"
-
-  local outbox
-  outbox=$(cat "$PROJECT_ROOT/.claude/harness/test-sidecar/outbox.jsonl")
-  assert_contains "$outbox" '"type": "urgent"' "28. Legacy wrapper generates urgent type"
-
-  cleanup_test_env
-}
-
-test_legacy_inject_context
-test_legacy_add_task
-test_legacy_inject_journal
-test_legacy_send_message
+echo "=== Suite 3: (Legacy wrappers removed — deprecated functions deleted) ==="
 
 # ═══════════════════════════════════════════════════════════════
 # TEST SUITE 4: Context-Injector (Inbox + Acceptance + File-Edits)

@@ -32,9 +32,7 @@ PROJECT_ROOT="${BUS_DIR%/.claude/bus}"
 WORKERS_DIR="$PROJECT_ROOT/.claude/workers"
 LATEST_FILE="$WORKERS_DIR/.outbox-latest.jsonl"
 
-# Also run a sync pass first to catch any new events
-SYNC_SCRIPT="${CLAUDE_OPS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-ops}}/scripts/worker-outbox-sync.sh"
-[ -f "$SYNC_SCRIPT" ] && bash "$SYNC_SCRIPT" --once 2>/dev/null || true
+# Outbox sync removed (v4 — side-effects handle routing directly)
 
 # ── Parse args ────────────────────────────────────────────────────
 SINCE="1h"

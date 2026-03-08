@@ -77,12 +77,9 @@ When `bus_publish "task.completed" ...` is called, `update_tasks_json.sh` and `n
 | `update_tasks_json.sh` | `task.started`, `task.completed` | Updates `tasks.json` status |
 | `notify_assignee.sh` | messages, task events | Writes to recipient's `inbox.jsonl` |
 | `notify_tmux_if_urgent.sh` | urgent events | Sends tmux notification to agent pane |
-| `inject_directive_if_flagged.sh` | `cell-message` | Flags inbox message for PreToolUse injection |
-| `append_outbox.sh` | `file-edit`, `agent.policy-appended` | Appends to agent's `outbox.jsonl` |
-| `sync_harness_inbox.sh` | `prompt` | Scans outboxes; routes file-edit warnings to affected agents |
+| `notify_chief_of_staff.sh` | `worker.commit` | Notifies chief-of-staff on worker commits |
 | `notify_human_agent.sh` | `notification`, `deploy`, `config-change` | Calls `terminal-notifier` or prints alert |
 | `dlq_if_critical.sh` | `error` | Writes to DLQ if `critical: true` |
-| `worker-prompt-notify.sh` | `prompt` | Notifies worker harness on user prompt |
 
 ## Consumer API
 
@@ -151,14 +148,15 @@ bus_compact
 
 | Type | Side-effects | Payload fields |
 |------|-------------|----------------|
-| `cell-message` | notify_assignee, notify_tmux_if_urgent, inject_directive_if_flagged | `from`, `to`, `body` |
-| `announcement` | notify_assignee, inject_directive_if_flagged, notify_tmux_if_urgent | `from`, `body`, `priority` |
+| `cell-message` | notify_assignee, notify_tmux_if_urgent | `from`, `to`, `body` |
+| `announcement` | notify_assignee, notify_tmux_if_urgent | `from`, `body`, `priority` |
 | `task.started` | update_tasks_json | `harness`, `worker`, `task_id` |
 | `task.completed` | update_tasks_json, notify_assignee | `harness`, `worker`, `task_id`, `summary` |
 | `worker.started` | notify_assignee | `harness`, `worker`, `task_id` |
+| `worker.commit` | notify_chief_of_staff | `worker`, `sha`, `message` |
 | `worker.regression` | notify_assignee, notify_tmux_if_urgent | `harness`, `worker`, `details` |
-| `prompt` | sync_harness_inbox, worker-prompt-notify | `session_id`, `harness`, `text` |
-| `file-edit` | append_outbox | `agent`, `file`, `harness` |
+| `prompt` | _(none)_ | `session_id`, `harness`, `text` |
+| `file-edit` | _(none)_ | `agent`, `file`, `harness` |
 | `deploy` | notify_human_agent | `agent`, `service`, `target` |
 | `error` | dlq_if_critical | `agent`, `message`, `critical?` |
 | `notification` | notify_human_agent | `message`, `title?`, `url?` |

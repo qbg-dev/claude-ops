@@ -5,7 +5,7 @@
 #   - harness-gc.sh pane-registry cleanup (replaces session-registry)
 #   - seed template: RECORD section, no journal.md writes
 #   - hq_send function signature and bus publishing
-#   - worker_inject_journal routes to worker_send
+#   - (legacy wrappers removed — deprecated functions deleted)
 #
 # Usage:
 #   bash ~/.claude-ops/tests/test-v3-rearchitecture.sh
@@ -240,24 +240,15 @@ assert_equals "hq_send CONTENT is correct" "cycle 4 done" "$CONTENT"
 rm -rf "$TMP_DIR"
 
 # ════════════════════════════════════════════════════════════════
-# 6. worker_inject_journal routes to worker_send
+# 6. worker-dispatch.sh syntax check (legacy wrappers removed)
 # ════════════════════════════════════════════════════════════════
 echo ""
-echo "── worker_inject_journal (v3 routing) ──"
+echo "── worker-dispatch.sh (syntax check) ──"
 
 WD="$HOME/.claude-ops/lib/worker-dispatch.sh"
 assert_file_exists "worker-dispatch exists" "$WD"
 bash -n "$WD" 2>/dev/null
 assert_equals "worker-dispatch syntax OK" "0" "$?"
-
-# Verify worker_inject_journal calls worker_send, not direct journal.md write
-assert_file_contains "inject_journal calls worker_send" "$WD" 'worker_send "$worker" directive'
-
-# Verify no direct journal.md write in inject_journal
-# Extract the function body and check for journal.md
-FUNC_BODY=$(sed -n '/^worker_inject_journal()/,/^}/p' "$WD" 2>/dev/null || echo "")
-JOURNAL_IN_FUNC=$(echo "$FUNC_BODY" | grep -c 'journal.md' 2>/dev/null; true)
-assert_equals "inject_journal has no journal.md reference" "0" "$JOURNAL_IN_FUNC"
 
 # ════════════════════════════════════════════════════════════════
 # 7. agent-architecture.md design doc consistency

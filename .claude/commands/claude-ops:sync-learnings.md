@@ -78,7 +78,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 **Scripts (claude-ops/scripts/):**
 - `harness-watchdog.sh` — watchdog detection, respawn logic, seed injection
-- `check-flat-workers.sh` — fleet status display
+- `fleet-health.sh` — fleet status + health check
 - `launch-flat-worker.sh` — worker launch with registration
 - `worker-commit.sh` — worker git commit helper
 - `pre-compact.sh` — context compaction

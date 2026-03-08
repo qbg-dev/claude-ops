@@ -95,8 +95,7 @@ It checks every 30s: respawns graceful stops after `sleep_duration`, respawns cr
 ## Fleet Operations
 
 ```bash
-bash ~/.claude-ops/scripts/check-flat-workers.sh   # fleet status table
-bash ~/.claude-ops/scripts/fleet-health.sh          # quick health check
+bash ~/.claude-ops/scripts/fleet-health.sh          # fleet status + health check
 ```
 
 From inside any worker: `fleet_status()`, `read_inbox()`, `send_message(to, content)`.

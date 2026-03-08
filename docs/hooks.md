@@ -87,7 +87,7 @@ A side-effect of PreToolUse: if the agent resumes after the Stop hook wrote a `g
 
 Fires after every tool call. Publishes observability events to the event bus.
 
-- **File edits** (`Write`, `Edit`, `NotebookEdit`): publishes `file-edit` event. Triggers `append_outbox.sh` side-effect, which writes to the harness's `outbox.jsonl`. Other harnesses' PreToolUse scans this to detect cross-harness file conflicts.
+- **File edits** (`Write`, `Edit`, `NotebookEdit`): publishes `file-edit` event for telemetry.
 - **Tool calls** (`Bash`, `Read`, etc.): publishes `tool-call` event for telemetry.
 
 ## Stop — Harness Gate
@@ -159,9 +159,7 @@ The dispatcher sources five modules:
 
 Fires when the user submits a prompt. Publishes a `prompt` event to the bus with the session ID, harness name, and prompt text.
 
-Side-effects:
-- `sync_harness_inbox.sh` — scans all harness outboxes and routes file-edit warnings to affected agents' inboxes
-- `worker-prompt-notify.sh` — if this session is a worker (canonical contains `/`), notifies the coordinator
+Publishes a trace-only `prompt` event (no side-effects in schema v4).
 
 ## Authoring Custom Hooks
 

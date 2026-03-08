@@ -71,7 +71,7 @@
     },
     "announcement": {
       "description": "Broadcast-style message to agent or group.",
-      "side_effects": ["notify_assignee", "notify_tmux_if_urgent", "append_outbox"]
+      "side_effects": ["notify_assignee", "notify_tmux_if_urgent"]
     },
     "task.started": {
       "description": "Worker started an assigned task.",

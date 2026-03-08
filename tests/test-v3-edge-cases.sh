@@ -427,7 +427,7 @@ assert_equals "all $SE_COUNT side-effects valid syntax" "$SE_COUNT" "$SE_SYNTAX_
 assert_equals "all $SE_COUNT side-effects executable" "$SE_COUNT" "$SE_EXEC_OK"
 
 # Specific side-effects exist
-for se in sync_harness_inbox update_tasks_json append_outbox notify_assignee notify_tmux_if_urgent; do
+for se in update_tasks_json notify_assignee notify_tmux_if_urgent; do
   if [ -f "$SE_DIR/${se}.sh" ]; then
     assert_equals "side-effect $se exists" "yes" "yes"
   else

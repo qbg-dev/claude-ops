@@ -1306,12 +1306,10 @@ harness_list_all() {
 # Usage: hq_send FROM TO TYPE CONTENT [PRIORITY]
 #
 # Publishes a cell-message event to the bus. Side-effects (defined in schema.json):
-#   1. notify_assignee      — writes to TO's inbox.jsonl (supports module/worker slash)
-#   2. audit_sender         — writes to FROM's outbox.jsonl
-#   3. notify_tmux_if_urgent — sends tmux send-keys to TO's pane (when PRIORITY=urgent)
-#   4. inject_directive_if_flagged — appends to TO's MEMORY.md (when TYPE=directive)
+#   1. notify_assignee       — writes to TO's inbox.jsonl (supports module/worker slash)
+#   2. notify_tmux_if_urgent — sends tmux send-keys to TO's pane (when PRIORITY=urgent)
 #
-# No direct inbox/outbox writes — all routing handled by bus side-effects.
+# No direct inbox writes — all routing handled by bus side-effects.
 #
 # Example:
 #   hq_send "hq-v2" "mod-customer" "task" "Start probing criterion 2.1" "urgent"
