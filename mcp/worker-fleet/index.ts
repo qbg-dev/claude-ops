@@ -1453,8 +1453,21 @@ server.registerTool(
     resume: z.boolean().optional().describe("If true, hot-restart: resume the same session (keeps conversation history, reloads MCP/model config). If false (default), cold-restart with a fresh seed"),
     force: z.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle"),
     sleep_seconds: z.number().optional().describe("Override sleep_duration for this recycle only. The watchdog will respawn after this many seconds. 0 = immediate restart (no sleep). Only applies to perpetual workers"),
+    cancel: z.boolean().optional().describe("If true, cancel a pending sleep timer (clears status=sleeping). Use when you realize you have more work and don't need to restart yet"),
   } },
-  async ({ message, resume, force, sleep_seconds }) => {
+  async ({ message, resume, force, sleep_seconds, cancel }) => {
+    // 0a. Cancel mode — abort a pending sleep timer
+    if (cancel) {
+      withRegistryLocked((registry) => {
+        const w = registry[WORKER_NAME] as RegistryWorkerEntry;
+        if (w && w.status === "sleeping") {
+          w.status = "active";
+          if (w.custom) w.custom.sleep_until = null;
+        }
+      });
+      return { content: [{ type: "text" as const, text: "Sleep timer cancelled. Status restored to active." }] };
+    }
+
     // 0. Gate on stop checks
     const pendingChecks = [...stopChecks.values()].filter(c => !c.completed);
     if (pendingChecks.length > 0 && !force) {
