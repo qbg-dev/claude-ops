@@ -1,0 +1,358 @@
+#!/usr/bin/env bun
+/**
+ * harness-tui — Tmux-native TUI for the harness operator.
+ * Vim motions (j/k/g/G), Tab to switch views, Enter to read, q to quit.
+ * Reads from BMS (boring-mail-server) for messages, registry for fleet.
+ */
+
+import { readFileSync } from "fs";
+
+const BMS_URL = process.env.BMS_URL || "http://127.0.0.1:8025";
+const PROJECT_ROOT = process.env.PROJECT_ROOT ||
+  (() => { try { return Bun.spawnSync(["git", "rev-parse", "--show-toplevel"]).stdout.toString().trim(); } catch { return process.cwd(); } })();
+const REGISTRY_PATH = `${PROJECT_ROOT}/.claude/workers/registry.json`;
+
+// Resolve BMS token
+let BMS_TOKEN = process.env.BMS_TOKEN || "";
+if (!BMS_TOKEN) {
+  try {
+    const reg = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
+    BMS_TOKEN = reg.user?.bms_token || "";
+  } catch {}
+}
+if (!BMS_TOKEN) {
+  console.error("No BMS token. Set BMS_TOKEN env or add user.bms_token to registry.");
+  process.exit(1);
+}
+
+// ── Colors ──
+const C = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  blue: "\x1b[38;5;75m",
+  cyan: "\x1b[38;5;117m",
+  green: "\x1b[38;5;114m",
+  yellow: "\x1b[38;5;222m",
+  red: "\x1b[38;5;203m",
+  gray: "\x1b[38;5;245m",
+  white: "\x1b[38;5;255m",
+  bgBlue: "\x1b[48;5;24m",
+  bgDark: "\x1b[48;5;234m",
+  bgSelect: "\x1b[48;5;238m",
+};
+
+// ── State ──
+type View = "inbox" | "fleet" | "detail";
+let view: View = "inbox";
+let cursor = 0;
+let scroll = 0;
+let messages: any[] = [];
+let fleetWorkers: any[] = [];
+let detailMsg: any = null;
+let loading = false;
+let lastError = "";
+let cols = process.stdout.columns || 120;
+let rows = process.stdout.rows || 40;
+
+// ── BMS ──
+async function bms(method: string, path: string, body?: any): Promise<any> {
+  const resp = await fetch(`${BMS_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${BMS_TOKEN}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => "");
+    throw new Error(`${resp.status}: ${err.slice(0, 80)}`);
+  }
+  return resp.json();
+}
+
+async function fetchInbox() {
+  loading = true; render();
+  try { messages = (await bms("GET", "/api/messages?label=INBOX&maxResults=50")).messages || []; lastError = ""; }
+  catch (e: any) { lastError = e.message; messages = []; }
+  loading = false;
+}
+
+async function fetchFleet() {
+  loading = true; render();
+  try {
+    const reg = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
+    fleetWorkers = Object.entries(reg)
+      .filter(([k]) => k !== "_config")
+      .map(([name, w]: [string, any]) => ({
+        name, status: w.status || "?", perpetual: !!w.perpetual,
+        pane_id: w.pane_id || "", runtime: w.custom?.runtime || "claude",
+        sleep_until: w.custom?.sleep_until,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    lastError = "";
+  } catch (e: any) { lastError = e.message; fleetWorkers = []; }
+  loading = false;
+}
+
+async function fetchDetail(id: string) {
+  loading = true; render();
+  try { detailMsg = await bms("GET", `/api/messages/${id}`); lastError = ""; }
+  catch (e: any) { lastError = e.message; detailMsg = null; }
+  loading = false;
+}
+
+// ── Render ──
+const w = (s: string) => process.stdout.write(s);
+const at = (r: number, c: number) => w(`\x1b[${r};${c}H`);
+const clrLine = () => w(`\x1b[2K`);
+
+function render() {
+  w("\x1b[2J\x1b[H");
+  drawHeader();
+  if (view === "inbox") drawInbox();
+  else if (view === "fleet") drawFleet();
+  else drawDetail();
+  drawStatus();
+}
+
+function drawHeader() {
+  const t = (v: View, label: string) =>
+    view === v ? `${C.bgBlue}${C.white}${C.bold} ${label} ${C.reset}` : `${C.gray} ${label} ${C.reset}`;
+
+  at(1, 1); w(`${C.bgDark}${" ".repeat(cols)}${C.reset}`);
+  at(1, 2); w(`${C.blue}${C.bold}⬡ harness${C.reset}  ${t("inbox", "INBOX")}${C.dim}│${C.reset}${t("fleet", "FLEET")}`);
+
+  const unread = messages.filter(m => m.labelIds?.includes("UNREAD")).length;
+  if (unread > 0) { at(1, cols - 12); w(`${C.yellow}${C.bold}${unread} unread${C.reset}`); }
+
+  at(2, 1); w(C.dim + "─".repeat(cols) + C.reset);
+}
+
+function drawStatus() {
+  at(rows, 1); w(`${C.bgDark}${" ".repeat(cols)}${C.reset}`);
+  at(rows, 2);
+  if (view === "detail") w(`${C.dim}ESC${C.reset} back  ${C.dim}r${C.reset} reply  ${C.dim}d${C.reset} archive  ${C.dim}q${C.reset} quit`);
+  else w(`${C.dim}j/k${C.reset} move  ${C.dim}Enter${C.reset} open  ${C.dim}Tab${C.reset} switch  ${C.dim}R${C.reset} refresh  ${C.dim}q${C.reset} quit`);
+
+  if (lastError) { at(rows - 1, 2); w(`${C.red}${lastError.slice(0, cols - 4)}${C.reset}`); }
+  if (loading) { at(rows, cols - 12); w(`${C.yellow}loading...${C.reset}`); }
+}
+
+function drawInbox() {
+  const h = rows - 4;
+  if (!messages.length) { at(rows / 2 | 0, cols / 2 - 6 | 0); w(`${C.dim}No messages${C.reset}`); return; }
+
+  if (cursor < scroll) scroll = cursor;
+  if (cursor >= scroll + h) scroll = cursor - h + 1;
+
+  for (let i = 0; i < h; i++) {
+    const m = messages[scroll + i];
+    if (!m) break;
+    const sel = scroll + i === cursor;
+    const unread = m.labelIds?.includes("UNREAD");
+    const esc = m.labelIds?.includes("ESCALATION");
+
+    const bg = sel ? C.bgSelect : "";
+    const fg = unread ? C.white + C.bold : C.gray;
+    const badge = esc ? `${C.yellow}!${C.reset}` : unread ? `${C.blue}●${C.reset}` : " ";
+    const from = (m.from?.displayName || m.from?.name || "?").padEnd(18).slice(0, 18);
+    const subj = (m.subject || "(no subject)").slice(0, cols - 40);
+    const date = fmtDate(m.createdAt);
+
+    at(3 + i, 1); clrLine();
+    w(`${bg} ${badge} ${fg}${from}${C.reset}${bg} ${fg}${subj}${C.reset}`);
+    at(3 + i, cols - 7); w(`${bg}${C.dim}${date}${C.reset}`);
+  }
+
+  if (messages.length > h) { at(rows - 1, cols - 8); w(`${C.dim}${cursor + 1}/${messages.length}${C.reset}`); }
+}
+
+function drawFleet() {
+  const h = rows - 5;
+  at(3, 2); w(`${C.bold}${C.blue}${"Worker".padEnd(24)}${"Rt".padEnd(8)}${"Status".padEnd(12)}${"Pane".padEnd(8)}Info${C.reset}`);
+  at(4, 1); w(C.dim + "─".repeat(cols) + C.reset);
+
+  if (!fleetWorkers.length) { at(rows / 2 | 0, cols / 2 - 6 | 0); w(`${C.dim}No workers${C.reset}`); return; }
+
+  if (cursor < scroll) scroll = cursor;
+  if (cursor >= scroll + h) scroll = cursor - h + 1;
+
+  for (let i = 0; i < h; i++) {
+    const fw = fleetWorkers[scroll + i];
+    if (!fw) break;
+    const sel = scroll + i === cursor;
+    const bg = sel ? C.bgSelect : "";
+    const sc = fw.status === "active" ? C.green : fw.status === "sleeping" ? C.yellow : C.gray;
+    const pane = fw.pane_id || `${C.dim}—${C.reset}`;
+    let info = fw.perpetual ? `${C.dim}♻${C.reset}` : "";
+    if (fw.status === "sleeping" && fw.sleep_until) {
+      const d = new Date(fw.sleep_until);
+      info += ` ${C.yellow}wake ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}${C.reset}`;
+    }
+    at(5 + i, 1); clrLine();
+    w(`${bg} ${C.white}${fw.name.padEnd(23)}${C.reset}${bg} ${C.dim}${fw.runtime.padEnd(8)}${C.reset}${bg} ${sc}${fw.status.padEnd(12)}${C.reset}${bg} ${pane.padEnd(8)} ${info}${C.reset}`);
+  }
+}
+
+function drawDetail() {
+  if (!detailMsg) { at(4, 2); w(`${C.dim}No message${C.reset}`); return; }
+  const m = detailMsg;
+
+  at(3, 2); w(`${C.blue}${C.bold}From:${C.reset}    ${m.from?.displayName || m.from?.name || "?"} ${C.dim}<${m.from?.name}>${C.reset}`);
+  at(4, 2); w(`${C.blue}${C.bold}Subject:${C.reset} ${C.bold}${m.subject || "(none)"}${C.reset}`);
+  at(5, 2); w(`${C.blue}${C.bold}Date:${C.reset}    ${C.dim}${m.createdAt || ""}${C.reset}`);
+  const labels = (m.labelIds || []).filter((l: string) => !["INBOX", "SENT", "UNREAD"].includes(l));
+  if (labels.length) { at(6, 2); w(`${C.blue}${C.bold}Labels:${C.reset}  ${labels.map((l: string) => `${C.yellow}${l}${C.reset}`).join(" ")}`); }
+
+  at(7, 1); w(C.dim + "─".repeat(cols) + C.reset);
+
+  const body = m.body || "";
+  const lines = wrap(body, cols - 4);
+  const maxLines = rows - 10;
+  for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+    at(8 + i, 2); w(`${C.white}${lines[i]}${C.reset}`);
+  }
+  if (lines.length > maxLines) { at(8 + maxLines, 2); w(`${C.dim}... ${lines.length - maxLines} more lines${C.reset}`); }
+}
+
+// ── Helpers ──
+function fmtDate(iso: string): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60e3) return "now";
+  if (ms < 3600e3) return `${ms / 60e3 | 0}m`;
+  if (ms < 86400e3) return `${ms / 3600e3 | 0}h`;
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function wrap(text: string, w: number): string[] {
+  const out: string[] = [];
+  for (const p of text.split("\n")) {
+    if (p.length <= w) { out.push(p); continue; }
+    let r = p;
+    while (r.length > w) { let b = r.lastIndexOf(" ", w); if (b <= 0) b = w; out.push(r.slice(0, b)); r = r.slice(b + 1); }
+    if (r) out.push(r);
+  }
+  return out;
+}
+
+function listLen(): number {
+  return view === "inbox" ? messages.length : view === "fleet" ? fleetWorkers.length : 0;
+}
+
+// ── Input ──
+async function handleKey(key: Buffer): Promise<boolean> {
+  const ch = key.toString();
+  const c0 = key[0];
+
+  if (ch === "q" && view !== "detail") return false;
+  if (c0 === 27 && key.length === 1 && view === "detail") { view = "inbox"; return true; }
+  if (c0 === 3) return false; // Ctrl-C
+
+  // Tab
+  if (c0 === 9) {
+    if (view === "inbox") { view = "fleet"; cursor = 0; scroll = 0; await fetchFleet(); }
+    else { view = "inbox"; cursor = 0; scroll = 0; await fetchInbox(); }
+    return true;
+  }
+
+  // j/down, k/up
+  if (ch === "j" || (c0 === 27 && key[1] === 91 && key[2] === 66)) {
+    if (view !== "detail") cursor = Math.min(cursor + 1, listLen() - 1);
+    return true;
+  }
+  if (ch === "k" || (c0 === 27 && key[1] === 91 && key[2] === 65)) {
+    if (view !== "detail") cursor = Math.max(cursor - 1, 0);
+    return true;
+  }
+
+  // g/G
+  if (ch === "g" && view !== "detail") { cursor = 0; scroll = 0; return true; }
+  if (ch === "G" && view !== "detail") { cursor = Math.max(listLen() - 1, 0); return true; }
+
+  // Enter
+  if (c0 === 13 && view === "inbox" && messages[cursor]) {
+    await fetchDetail(messages[cursor].id);
+    view = "detail";
+    return true;
+  }
+
+  // R = refresh
+  if (ch === "R") {
+    if (view === "inbox") await fetchInbox();
+    else if (view === "fleet") await fetchFleet();
+    return true;
+  }
+
+  // d = archive
+  if (ch === "d") {
+    const msg = view === "detail" ? detailMsg : view === "inbox" ? messages[cursor] : null;
+    if (msg?.id) {
+      try {
+        await bms("POST", `/api/messages/${msg.id}/modify`, { addLabelIds: ["ARCHIVED"], removeLabelIds: ["INBOX", "UNREAD"] });
+        if (view === "detail") view = "inbox";
+        await fetchInbox();
+        cursor = Math.min(cursor, Math.max(messages.length - 1, 0));
+      } catch (e: any) { lastError = e.message; }
+    }
+    return true;
+  }
+
+  // r = reply
+  if (ch === "r" && (view === "detail" || (view === "inbox" && messages[cursor]))) {
+    const msg = view === "detail" ? detailMsg : messages[cursor];
+    if (!msg) return true;
+
+    at(rows - 2, 1); clrLine();
+    at(rows - 2, 2); w(`${C.blue}Reply to ${msg.from?.name}:${C.reset} `);
+
+    process.stdin.setRawMode(false);
+    const readline = await import("readline");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: "" });
+
+    return new Promise<boolean>((resolve) => {
+      rl.on("line", async (line: string) => {
+        rl.close();
+        process.stdin.setRawMode(true);
+        if (line.trim()) {
+          try {
+            await bms("POST", "/api/messages/send", {
+              to: [msg.from?.id], subject: `Re: ${msg.subject || ""}`,
+              body: line.trim(), cc: [], thread_id: msg.threadId || null,
+              in_reply_to: msg.id, reply_by: null, labels: [], attachments: [],
+            });
+          } catch (e: any) { lastError = e.message; }
+        }
+        resolve(true);
+      });
+    });
+  }
+
+  return true;
+}
+
+// ── Main ──
+async function main() {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  w("\x1b[?25l\x1b[?1049h"); // hide cursor + alt screen
+
+  process.stdout.on("resize", () => { cols = process.stdout.columns || 120; rows = process.stdout.rows || 40; render(); });
+
+  const cleanup = () => { w("\x1b[?25h\x1b[?1049l"); process.stdin.setRawMode(false); };
+  process.on("exit", cleanup);
+  process.on("SIGINT", () => { cleanup(); process.exit(0); });
+
+  await fetchInbox();
+  render();
+
+  for await (const chunk of process.stdin) {
+    if (!(await handleKey(chunk as Buffer))) break;
+    render();
+  }
+
+  cleanup();
+}
+
+main().catch(e => { w("\x1b[?25h\x1b[?1049l"); console.error(e); process.exit(1); });

@@ -3137,19 +3137,29 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
     to: string; subject: string; body: string; cc?: string[]; thread_id?: string;
     in_reply_to?: string; reply_by?: string; labels?: string[];
   }) => {
-    // User escalation path: triage queue + desktop notification (not BMS)
+    // User escalation path: send via BMS to "user" account + desktop notification
     if (to === "user") {
-      const result = writeToTriageQueue(body, subject, WORKER_NAME, { urgency: labels?.includes("URGENT") ? "high" : undefined });
-      if (!result.ok) {
-        return { content: [{ type: "text" as const, text: `Error writing to triage queue: ${result.error}` }], isError: true };
+      let msgId = "";
+      try {
+        const toIds = await resolveBmsRecipients(["user"]);
+        const ccIds = cc ? await resolveBmsRecipients(cc) : [];
+        const result = await bmsRequest("POST", "/api/messages/send", {
+          to: toIds, subject, body,
+          cc: ccIds, thread_id: thread_id || null, in_reply_to: in_reply_to || null,
+          reply_by: reply_by || null, labels: [...(labels || []), "ESCALATION"], attachments: [],
+        });
+        msgId = result?.id || "";
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Error sending to user via BMS: ${e.message}` }], isError: true };
       }
+      // Desktop notification (best-effort)
       try {
         execSync(
-          `"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} "Worker Escalation"`,
-          { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" }
+          `terminal-notifier -title "Worker Escalation" -message ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} -sound default 2>/dev/null || osascript -e 'display notification ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} with title "Worker Escalation" sound name "default"'`,
+          { timeout: 5000, shell: "/bin/bash" }
         );
       } catch {}
-      return withLint({ content: [{ type: "text" as const, text: `Escalated to user [${result.id}] — triage queue + notification` }] });
+      return withLint({ content: [{ type: "text" as const, text: `Sent to user via BMS [${msgId}] + desktop notification` }] });
     }
 
     // Raw pane ID — tmux-only, no BMS
