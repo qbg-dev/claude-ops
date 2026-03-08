@@ -2574,8 +2574,162 @@ server.registerTool(
   }
 );
 
+// @ts-ignore — MCP SDK deep type instantiation with Zod
+server.registerTool(
+  "deep_review",
+  {
+    description:
+      "Launch a Bugbot-style multi-pass code review pipeline. Creates a 'bug-bot' tmux window with 8 parallel Opus review workers + 1 Sonnet coordinator. Workers review the diff with randomized chunk ordering; coordinator aggregates via majority voting (>=2/8), validates, dedupes against history, and applies fixes. Default: reviews the current HEAD commit.",
+    inputSchema: {
+      commit: z
+        .string()
+        .optional()
+        .describe(
+          "Specific commit SHA to review. Default: HEAD (current commit)"
+        ),
+      base_branch: z
+        .string()
+        .optional()
+        .describe(
+          "Review all changes since this branch (e.g. 'main'). Overrides commit."
+        ),
+      uncommitted: z
+        .boolean()
+        .optional()
+        .describe(
+          "Review staged + unstaged + untracked changes. Overrides commit and base_branch."
+        ),
+      pr_number: z
+        .string()
+        .optional()
+        .describe(
+          "Review a pull request by number (uses gh pr diff). Overrides other modes."
+        ),
+      passes: z
+        .number()
+        .optional()
+        .describe("Number of parallel review passes (default: 8)"),
+      worktree_root: z
+        .string()
+        .optional()
+        .describe(
+          "Optional repo root to run the review in (defaults to current session worktree)"
+        ),
+    },
+  },
+  async ({
+    commit,
+    base_branch,
+    uncommitted,
+    pr_number,
+    passes,
+    worktree_root,
+  }: {
+    commit?: string;
+    base_branch?: string;
+    uncommitted?: boolean;
+    pr_number?: string;
+    passes?: number;
+    worktree_root?: string;
+  }) => {
+    try {
+      log(`Tool call: deep_review(commit=${commit || "HEAD"}, base=${base_branch || "-"}, uncommitted=${uncommitted || false}, pr=${pr_number || "-"})`);
+
+      const worktree = resolveScopedWorktree(worktree_root, false);
+      const scriptPath = join(CLAUDE_OPS_DIR, "scripts", "deep-review.sh");
+
+      if (!existsSync(scriptPath)) {
+        throw new Error(`deep-review.sh not found at ${scriptPath}`);
+      }
+
+      // Build args — default to --commit HEAD
+      const args: string[] = [];
+      if (pr_number) {
+        args.push("--pr", pr_number);
+      } else if (uncommitted) {
+        args.push("--uncommitted");
+      } else if (base_branch) {
+        args.push("--base", base_branch);
+      } else {
+        // Default: review current HEAD commit
+        const headSha = execSync("git rev-parse HEAD", {
+          encoding: "utf-8",
+          cwd: worktree.worktreeRoot,
+        }).trim();
+        args.push("--commit", headSha);
+      }
+
+      if (passes) {
+        args.push("--passes", String(passes));
+      }
+
+      // Detect tmux session from environment
+      const tmuxSession =
+        process.env.TMUX_SESSION ||
+        (() => {
+          try {
+            return execSync(
+              "tmux display-message -p '#{session_name}'",
+              { encoding: "utf-8" }
+            ).trim();
+          } catch {
+            return "h";
+          }
+        })();
+
+      // Launch deep-review.sh asynchronously (it creates its own tmux window)
+      const env = {
+        ...process.env,
+        PROJECT_ROOT: worktree.worktreeRoot,
+        TMUX_SESSION: tmuxSession,
+      };
+
+      const launchResult = spawnSync("bash", [scriptPath, ...args], {
+        encoding: "utf-8",
+        cwd: worktree.worktreeRoot,
+        env,
+        timeout: 60_000, // 60s for setup (workers launch async)
+      });
+
+      if (launchResult.status !== 0) {
+        const stderr = launchResult.stderr?.slice(0, 1000) || "";
+        throw new Error(`deep-review.sh failed (exit ${launchResult.status}): ${stderr}`);
+      }
+
+      const stdout = launchResult.stdout || "";
+
+      // Extract session directory from output
+      const sessionMatch = stdout.match(/Session:\s+(\S+)/);
+      const sessionDir = sessionMatch ? sessionMatch[1] : "unknown";
+
+      const text = [
+        `Deep review pipeline launched.`,
+        ``,
+        `Window: ${tmuxSession}:bug-bot (9 panes)`,
+        `Session: ${sessionDir}`,
+        `Passes: ${passes || 8} workers (Opus, xhigh effort)`,
+        `Coordinator: pane 0 (Sonnet, medium effort)`,
+        ``,
+        `Pipeline: 8 parallel passes -> bucket -> majority vote (>=2/8) -> validate -> dedup -> autofix -> report`,
+        ``,
+        `The coordinator will write the final report to: ${sessionDir}/report.md`,
+        `Monitor progress by switching to the bug-bot tmux window.`,
+      ].join("\n");
+
+      return { content: [{ type: "text" as const, text }] };
+    } catch (e: any) {
+      const msg = `Deep review launch failed: ${e.message?.slice(0, 500) || String(e)}`;
+      log(`ERROR: ${msg}`);
+      return {
+        content: [{ type: "text" as const, text: msg }],
+        isError: true,
+      };
+    }
+  }
+);
+
 log(
-  `Server ready — 8 tools registered: check_commit, check_uncommitted, check_base, ask_codex, spawn_codex_task, spawn_codex_swarm, get_codex_swarm, get_codex_task`
+  `Server ready — 9 tools registered: check_commit, check_uncommitted, check_base, ask_codex, spawn_codex_task, spawn_codex_swarm, get_codex_swarm, get_codex_task, deep_review`
 );
 
 // Start
