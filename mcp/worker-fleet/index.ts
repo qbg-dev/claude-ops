@@ -7,7 +7,7 @@
  *   State (2):      get_worker_state, update_state
  *   Verification (2): add_stop_check, complete_stop_check
  *   Lifecycle (1):  recycle (gated on stop checks, watchdog-deferred for perpetual workers)
- *   Fleet (1):      fleet (action: create/register/deregister/move/standby/template/spawn_feature/help)
+ *   Fleet (1):      fleet (action: create/register/deregister/move/standby/template/help)
  *   Review (1):     deep_review
  *   Mail (4):       mail_send, mail_inbox, mail_read, mail_help
  *
@@ -2717,163 +2717,7 @@ async function handleFleetDeregister(params: Record<string, any>): Promise<McpRe
   };
 }
 
-async function handleFleetSpawnFeature(params: Record<string, any>): Promise<McpResult> {
-  const { feature, mission, model, window: windowGroup } = params;
-
-  if (!feature) return { content: [{ type: "text" as const, text: `Error: 'feature' is required for spawn_feature` }], isError: true };
-  if (!mission) return { content: [{ type: "text" as const, text: `Error: 'mission' is required for spawn_feature` }], isError: true };
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(feature)) {
-    return { content: [{ type: "text" as const, text: `Error: feature must be kebab-case (got '${feature}')` }], isError: true };
-  }
-
-  const featureName = `${WORKER_NAME}--${feature}`;
-  const parentBranch = `worker/${WORKER_NAME}`;
-  const featureBranch = `worker/${featureName}`;
-
-  // Check parent exists in registry
-  const parentEntry = getWorkerEntry(WORKER_NAME);
-  if (!parentEntry) {
-    return { content: [{ type: "text" as const, text: `Error: parent worker '${WORKER_NAME}' not found in registry. Register first.` }], isError: true };
-  }
-
-  // Check feature worker doesn't already exist
-  const existingRegistry = readRegistry();
-  if (existingRegistry[featureName] && featureName !== "_config") {
-    return { content: [{ type: "text" as const, text: `Error: feature worker '${featureName}' already exists. Deregister it first or choose a different feature name.` }], isError: true };
-  }
-
-  // Build mission with ephemeral lifecycle instructions appended
-  const fullMission = [
-    mission.trim(),
-    '',
-    '---',
-    '## Ephemeral Feature Worker Lifecycle',
-    '',
-    `You are an **ephemeral feature worker** spawned by **${WORKER_NAME}**.`,
-    `Your branch \`${featureBranch}\` was forked from \`${parentBranch}\`.`,
-    '',
-    '### How this works',
-    `1. Complete the task above — commit all changes to your branch (\`${featureBranch}\`)`,
-    `2. Verify your work (tests, tsc, browser if UI — use stop checks)`,
-    `3. Mail your parent when done:`,
-    '   ```',
-    `   mail_send(to="${WORKER_NAME}", subject="Feature done: ${feature}", body="<summary, commits, how to verify>")`,
-    '   ```',
-    `4. Stop (your stop hook auto-notifies ${WORKER_NAME} that you finished)`,
-    `5. ${WORKER_NAME} reviews your work, merges your branch, then cleans up`,
-    '',
-    '### Rules',
-    '- You are **one-shot** — do the task, verify, notify parent, stop',
-    '- Do NOT call `recycle()` — just finish and stop',
-    `- Do NOT merge into \`${parentBranch}\` — your parent does that`,
-    `- Report only to **${WORKER_NAME}** (your parent worker)`,
-    '- Git: commit to your own branch only, never checkout other branches',
-    '',
-    '### Cleanup',
-    `When ${WORKER_NAME} merges your branch and deregisters you, the system automatically:`,
-    '- Removes your git worktree',
-    '- Deletes your worker directory',
-    '- Removes your git branch',
-    '- Removes your registry entry',
-    'You do not need to worry about cleanup.',
-  ].join('\n');
-
-  // Create worker files (one-shot, not perpetual)
-  const result = createWorkerFiles({
-    name: featureName,
-    mission: fullMission,
-    perpetual: false,
-    report_to: WORKER_NAME,
-    model,
-  });
-
-  if (!result.ok) {
-    return { content: [{ type: "text" as const, text: `Error creating feature worker: ${result.error}` }], isError: true };
-  }
-
-  // Register with ephemeral metadata
-  withRegistryLocked((registry) => {
-    ensureWorkerInRegistry(registry, featureName);
-    const entry = registry[featureName] as RegistryWorkerEntry;
-    entry.model = result.permissions?.model || "opus";
-    entry.permission_mode = result.permissions?.permission_mode || "bypassPermissions";
-    entry.disallowed_tools = result.permissions?.disallowedTools || [];
-    entry.status = "idle";
-    entry.perpetual = false;
-    entry.report_to = WORKER_NAME;
-    entry.custom = {
-      ...(entry.custom || {}),
-      ephemeral: true,
-      parent_worker: WORKER_NAME,
-      feature_name: feature,
-      runtime: "claude",
-    };
-  });
-
-  // Create worktree branched from PARENT's branch (not main/HEAD)
-  const projectName = PROJECT_ROOT.split("/").pop()!;
-  const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${featureName}`);
-  let worktreeReady = false;
-  try {
-    if (!existsSync(worktreeDir)) {
-      // Branch from parent's branch tip, not from HEAD
-      try { execSync(`git -C "${PROJECT_ROOT}" branch "${featureBranch}" "${parentBranch}" 2>/dev/null`, { timeout: 5000 }); } catch {}
-      execSync(`git -C "${PROJECT_ROOT}" worktree add "${worktreeDir}" "${featureBranch}"`, { encoding: "utf-8", timeout: 10000 });
-    }
-    worktreeReady = true;
-    // Symlink gitignored essentials (.env, users.json, etc.)
-    const setupScript = join(PROJECT_ROOT, ".claude/scripts/worker/setup-worktree.sh");
-    if (existsSync(setupScript)) {
-      try { execSync(`bash "${setupScript}" "${worktreeDir}"`, { timeout: 5000 }); } catch {}
-    }
-  } catch (e: any) {
-    // Non-fatal — worker can still work, just without worktree isolation
-  }
-
-  // Launch immediately via launch-flat-worker.sh
-  let launchInfo = "";
-  const launchScript = join(CLAUDE_OPS, "scripts/launch-flat-worker.sh");
-  if (!existsSync(launchScript)) {
-    launchInfo = "Launch: FAILED — launch script not found";
-  } else {
-    const winName = windowGroup || parentEntry.window || WORKER_NAME;
-    const launchArgs = [launchScript, featureName, "--project", PROJECT_ROOT, "--window", winName];
-    const launchResult = spawnSync("bash", launchArgs, {
-      encoding: "utf-8", timeout: 120_000,
-      env: { ...process.env, PROJECT_ROOT, WORKER_RUNTIME: "claude" },
-    });
-    if (launchResult.status === 0) {
-      const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
-      launchInfo = `Launched: pane ${paneMatch ? paneMatch[1] : "unknown"} in window '${winName}'`;
-    } else {
-      launchInfo = `Launch: FAILED (exit ${launchResult.status}) — ${(launchResult.stderr || "").slice(0, 200)}`;
-    }
-  }
-
-  return {
-    content: [{
-      type: "text" as const,
-      text: [
-        `Spawned feature worker: ${featureName}`,
-        `  Branch: ${featureBranch} (forked from ${parentBranch})`,
-        `  Worktree: ${worktreeReady ? worktreeDir : "NOT CREATED"}`,
-        `  Ephemeral: true (auto-cleanup on deregister)`,
-        `  Reports to: ${WORKER_NAME} (you)`,
-        `  ${launchInfo}`,
-        ``,
-        `## What happens next`,
-        `1. Feature worker completes the task and mails you when done`,
-        `2. Stop hook auto-notifies you when the feature worker's session ends`,
-        `3. Review the work:`,
-        `   - Self-review: git log ${parentBranch}..${featureBranch}`,
-        `   - Automated: deep_review(base_branch="${parentBranch}")`,
-        `   - Dedicated verifier: fleet(action="create", type="verifier", ...)`,
-        `4. Merge: git merge ${featureBranch} (from your worktree)`,
-        `5. Cleanup: fleet(action="deregister", name="${featureName}")`,
-      ].join("\n"),
-    }],
-  };
-}
+// spawn_feature removed — use Agent tool with isolation:"worktree" instead (zero infrastructure)
 
 function handleFleetHelp(): McpResult {
   return {
@@ -2919,20 +2763,6 @@ function handleFleetHelp(): McpResult {
         `Required: type (implementer|monitor|coordinator|optimizer|verifier)`,
         `Returns template mission.md, permissions, and state config.`,
         ``,
-        `### spawn_feature — Spawn an ephemeral feature worker`,
-        `Required: feature (string, kebab-case), mission (string)`,
-        `Optional: model (string), window (string)`,
-        `Creates worker named {you}--{feature}, branched from YOUR branch (not main).`,
-        `Worker is one-shot (not perpetual), reports to you, auto-launches.`,
-        `Stop hook notifies you when it finishes. Deregister auto-cleans everything.`,
-        ``,
-        `Review workflow after feature worker finishes:`,
-        `  - Self-review: git log worker/{you}..worker/{you}--{feature}`,
-        `  - deep_review(base_branch="worker/{you}")`,
-        `  - fleet(action="create", type="verifier", ...) for dedicated verifier`,
-        `  - Merge: git merge worker/{you}--{feature} (from your worktree)`,
-        `  - Cleanup: fleet(action="deregister", name="{you}--{feature}")`,
-        ``,
         `### help — Show this help text`,
       ].join("\n"),
     }],
@@ -2943,16 +2773,15 @@ function handleFleetHelp(): McpResult {
 server.registerTool(
   "fleet",
   {
-    description: "Fleet management operations. Call fleet(action='help') for full parameter docs.\n\nActions: create, register, deregister, move, standby, template, spawn_feature, help",
+    description: "Fleet management operations. Call fleet(action='help') for full parameter docs.\n\nActions: create, register, deregister, move, standby, template, help",
     inputSchema: {
-      action: z.enum(["create", "register", "deregister", "move", "standby", "template", "spawn_feature", "help"]).describe("Which fleet operation to perform"),
+      action: z.enum(["create", "register", "deregister", "move", "standby", "template", "help"]).describe("Which fleet operation to perform"),
       // Common params (used by multiple actions)
       name: z.string().optional().describe("Worker name (required for create; optional for deregister/move/standby — defaults to self)"),
       reason: z.string().optional().describe("[deregister/move/standby] Reason for the operation"),
-      window: z.string().optional().describe("[move/create/spawn_feature] Target tmux window name"),
+      window: z.string().optional().describe("[move/create] Target tmux window name"),
       // create-specific params
-      feature: z.string().optional().describe("[spawn_feature] Short kebab-case feature name (worker named {parent}--{feature})"),
-      mission: z.string().optional().describe("[create/spawn_feature] Mission markdown"),
+      mission: z.string().optional().describe("[create] Mission markdown (required for create)"),
       type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("[create/template] Worker archetype"),
       runtime: z.enum(["claude", "codex"]).optional().describe("[create] Execution engine (default: claude)"),
       model: z.string().optional().describe("[create/register] LLM model override"),
@@ -2980,7 +2809,6 @@ server.registerTool(
       case "standby": return handleFleetStandby(params);
       case "register": return handleFleetRegister(params);
       case "deregister": return handleFleetDeregister(params);
-      case "spawn_feature": return handleFleetSpawnFeature(params);
       case "help": return handleFleetHelp();
       default: return { content: [{ type: "text" as const, text: `Unknown action '${action}'. Use fleet(action='help') for available actions.` }], isError: true };
     }

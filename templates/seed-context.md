@@ -14,7 +14,7 @@
 | `add_stop_check(description)` | Register a verification you MUST do before recycling |
 | `complete_stop_check(id)` | Mark a check done after verifying (`id="all"` to clear) |
 | `recycle(message?)` | Restart fresh; `resume=true` for hot-restart; `sleep_seconds=N` overrides timer; `cancel=true` aborts sleep. **Blocked if stop checks pending** (shows pending list). |
-| `fleet(action, ...)` | Fleet admin. `action`: create, register, deregister, move, standby, template, spawn_feature, help. Call `fleet(action="help")` for full parameter docs. |
+| `fleet(action, ...)` | Fleet admin. `action`: create, register, deregister, move, standby, template, help. Call `fleet(action="help")` for full parameter docs. |
 | `deep_review(scope, spec?)` | Spawn adversarial reviewer for complex changes |
 
 Every tool response includes lint warnings if issues are detected — fix them immediately.
@@ -46,74 +46,43 @@ complete_stop_check("sc-1", result="PASS — no TS errors")
 
 Pick the method that matches your change's risk level. A one-line CSS fix needs a quick browser check. A new API endpoint needs API E2E with real auth. A refactor touching 10 files needs deep review.
 
-## Parallel Work (Subagents + Feature Workers)
+## Parallel Work (Subagents)
 
-### Lightweight: Agent Tool (default for parallel tasks)
-
-For small-to-medium parallel work, use the **built-in Agent tool** with `isolation: "worktree"`:
+When you have multiple independent tasks, use the **Agent tool** with `isolation: "worktree"` to work in parallel:
 
 ```
 # Spawn parallel tasks — each gets its own isolated worktree + branch
-Agent(prompt="Fix the SSO timeout bug in auth-sso.ts...", isolation="worktree", run_in_background=true)
-Agent(prompt="Add pie charts to finance dashboard...", isolation="worktree", run_in_background=true)
-Agent(prompt="Verify auth changes on test server...", isolation="worktree", run_in_background=true)
+Agent(prompt="Fix the SSO timeout bug in auth-sso.ts. Commit changes.", isolation="worktree", run_in_background=true)
+Agent(prompt="Add pie charts to finance dashboard. Commit changes.", isolation="worktree", run_in_background=true)
+Agent(prompt="Verify auth changes work on test server. Save evidence.", isolation="worktree", run_in_background=true)
 ```
 
-**Why this works:**
-- Zero infrastructure — no registry, no BMS, no watchdog overhead
-- Auto-creates worktree, auto-cleans if no changes made
-- Direct result return — you get the outcome inline
-- Inherits all your MCP tools (Chrome, worker-fleet, qwen-analyst)
-- `run_in_background: true` for true parallelism
+**How it works:**
+- Each subagent gets its own worktree (isolated copy of the repo) and branch
+- `run_in_background: true` — multiple agents work concurrently while you continue
+- Auto-cleans worktree if no changes were made
+- If changes were made: returns the worktree path and branch name
+- Subagents inherit all your MCP tools (Chrome, worker-fleet, qwen-analyst)
+- Direct result return — no polling, no mail, no registry overhead
 
 **After subagent finishes:**
-1. Read the result (returned automatically)
-2. If it made changes: merge the branch into your worktree
-3. Save evidence (screenshots, test output) to `claude_files/evidence/`
+1. Read the result (returned automatically when background task completes)
+2. Review the changes: read the diff, or spawn a reviewer subagent
+3. If good: merge the branch into your worktree (`git merge <branch>`)
+4. Save evidence to `claude_files/evidence/`
 
-### Heavyweight: Fleet Feature Workers (complex/long-running)
-
-For work that needs persistent identity, BMS mail, monitoring, or survives compaction:
-
-```
-fleet(action="spawn_feature", feature="auth-fix", mission="Fix SSO login timeout bug...")
-```
-
-Each feature worker:
-- Gets its own worktree branched from YOUR branch (not main)
-- Is named `{you}--{feature}` (e.g. `optimizer--auth-fix`)
-- Is one-shot — completes the task and stops
-- Stop hook auto-notifies you via BMS when it finishes
-- Reports only to you (its parent)
-
-**Review workflow (YOU must review — this is your responsibility):**
+**Review & verification:**
 
 | Method | When | How |
 |--------|------|-----|
-| **Self-review** | Small changes | `git log worker/{you}..worker/{you}--{feature}` |
-| **Deep review** | Complex changes | `deep_review(base_branch="worker/{you}")` |
-| **Verifier subagent** | Quick verify | `Agent(prompt="Review changes on branch...", isolation="worktree")` |
-| **Verifier worker** | Critical, long | `fleet(action="spawn_feature", feature="verify-{name}", mission="Review...")` |
+| **Self-review** | Small changes | Read the subagent's result + diff |
+| **Reviewer subagent** | Moderate changes | `Agent(prompt="Review changes on branch X for bugs...", isolation="worktree")` |
+| **Deep review** | Complex refactors | `deep_review(base_branch="worker/{{WORKER_NAME}}")` |
 
-**Merge & cleanup:**
-```bash
-git merge worker/{you}--{feature}                              # from your worktree
-fleet(action="deregister", name="{you}--{feature}")           # auto-cleans worktree + branch + dir
-```
-
-Verifier workers are also ephemeral — same lifecycle, same auto-cleanup.
-
-### When to use which
-
-| Criteria | Agent tool | Fleet spawn_feature |
-|----------|-----------|-------------------|
-| Task size | < 200k context | Any size |
-| Duration | Minutes | Hours |
-| Needs mail/monitoring | No | Yes |
-| Survives compaction | No | Yes |
-| Needs stop checks | No | Yes |
-| Infrastructure cost | Zero | Registry + BMS + watchdog |
-| **Default choice** | **Yes** | Escalate when needed |
+**When NOT to use subagents** (use direct work instead):
+- Task requires > 200k context (too large for a single subagent)
+- Task depends on your in-progress uncommitted changes
+- Task needs interactive back-and-forth with you
 
 ## Evidence Storage
 
