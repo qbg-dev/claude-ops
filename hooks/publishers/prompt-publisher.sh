@@ -61,7 +61,10 @@ if [ ! -f "$SESSION_STARTED_MARKER" ]; then
   fi
   _START_PAYLOAD=$(jq -n --arg a "$_START_AGENT" --arg sid "$SESSION_ID" \
     --arg h "${HARNESS:-}" --arg m "${CLAUDE_MODEL:-unknown}" \
-    '{agent: $a, session_id: $sid, harness: $h, model: $m}' 2>/dev/null || true)
+    --arg aid "${_HOOK_AGENT_ID:-}" --arg atype "${_HOOK_AGENT_TYPE:-}" \
+    '{agent: $a, session_id: $sid, harness: $h, model: $m,
+     agent_id: (if $aid == "" then null else $aid end),
+     agent_type: (if $atype == "" then null else $atype end)}' 2>/dev/null || true)
   if [ -n "$_START_PAYLOAD" ]; then
     bus_publish "session.start" "$_START_PAYLOAD" 2>/dev/null || true
   fi
@@ -152,10 +155,14 @@ BUS_PAYLOAD=$(jq -n --compact-output \
   --arg tz "$TIMEZONE" \
   --arg dow "$DAY_OF_WEEK" \
   --argjson hour "$HOUR" \
+  --arg aid "${_HOOK_AGENT_ID:-}" \
+  --arg atype "${_HOOK_AGENT_TYPE:-}" \
   '{
     type: $type,
     session_id: $sid,
     harness: (if $harness == "" then null else $harness end),
+    agent_id: (if $aid == "" then null else $aid end),
+    agent_type: (if $atype == "" then null else $atype end),
     prompt: $prompt,
     prompt_hash: $hash,
     metadata: {

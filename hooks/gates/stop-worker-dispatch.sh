@@ -10,7 +10,11 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd
 source "$HOME/.claude-ops/lib/fleet-jq.sh"
 source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null || true
 
-_log() { echo "[$(date -u +%FT%TZ)] stop-hook: $*" >> "${HOME}/.claude-ops/state/watchdog.log" 2>/dev/null || true; }
+_log() {
+  local _aid_tag=""
+  [ -n "${_HOOK_AGENT_ID:-}" ] && _aid_tag=" agent=${_HOOK_AGENT_TYPE:-}:${_HOOK_AGENT_ID}"
+  echo "[$(date -u +%FT%TZ)] stop-hook:${_aid_tag} $*" >> "${HOME}/.claude-ops/state/watchdog.log" 2>/dev/null || true
+}
 
 INPUT=$(cat)
 

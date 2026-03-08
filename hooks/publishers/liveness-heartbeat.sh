@@ -12,5 +12,13 @@ WORKER="${WORKER_NAME:-}"
 RUNTIME_DIR="${HOME}/.claude-ops/state/watchdog-runtime/${WORKER}"
 mkdir -p "$RUNTIME_DIR" 2>/dev/null || true
 
-date +%s > "$RUNTIME_DIR/liveness"
+# Write epoch + optional subagent identity
+INPUT=$(cat)
+_AID=$(echo "$INPUT" | jq -r '.agent_id // ""' 2>/dev/null || echo "")
+_ATYPE=$(echo "$INPUT" | jq -r '.agent_type // ""' 2>/dev/null || echo "")
+if [ -n "$_AID" ]; then
+  printf '%s %s:%s\n' "$(date +%s)" "$_ATYPE" "$_AID" > "$RUNTIME_DIR/liveness"
+else
+  date +%s > "$RUNTIME_DIR/liveness"
+fi
 exit 0

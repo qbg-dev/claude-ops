@@ -367,6 +367,9 @@ hook_parse_input() {
   _HOOK_SESSION_ID=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
   _HOOK_TOOL_NAME=$(echo "$input" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
   _HOOK_TOOL_INPUT=$(echo "$input" | jq -r '.tool_input | if type == "string" then fromjson else . end // {}' 2>/dev/null || echo "{}")
+  # Subagent identity — present when hook fires inside a subagent context
+  _HOOK_AGENT_ID=$(echo "$input" | jq -r '.agent_id // ""' 2>/dev/null || echo "")
+  _HOOK_AGENT_TYPE=$(echo "$input" | jq -r '.agent_type // ""' 2>/dev/null || echo "")
 }
 
 # Emit a block decision as JSON. Replaces python3 json.dumps({'decision':'block',...}).
@@ -382,9 +385,14 @@ hook_block() {
     local _blocker
     _blocker=$(basename "${BASH_SOURCE[1]:-unknown}" .sh 2>/dev/null || echo "unknown")
     local _payload
+    local _aid="${_HOOK_AGENT_ID:-}"
+    local _atype="${_HOOK_AGENT_TYPE:-}"
     _payload=$(jq -n --arg a "$_agent" --arg sid "$_sid" --arg h "${HARNESS:-}" \
       --arg b "$_blocker" --arg r "$_summary" \
-      '{agent: $a, session_id: $sid, harness: $h, blocker: $b, reason_summary: $r}' 2>/dev/null || true)
+      --arg aid "$_aid" --arg atype "$_atype" \
+      '{agent: $a, session_id: $sid, harness: $h, blocker: $b, reason_summary: $r,
+       agent_id: (if $aid == "" then null else $aid end),
+       agent_type: (if $atype == "" then null else $atype end)}' 2>/dev/null || true)
     [ -n "$_payload" ] && bus_publish "stop.blocked" "$_payload" 2>/dev/null || true
   fi
   jq -n --arg reason "$reason" '{"decision":"block","reason":$reason}'

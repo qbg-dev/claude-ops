@@ -31,6 +31,9 @@ HARNESS_XML="$PROJECT_ROOT/.claude/repo-context.xml"
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // ""')
+# Parse subagent identity (available via hook_parse_input from fleet-jq.sh)
+_HOOK_AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // ""' 2>/dev/null || echo "")
+_HOOK_AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // ""' 2>/dev/null || echo "")
 
 [ -z "$SESSION_ID" ] && { echo '{}'; exit 0; }
 
@@ -474,7 +477,10 @@ if [ -f "$_MEMORY_FILE" ]; then
     # MEMORY.md was modified during this session — publish observability event
     if [ -f "$HOME/.claude-ops/lib/event-bus.sh" ]; then
       _mem_ev_payload=$(jq -nc --arg a "${_END_HARNESS:-unknown}" --arg src "agent" --arg sid "$SESSION_ID" \
-        '{agent:$a, source:$src, session_id:$sid}' 2>/dev/null || true)
+        --arg aid "${_HOOK_AGENT_ID:-}" --arg atype "${_HOOK_AGENT_TYPE:-}" \
+        '{agent:$a, source:$src, session_id:$sid,
+         agent_id: (if $aid == "" then null else $aid end),
+         agent_type: (if $atype == "" then null else $atype end)}' 2>/dev/null || true)
       if [ -n "$_mem_ev_payload" ]; then
         (source "$HOME/.claude-ops/lib/event-bus.sh" 2>/dev/null && \
           bus_publish "agent.memory-updated" "$_mem_ev_payload" 2>/dev/null || true) &
@@ -490,7 +496,11 @@ if [ "${EVENT_BUS_ENABLED:-false}" = "true" ]; then
     --arg sid "$SESSION_ID" \
     --arg harness "${_END_HARNESS:-}" \
     --arg reason "${end_reason:-manual}" \
-    '{session_id:$sid, harness:$harness, end_reason:$reason}')" 2>/dev/null || true
+    --arg aid "${_HOOK_AGENT_ID:-}" \
+    --arg atype "${_HOOK_AGENT_TYPE:-}" \
+    '{session_id:$sid, harness:$harness, end_reason:$reason,
+     agent_id: (if $aid == "" then null else $aid end),
+     agent_type: (if $atype == "" then null else $atype end)}')" 2>/dev/null || true
 fi
 
 echo '{}'
