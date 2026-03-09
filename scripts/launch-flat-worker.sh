@@ -123,6 +123,19 @@ elif [ ! -d "$WORKTREE_DIR" ]; then
   git -C "$PROJECT_ROOT" worktree add "$WORKTREE_DIR" -b "$BRANCH" 2>/dev/null
 fi
 
+# Symlink registry.json to canonical (main repo) — centralized, not per-worktree
+CANONICAL_REGISTRY="$PROJECT_ROOT/.claude/workers/registry.json"
+WORKTREE_REGISTRY="$WORKTREE_DIR/.claude/workers/registry.json"
+if [ -f "$CANONICAL_REGISTRY" ] && [ "$WORKTREE_DIR" != "$PROJECT_ROOT" ]; then
+  mkdir -p "$(dirname "$WORKTREE_REGISTRY")"
+  if [ -f "$WORKTREE_REGISTRY" ] && [ ! -L "$WORKTREE_REGISTRY" ]; then
+    rm "$WORKTREE_REGISTRY"
+  fi
+  if [ ! -e "$WORKTREE_REGISTRY" ]; then
+    ln -s "$CANONICAL_REGISTRY" "$WORKTREE_REGISTRY"
+  fi
+fi
+
 # Copy untracked config files that worktrees don't inherit from git
 # Always overwrite .mcp.json so worktrees pick up fixes (e.g. absolute bun path)
 for UNTRACKED_CFG in .mcp.json; do
