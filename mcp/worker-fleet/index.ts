@@ -3395,9 +3395,21 @@ async function getFleetMailToken(): Promise<string> {
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
-    // 409 = already registered but we lost the token
+    // 409 = already registered but we lost the token — try daemon auto-repair
     if (resp.status === 409) {
-      throw new Error(`Fleet Mail account '${nsName}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
+      try {
+        const repairResp = await fetch("http://localhost:9100/repair-tokens", {
+          method: "POST",
+          signal: AbortSignal.timeout(15000),
+        });
+        if (repairResp.ok) {
+          // Re-read registry — daemon should have repaired our token
+          const refreshed = readRegistry();
+          const newToken = (refreshed[WORKER_NAME] as any)?.bms_token;
+          if (newToken) return newToken;
+        }
+      } catch {}
+      throw new Error(`Fleet Mail account '${nsName}' exists but token is not in registry. Auto-repair via fleet-relay daemon failed.`);
     }
     throw new Error(`Fleet Mail register failed (${resp.status}): ${errText}`);
   }

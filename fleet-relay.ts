@@ -554,7 +554,7 @@ function handleSSE(req: Request, url: URL): Response {
 
 const server = Bun.serve({
   port: PORT,
-  fetch(req) {
+  async fetch(req) {
     const url = new URL(req.url);
 
     if (url.pathname === "/health") {
@@ -564,6 +564,8 @@ const server = Bun.serve({
         connections: activeConnections.size,
         bms_connected: bmsWs?.readyState === WebSocket.OPEN,
         bms_accounts: accountIdMap.size,
+        tokens_last_checked: tokensLastChecked,
+        tokens_last_result: tokensLastResult,
       });
     }
 
@@ -580,6 +582,16 @@ const server = Bun.serve({
       accountMapRefreshedAt = 0;
       refreshAccountIdMap().catch(() => {});
       return Response.json({ ok: true });
+    }
+
+    // Trigger token validation + auto-repair
+    if (url.pathname === "/repair-tokens" && req.method === "POST") {
+      try {
+        const result = await validateAndRepairTokens();
+        return Response.json({ ok: true, ...result });
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e) }, { status: 500 });
+      }
     }
 
     return new Response("Not Found", { status: 404 });
@@ -630,6 +642,92 @@ function log(tag: string, msg: string, level: "info" | "warn" | "error" = "info"
   else console.log(`${prefix} ${msg}`);
 }
 
+// ── Token Health-Check & Auto-Repair ─────────────────────────────────
+
+let tokensLastChecked: string | null = null;
+let tokensLastResult: { checked: number; repaired: number; failed: number } | null = null;
+
+async function validateAndRepairTokens(): Promise<{ checked: number; repaired: number; failed: number; details: string[] }> {
+  const details: string[] = [];
+  let checked = 0, repaired = 0, failed = 0;
+
+  for (const proj of safeReadDir(FLEET_DIR)) {
+    const regPath = join(FLEET_DIR, proj, "registry.json");
+    let reg: any;
+    try { reg = JSON.parse(readFileSync(regPath, "utf-8")); } catch { continue; }
+
+    for (const [name, entry] of Object.entries(reg)) {
+      if (name === "_config" || name === "user" || name === "operator") continue;
+      const token = (entry as any)?.bms_token;
+      if (!token) continue;
+      checked++;
+
+      // Validate: try GET /api/accounts/me with the worker's token
+      let valid = false;
+      try {
+        const resp = await fetch(`${FLEET_MAIL_URL}/api/accounts/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        valid = resp.ok;
+      } catch {
+        // Network error — don't treat as stale, skip
+        details.push(`${name}@${proj}: skipped (network error)`);
+        continue;
+      }
+
+      if (valid) continue; // token is fine
+
+      // Token is stale — reset via admin API
+      log("token-repair", `${name}@${proj}: token stale, resetting...`);
+      try {
+        const resetResp = await fetch(
+          `${FLEET_MAIL_URL}/api/admin/accounts/${name}@${proj.toLowerCase()}/reset-token`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${BMS_ADMIN_TOKEN}` },
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        if (!resetResp.ok) {
+          log("token-repair", `${name}@${proj}: reset failed (${resetResp.status})`, "error");
+          details.push(`${name}@${proj}: reset failed (${resetResp.status})`);
+          failed++;
+          continue;
+        }
+        const data = await resetResp.json() as any;
+        const newToken = data.bearerToken;
+
+        // Update registry with new token
+        withRegistryLocked(regPath, (r) => {
+          const e = r[name] as any;
+          if (e) {
+            e.bms_token = newToken;
+            if (e.custom?.mail_token) e.custom.mail_token = newToken;
+          }
+        });
+
+        repaired++;
+        details.push(`${name}@${proj}: repaired → ${newToken.slice(0, 8)}...`);
+        log("token-repair", `${name}@${proj}: token repaired → ${newToken.slice(0, 8)}...`);
+      } catch (e) {
+        failed++;
+        details.push(`${name}@${proj}: repair error: ${e}`);
+        log("token-repair", `${name}@${proj}: repair failed: ${e}`, "error");
+      }
+    }
+  }
+
+  tokensLastChecked = new Date().toISOString();
+  tokensLastResult = { checked, repaired, failed };
+
+  if (repaired > 0 || failed > 0) {
+    log("token-repair", `Done: checked=${checked}, repaired=${repaired}, failed=${failed}`);
+  }
+
+  return { checked, repaired, failed, details };
+}
+
 // ── Startup ──────────────────────────────────────────────────────────
 
 log("daemon", `Fleet Relay Daemon starting on port ${PORT}`);
@@ -642,5 +740,15 @@ mkdirSync(LOCK_DIR, { recursive: true });
 
 // Connect to BMS for push notifications
 connectBmsWebSocket();
+
+// Run initial token validation after BMS connects (give it a moment)
+setTimeout(() => {
+  validateAndRepairTokens().catch(e => log("token-repair", `Startup check failed: ${e}`, "error"));
+}, 3000);
+
+// Periodic token validation every 5 minutes
+setInterval(() => {
+  validateAndRepairTokens().catch(e => log("token-repair", `Periodic check failed: ${e}`, "error"));
+}, 5 * 60 * 1000);
 
 log("daemon", `Ready on http://localhost:${PORT}`);
