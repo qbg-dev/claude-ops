@@ -22056,7 +22056,7 @@ server.registerTool("fleet_help", {
   inputSchema: {}
 }, async () => handleFleetHelp());
 server.registerTool("deep_review", {
-  description: "Launch a multi-pass deep review pipeline (v2: SOTA upgrades). Workers follow investigation protocols with structured attack vectors, confidence scoring, and chain-of-thought evidence. Context pre-pass gathers static analysis, dependency graphs, and test coverage. Judge agent does adversarial validation. Material is ADDITIVE \u2014 combine scope (git diff) and content (files). `scope` auto-detects: branch=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=PR. Graduated voting uses confidence + votes (not binary). Creates dedicated tmux session.",
+  description: "Launch a multi-pass deep review pipeline (v3). Workers follow investigation protocols with structured attack vectors, confidence scoring, and chain-of-thought evidence. Context pre-pass gathers static analysis, dependency graphs, test coverage, and git blame context. Judge agent does adversarial validation. Reads REVIEW.md for project-specific 'Always Flag'/'Never Flag' rules. Material is ADDITIVE \u2014 combine scope (git diff) and content (files). `scope` auto-detects: branch=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=PR. Graduated voting uses confidence + votes. Auto-skips trivial changes (lockfile-only, <5 lines). Smart focus auto-detects claude-md and silent-failure specializations. Emoji severity markers (\uD83D\uDD34\uD83D\uDFE1\uD83D\uDD35\uD83D\uDFE3) in reports. Pre-existing issues tracked separately via blame context. Creates dedicated tmux session.",
   inputSchema: {
     scope: exports_external.string().optional().describe("Git diff scope. Auto-detects: branch name (e.g. 'main'), commit SHA, 'uncommitted', 'pr:42'. Default: HEAD if no content. Additive with content."),
     content: exports_external.union([exports_external.string(), exports_external.array(exports_external.string())]).optional().describe("File path(s) to review. Comma-separated string or array. Additive with scope."),
@@ -22064,9 +22064,10 @@ server.registerTool("deep_review", {
     passes: exports_external.number().optional().describe("Passes PER focus area (default: 2). Total workers = passes \xD7 focus areas."),
     session_name: exports_external.string().optional().describe("Custom tmux session name (overrides auto-naming)"),
     notify: exports_external.string().optional().describe("Worker name or 'user' to notify on completion."),
-    focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas."),
+    focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas. Extra specializations: 'silent-failure' (error swallowing), 'claude-md' (CLAUDE.md compliance). Smart focus auto-includes these when patterns detected."),
     no_judge: exports_external.boolean().optional().describe("Skip the adversarial judge validation stage (faster but less precise). Default: false."),
-    no_context: exports_external.boolean().optional().describe("Skip context pre-pass (static analysis, dependency graph, test coverage). Default: false.")
+    no_context: exports_external.boolean().optional().describe("Skip context pre-pass (static analysis, dependency graph, test coverage). Default: false."),
+    force: exports_external.boolean().optional().describe("Force review even if auto-skip would trigger (lockfile-only changes, <5 substantive lines). Default: false.")
   }
 }, async ({
   scope,
@@ -22077,7 +22078,8 @@ server.registerTool("deep_review", {
   notify,
   focus,
   no_judge,
-  no_context
+  no_context,
+  force
 }) => {
   try {
     const scriptPath = join(CLAUDE_OPS, "scripts", "deep-review.sh");
@@ -22112,6 +22114,9 @@ server.registerTool("deep_review", {
     }
     if (no_context) {
       args.push("--no-context");
+    }
+    if (force) {
+      args.push("--force");
     }
     if (content) {
       const paths = Array.isArray(content) ? content : content.split(",");
@@ -22278,7 +22283,19 @@ async function getFleetMailToken() {
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
     if (resp.status === 409) {
-      throw new Error(`Fleet Mail account '${nsName}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
+      try {
+        const repairResp = await fetch("http://localhost:9100/repair-tokens", {
+          method: "POST",
+          signal: AbortSignal.timeout(15000)
+        });
+        if (repairResp.ok) {
+          const refreshed = readRegistry();
+          const newToken = refreshed[WORKER_NAME]?.bms_token;
+          if (newToken)
+            return newToken;
+        }
+      } catch {}
+      throw new Error(`Fleet Mail account '${nsName}' exists but token is not in registry. Auto-repair via fleet-relay daemon failed.`);
     }
     throw new Error(`Fleet Mail register failed (${resp.status}): ${errText}`);
   }
