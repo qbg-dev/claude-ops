@@ -480,6 +480,34 @@ export function App({
         });
         return;
       }
+      // Tab completion
+      if (key.tab) {
+        const cmds = ["vsplit", "hsplit", "close", "as", "send", "search", "reply", "quit"];
+        const workerNames = s.workerList.map((w) => w.name);
+        // Use the original base text when cycling
+        const txt = s.tabCompletionBase || s.commandInput;
+        const parts = txt.split(/\s+/);
+
+        let completions: string[] = [];
+        if (parts.length <= 1) {
+          const prefix = parts[0] || "";
+          completions = cmds
+            .filter((c) => c.startsWith(prefix))
+            .map((c) => c + " ");
+        } else {
+          const cmd = parts[0];
+          const argPrefix = parts.slice(1).join(" ");
+          const matches = workerNames.filter((w) => w.startsWith(argPrefix));
+          if (matches.length === 0) {
+            matches.push(...workerNames.filter((w) => w.includes(argPrefix)));
+          }
+          completions = matches.map((w) => cmd + " " + w);
+        }
+        if (completions.length > 0) {
+          dispatch({ type: "TAB_COMPLETE", completions });
+        }
+        return;
+      }
       if (input && !key.ctrl && !key.meta) {
         dispatch({
           type: "SET_COMMAND_INPUT",
@@ -589,6 +617,28 @@ export function App({
         dispatch({ type: "SIDEBAR_DOWN" });
       } else {
         dispatch({ type: "CURSOR_DOWN" });
+        // Auto-open next message if detail is currently visible
+        const pane = s.panes[s.activePaneIndex];
+        if (pane && (pane.openMessage || pane.openThread)) {
+          const nextIdx = Math.min(pane.selectedIndex + 1, (pane.tab === "inbox" || pane.tab === "sent" ? pane.messages.length : pane.threads.length) - 1);
+          if (pane.tab === "inbox" || pane.tab === "sent") {
+            const msg = pane.messages[nextIdx];
+            if (msg) {
+              const token = getToken(pane.worker);
+              fetchMessage(token, msg.id).then((full) => {
+                dispatch({ type: "OPEN_MESSAGE", message: full || msg });
+              }).catch(() => dispatch({ type: "OPEN_MESSAGE", message: msg }));
+            }
+          } else if (pane.tab === "threads") {
+            const thread = pane.threads[nextIdx];
+            if (thread) {
+              const token = getToken(pane.worker);
+              fetchThread(token, thread.id).then((full) => {
+                dispatch({ type: "OPEN_THREAD", thread: full || thread });
+              }).catch(() => dispatch({ type: "OPEN_THREAD", thread }));
+            }
+          }
+        }
       }
       return;
     }
@@ -597,6 +647,28 @@ export function App({
         dispatch({ type: "SIDEBAR_UP" });
       } else {
         dispatch({ type: "CURSOR_UP" });
+        // Auto-open prev message if detail is currently visible
+        const pane = s.panes[s.activePaneIndex];
+        if (pane && (pane.openMessage || pane.openThread)) {
+          const prevIdx = Math.max(pane.selectedIndex - 1, 0);
+          if (pane.tab === "inbox" || pane.tab === "sent") {
+            const msg = pane.messages[prevIdx];
+            if (msg) {
+              const token = getToken(pane.worker);
+              fetchMessage(token, msg.id).then((full) => {
+                dispatch({ type: "OPEN_MESSAGE", message: full || msg });
+              }).catch(() => dispatch({ type: "OPEN_MESSAGE", message: msg }));
+            }
+          } else if (pane.tab === "threads") {
+            const thread = pane.threads[prevIdx];
+            if (thread) {
+              const token = getToken(pane.worker);
+              fetchThread(token, thread.id).then((full) => {
+                dispatch({ type: "OPEN_THREAD", thread: full || thread });
+              }).catch(() => dispatch({ type: "OPEN_THREAD", thread }));
+            }
+          }
+        }
       }
       return;
     }

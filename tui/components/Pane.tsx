@@ -28,10 +28,10 @@ export function Pane({
   // Calculate content height: total - tab bar (1) - borders (2)
   const contentHeight = Math.max(1, height - 3);
 
-  // If detail is open, split view: list takes ~40%, detail takes ~60%
+  // If detail is open, split view: list takes ~30%, detail takes ~70%
   const hasDetail = !!openMessage || !!openThread;
   const listHeight = hasDetail
-    ? Math.max(3, Math.floor(contentHeight * 0.35))
+    ? Math.max(4, Math.floor(contentHeight * 0.30))
     : contentHeight;
   const detailHeight = hasDetail ? contentHeight - listHeight : 0;
 

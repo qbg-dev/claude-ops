@@ -54,6 +54,8 @@ export interface AppState {
   statusMessage: string;
 
   pendingG: boolean; // for gg detection
+  tabCompletionIndex: number; // cycle through tab completions
+  tabCompletionBase: string; // original input before tab cycling
 }
 
 // ── Actions ──
@@ -94,7 +96,8 @@ export type Action =
   | { type: "NEXT_PANE" }
   | { type: "SET_SEARCH"; query: string }
   | { type: "SET_PENDING_G"; pending: boolean }
-  | { type: "UPDATE_UNREAD"; worker: string; count: number };
+  | { type: "UPDATE_UNREAD"; worker: string; count: number }
+  | { type: "TAB_COMPLETE"; completions: string[] };
 
 // ── Helpers ──
 
@@ -187,7 +190,6 @@ export function reducer(state: AppState, action: Action): AppState {
     case "CURSOR_DOWN": {
       if (state.focusedPanel !== "pane") return state;
       const pane = activePane(state);
-      if (pane.openMessage || pane.openThread) return state;
       const max = listLength(pane) - 1;
       const newIndex = clamp(pane.selectedIndex + 1, 0, max);
       return updateActivePane(state, { selectedIndex: newIndex });
@@ -196,7 +198,6 @@ export function reducer(state: AppState, action: Action): AppState {
     case "CURSOR_UP": {
       if (state.focusedPanel !== "pane") return state;
       const pane = activePane(state);
-      if (pane.openMessage || pane.openThread) return state;
       const newIndex = clamp(pane.selectedIndex - 1, 0, listLength(pane) - 1);
       return updateActivePane(state, { selectedIndex: newIndex });
     }
@@ -306,7 +307,19 @@ export function reducer(state: AppState, action: Action): AppState {
       };
 
     case "SET_COMMAND_INPUT":
-      return { ...state, commandInput: action.input };
+      return { ...state, commandInput: action.input, tabCompletionIndex: -1, tabCompletionBase: "" };
+
+    case "TAB_COMPLETE": {
+      if (action.completions.length === 0) return state;
+      const nextIdx = (state.tabCompletionIndex + 1) % action.completions.length;
+      const base = state.tabCompletionBase || state.commandInput;
+      return {
+        ...state,
+        commandInput: action.completions[nextIdx],
+        tabCompletionIndex: nextIdx,
+        tabCompletionBase: base,
+      };
+    }
 
     case "TOGGLE_HELP":
       return { ...state, showHelp: !state.showHelp };
@@ -430,6 +443,8 @@ export function createInitialState(
     searchQuery: "",
     statusMessage: "",
     pendingG: false,
+    tabCompletionIndex: -1,
+    tabCompletionBase: "",
   };
 }
 
