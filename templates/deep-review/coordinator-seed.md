@@ -10,6 +10,12 @@ Each focus group has {{PASSES_PER_FOCUS}} independent workers who saw the same m
 
 Workers report findings across multiple kinds — bugs, security, performance, design, ux, completeness, gaps, risks, errors, ambiguity, alternatives, improvements. Treat them all seriously.
 
+## Project review rules
+
+{{REVIEW_CONFIG}}
+
+These rules define "Never Flag" and "Always Flag" patterns. Apply them during voting and validation.
+
 ## Session directory
 
 `{{SESSION_DIR}}`
@@ -58,6 +64,16 @@ Workers now report a `confidence` score (0.0–1.0) per finding. Use BOTH vote c
 When {{PASSES_PER_FOCUS}} is 1: voting relies entirely on confidence thresholds. Findings with confidence ≥ 0.8 are candidates; 0.5–0.79 are weak signals; below 0.5 are rejected. Cross-group corroboration still promotes to auto-confirm.
 
 Record the vote count, average confidence, and tier for each bucket.
+
+### Phase 4.5: Confidence recalibration
+
+Apply these adjustments after initial tiering:
+- **ALL contributing workers ≥ 0.9** → auto-confirm even with 1 vote (high-confidence unanimous signal)
+- **3+ votes across different focus groups** → boost confidence by 0.1 (cap 1.0) — cross-group corroboration is strong
+- **Matches "Never Flag" in project review rules** → force reject regardless of votes/confidence
+- **Matches "Always Flag" in project review rules** → force candidate minimum regardless of votes
+- **Reject threshold tightened**: workers at 0.5 confidence are too speculative — treat 0.5 as the floor for weak signals, reject below 0.55
+- **Pre-existing findings** (tagged `pre_existing: true` by workers): separate into their own section, do not count against the change author
 
 ### Phase 5: Merge descriptions
 
@@ -108,16 +124,25 @@ For findings that survived the judge (or all findings if no judge ran):
 3. For code bugs/security: verify the code path is reachable
 4. For content findings: verify the concern is substantive (not hypothetical)
 5. Mark as `confirmed` or `rejected` with a reason
-6. Only confirmed findings survive
+6. Reject findings that match "Never Flag" patterns in the project review rules
+7. Promote findings that match "Always Flag" patterns to minimum-candidate tier
+8. Only confirmed findings survive
 
 ### Phase 7: Cross-run dedup
 
 Read the history file at: `{{HISTORY_FILE}}`
 (Create it if it doesn't exist.)
 
-Compare confirmed findings against previous runs:
-- If a finding matches a previously reported one (same location + similar description), mark it as `duplicate` and skip
-- Append all NEW confirmed findings to the history file
+Each line in the history file is a JSON object with this schema:
+```json
+{"id": "<sha256 of location+title>", "location": "file:line", "title": "...", "kind": "...", "severity": "...", "first_seen": "ISO date", "last_seen": "ISO date", "seen_count": 1}
+```
+
+Compare confirmed findings against previous entries using fuzzy matching:
+- **Same file ±10 lines** AND **same kind** → probable duplicate
+- **Similar title** (>70% word overlap) → probable duplicate
+- If a match is found: update `last_seen` and `seen_count` in the history, mark finding as `duplicate` and skip
+- Append all NEW confirmed findings as new history entries
 
 ### Phase 8: Act on findings
 
@@ -150,6 +175,17 @@ Compare confirmed findings against previous runs:
 
 Write the final report to: `{{REPORT_FILE}}`
 
+**Severity emoji markers** — use these instead of text `[severity]` in the report:
+
+| Marker | Severity |
+|--------|----------|
+| 🔴 | critical, high |
+| 🟡 | medium |
+| 🔵 | low, note |
+| 🟣 | pre_existing: true (any severity) |
+
+Workers use text severity in their findings. Map to emoji during report generation only.
+
 Format:
 ```markdown
 # Deep Review Report
@@ -162,7 +198,7 @@ Format:
 
 ## Critical & High — Bugs & Security (auto-fixed)
 
-### 1. [severity] Title — location
+### 1. 🔴 Title — location
 **Votes**: N/{{PASSES_PER_FOCUS}} | **Confidence**: 0.XX | **Kind**: bug/security | **Judge**: confirmed/downgraded/skipped
 **Description**: ...
 **Fix applied**: Yes/No — description of fix
@@ -171,7 +207,7 @@ Format:
 
 ## Performance Issues
 
-### N. [severity] Title — location
+### N. 🟡 Title — location
 **Votes**: N/{{PASSES_PER_FOCUS}} | **Confidence**: 0.XX | **Effort**: trivial/small/medium/large
 **Description**: ...
 **Fix applied**: Yes/No
@@ -180,7 +216,7 @@ Format:
 
 ## Content Findings (Gaps, Risks, Errors)
 
-### N. [severity] Title — section
+### N. 🟡 Title — section
 **Votes**: N/{{PASSES_PER_FOCUS}} | **Confidence**: 0.XX | **Kind**: gap/risk/error/ambiguity/alternative
 **Description**: ...
 **Suggestion**: ...
@@ -189,7 +225,7 @@ Format:
 
 ## Design & Architecture Concerns
 
-### N. [severity] Title — location
+### N. 🟡 Title — location
 **Votes**: N/{{PASSES_PER_FOCUS}}
 **Concern**: ...
 **Suggested approach**: ...
@@ -198,7 +234,7 @@ Format:
 
 ## Completeness Gaps
 
-### N. [severity] Title — location
+### N. 🔵 Title — location
 **Votes**: N/{{PASSES_PER_FOCUS}}
 **What's missing**: ...
 **Suggested fix**: ...
@@ -207,9 +243,20 @@ Format:
 
 ## Improvements (suggestions for author)
 
-### N. Title — location
+### N. 🔵 Title — location
 **Votes**: N/{{PASSES_PER_FOCUS}} | **Effort**: trivial/small/medium/large
 **Rationale**: ...
+
+---
+
+## Pre-existing Issues (for awareness)
+
+(Issues found in code that predates this change. Reported for awareness, not counted against the change author.)
+
+### N. 🟣 Title — location
+**Votes**: N/{{PASSES_PER_FOCUS}} | **Confidence**: 0.XX | **Kind**: ...
+**Description**: ...
+**Suggestion**: ...
 
 ---
 
@@ -222,6 +269,7 @@ Format:
 - **Content**: <N> content findings (gaps, risks, errors) — advisory
 - **Documented**: <N> design/architecture concerns for human review
 - **Suggested**: <N> improvements for author consideration
+- **Pre-existing**: <N> inherited issues (🟣 — for awareness only)
 - **Filtered**: <N> findings removed by voting
 - **Specialist-only**: <N> flagged for manual review
 ```

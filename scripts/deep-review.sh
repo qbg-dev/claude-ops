@@ -45,6 +45,7 @@ REVIEW_SPEC=""
 SCOPE=""
 NO_JUDGE=false
 NO_CONTEXT=false
+FORCE=false
 
 # ── Attack vectors per specialization ──────────────────────
 get_attack_vectors() {
@@ -61,6 +62,8 @@ get_attack_vectors() {
     feasibility)  echo "Check for: implementation complexity underestimated. Dependencies on systems/APIs/people not accounted for. Resource requirements (time, compute, cost) not realistic. Blockers not identified. Ordering issues — does step 3 depend on step 5? Scope creep risks." ;;
     risks)        echo "Check for: single points of failure. What happens if an external dependency goes down? Failure modes not discussed. Security implications of the proposed approach. Operational burden of maintaining this. Rollback strategy if things go wrong." ;;
     improvement)  echo "Look for: real improvements to reliability, readability, or maintainability. Patterns that could be simplified. Duplicated logic that could be extracted. Missing abstractions that would reduce complexity. Better error messages or logging." ;;
+    silent-failure) echo "Find every try-catch, .catch(), error callback, optional chaining (?.), null coalescing (??), and fallback/default value. For each: (1) Is the error logged with context? (2) Does the user get actionable feedback or is it swallowed? (3) Is the catch specific or catch-all? (4) Empty catch blocks? (5) Does error recovery leave consistent state? (6) Fallbacks that mask real problems? Every silent swallow is critical." ;;
+    claude-md)    echo "Read ALL CLAUDE.md files in the project (root, .claude/, subdirectories). For each changed file, check: does the change comply with every applicable rule? Cross-reference: 'CLAUDE.md rule X requires Y, but the change does Z.' Only report EXPLICIT violations, not general best practices." ;;
     *)            echo "Review thoroughly using your specialization lens. Look for issues that a generalist might miss. Trace implications across the codebase." ;;
   esac
 }
@@ -106,6 +109,7 @@ while [[ $# -gt 0 ]]; do
     --focus)   CUSTOM_FOCUS="$2"; shift 2 ;;
     --no-judge)  NO_JUDGE=true; shift ;;
     --no-context) NO_CONTEXT=true; shift ;;
+    --force)     FORCE=true; shift ;;
     # Legacy aliases
     --base)        SCOPE="$2"; shift 2 ;;
     --commit)      SCOPE="$2"; shift 2 ;;
@@ -131,9 +135,11 @@ while [[ $# -gt 0 ]]; do
       echo "  --focus LIST         Comma-separated focus areas (overrides auto-detect)"
       echo "  --no-judge           Skip adversarial judge validation"
       echo "  --no-context         Skip context pre-pass (static analysis, deps)"
+      echo "  --force              Force review even if auto-skip would trigger"
       echo "                       Diff: security,logic,error-handling,data-integrity,architecture,performance,ux-impact,completeness"
       echo "                       Content: correctness,completeness,feasibility,risks"
       echo "                       Mixed: security,logic,correctness,completeness,feasibility,risks"
+      echo "                       Extra: silent-failure,claude-md (available via --focus)"
       echo ""
       echo "Legacy aliases (still work):"
       echo "  --base BRANCH        Same as --scope BRANCH"
@@ -193,6 +199,17 @@ if [ ! -f "$TEMPLATE_DIR/worker-seed.md" ] || [ ! -f "$TEMPLATE_DIR/coordinator-
 fi
 
 cd "$PROJECT_ROOT"
+
+# ── Detect REVIEW.md ─────────────────────────────────────────
+REVIEW_CONFIG=""
+for _rmd in "$PROJECT_ROOT/REVIEW.md" "$PROJECT_ROOT/.claude/REVIEW.md"; do
+  if [ -f "$_rmd" ]; then
+    REVIEW_CONFIG=$(cat "$_rmd")
+    echo "REVIEW.md: $_rmd"
+    break
+  fi
+done
+[ -z "$REVIEW_CONFIG" ] && echo "REVIEW.md: not found (skipping project-specific rules)"
 
 # ── Build session name ───────────────────────────────────────
 if [ -n "$CUSTOM_SESSION_NAME" ]; then
@@ -338,6 +355,91 @@ MATERIAL_TYPES_STR=$(IFS='+'; echo "${MATERIAL_TYPES[*]}")
 DIFF_LINES=$(wc -l < "$MATERIAL_FILE" | tr -d ' ')
 echo "Material: $DIFF_LINES lines ($DIFF_DESC)"
 
+# ── Auto-skip trivial changes ────────────────────────────────
+if ! $FORCE && $HAS_DIFF && ! $HAS_CONTENT; then
+  # Check if ALL changed files are lockfiles only
+  CHANGED_PATHS=$(grep -E '^diff --git a/' "$MATERIAL_FILE" 2>/dev/null | sed 's|diff --git a/||;s| b/.*||' | sort -u)
+  ALL_LOCKFILES=true
+  while IFS= read -r cpath; do
+    [ -z "$cpath" ] && continue
+    case "$(basename "$cpath")" in
+      bun.lock|bun.lockb|package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|Gemfile.lock|poetry.lock|composer.lock) ;;
+      *) ALL_LOCKFILES=false; break ;;
+    esac
+  done <<< "$CHANGED_PATHS"
+
+  if $ALL_LOCKFILES && [ -n "$CHANGED_PATHS" ]; then
+    echo "AUTO-SKIP: All changed files are lockfiles. Use --force to override."
+    rm -rf "$SESSION_DIR"
+    exit 0
+  fi
+
+  # Check if diff is all whitespace-only changes
+  SUBSTANTIVE_LINES=$(grep -cE '^\+[^+]|^-[^-]' "$MATERIAL_FILE" 2>/dev/null | tr -d ' ' || echo "0")
+  # Filter out whitespace-only additions/removals
+  WHITESPACE_ONLY=$(grep -E '^\+[^+]|^-[^-]' "$MATERIAL_FILE" 2>/dev/null | grep -cvE '^\+\s*$|^-\s*$' 2>/dev/null | tr -d ' ' || echo "0")
+
+  if [ "$WHITESPACE_ONLY" -lt 5 ] && [ -z "$REVIEW_SPEC" ]; then
+    echo "AUTO-SKIP: <5 substantive diff lines and no --spec. Use --force to override."
+    rm -rf "$SESSION_DIR"
+    exit 0
+  fi
+fi
+
+# ── Smart focus auto-detection (runs after material is available) ──
+if [ -z "$CUSTOM_FOCUS" ] && $HAS_DIFF; then
+  FOCUS_CHANGED=false
+
+  # Auto-include claude-md if project has CLAUDE.md and >50% TS/JS files changed
+  if [ -n "$REVIEW_CONFIG" ] || [ -f "$PROJECT_ROOT/CLAUDE.md" ] || [ -f "$PROJECT_ROOT/.claude/CLAUDE.md" ]; then
+    TOTAL_CHANGED=$(grep -cE '^diff --git a/' "$MATERIAL_FILE" 2>/dev/null || echo 0)
+    TS_CHANGED=$(grep -E '^diff --git a/' "$MATERIAL_FILE" 2>/dev/null | grep -cE '\.(ts|tsx|js|jsx)' || echo 0)
+    if [ "$TOTAL_CHANGED" -gt 0 ] && [ "$((TS_CHANGED * 100 / TOTAL_CHANGED))" -ge 50 ]; then
+      NEW_FOCUS=()
+      REPLACED=false
+      for fa in "${FOCUS_AREAS[@]}"; do
+        if [ "$fa" = "ux-impact" ] && ! $REPLACED; then
+          NEW_FOCUS+=("claude-md")
+          REPLACED=true
+        else
+          NEW_FOCUS+=("$fa")
+        fi
+      done
+      if $REPLACED; then
+        FOCUS_AREAS=("${NEW_FOCUS[@]}")
+        FOCUS_CHANGED=true
+        echo "Smart focus: replaced ux-impact with claude-md (>50% TS/JS + CLAUDE.md present)"
+      fi
+    fi
+  fi
+
+  # Auto-include silent-failure if diff contains try/catch/.catch patterns
+  CATCH_COUNT=$(grep -cE '(try\s*\{|\.catch\(|catch\s*\()' "$MATERIAL_FILE" 2>/dev/null || echo 0)
+  if [ "$CATCH_COUNT" -ge 3 ]; then
+    NEW_FOCUS=()
+    REPLACED=false
+    for fa in "${FOCUS_AREAS[@]}"; do
+      if [ "$fa" = "completeness" ] && ! $REPLACED; then
+        NEW_FOCUS+=("silent-failure")
+        REPLACED=true
+      else
+        NEW_FOCUS+=("$fa")
+      fi
+    done
+    if $REPLACED; then
+      FOCUS_AREAS=("${NEW_FOCUS[@]}")
+      FOCUS_CHANGED=true
+      echo "Smart focus: replaced completeness with silent-failure ($CATCH_COUNT try/catch patterns)"
+    fi
+  fi
+
+  if $FOCUS_CHANGED; then
+    NUM_FOCUS=${#FOCUS_AREAS[@]}
+    TOTAL_WORKERS=$((PASSES_PER_FOCUS * NUM_FOCUS))
+    echo "Updated focus areas ($NUM_FOCUS): ${FOCUS_AREAS[*]} ($TOTAL_WORKERS workers)"
+  fi
+fi
+
 # ── Context pre-pass (Phase 3: context engineering) ──────────
 # Entire pre-pass is best-effort — failures here should never abort the review
 if $HAS_DIFF && ! $NO_CONTEXT; then
@@ -469,6 +571,94 @@ with open(out_path, 'w') as f:
 print(f"    {tested}/{len(coverage)} files have tests")
 TESTEOF
 
+    # 4. Blame context — classify lines as new vs pre-existing
+    echo "  Building blame context..."
+    BLAME_FILE="$SESSION_DIR/blame-context.json"
+    python3 << 'BLAMEEOF' - "$PROJECT_ROOT" "$MATERIAL_FILE" "$BLAME_FILE"
+import sys, json, os, subprocess, re
+
+project_root = sys.argv[1]
+material_file = sys.argv[2]
+out_path = sys.argv[3]
+
+# Parse diff to find changed line numbers per file
+with open(material_file) as f:
+    content = f.read()
+
+blame_data = {}
+current_file = None
+current_new_lines = []
+
+for line in content.split('\n'):
+    # Track current file
+    m = re.match(r'^diff --git a/(\S+)', line)
+    if m:
+        if current_file and current_new_lines:
+            blame_data[current_file] = current_new_lines
+        current_file = m.group(1)
+        current_new_lines = []
+        continue
+
+    # Parse hunk headers for line numbers
+    m = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+    if m:
+        start = int(m.group(1))
+        count = int(m.group(2)) if m.group(2) else 1
+        # Track these as the new line range
+        continue
+
+if current_file and current_new_lines:
+    blame_data[current_file] = current_new_lines
+
+# For each changed file, run git blame on surrounding context
+result = {}
+for filepath in list(blame_data.keys())[:30]:  # Cap at 30 files
+    full_path = os.path.join(project_root, filepath)
+    if not os.path.exists(full_path):
+        continue
+
+    try:
+        # Get the current HEAD commit
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5, cwd=project_root
+        )
+        head_sha = head_result.stdout.strip()[:8]
+
+        # Run git blame on the file
+        blame_result = subprocess.run(
+            ["git", "blame", "--porcelain", filepath],
+            capture_output=True, text=True, timeout=10, cwd=project_root
+        )
+
+        if blame_result.returncode == 0:
+            # Count lines by author recency
+            new_lines = 0
+            old_lines = 0
+            for bl in blame_result.stdout.split('\n'):
+                if bl.startswith('author-time '):
+                    pass  # Could use timestamps for finer classification
+                # Lines starting with commit SHA
+                if len(bl) >= 40 and bl[0:8].isalnum():
+                    sha = bl[:8]
+                    if sha == head_sha or sha == '00000000':
+                        new_lines += 1
+                    else:
+                        old_lines += 1
+
+            result[filepath] = {
+                "new_in_diff": new_lines,
+                "pre_existing": old_lines,
+                "ratio_new": round(new_lines / max(new_lines + old_lines, 1), 2)
+            }
+    except Exception:
+        pass
+
+with open(out_path, 'w') as f:
+    json.dump(result, f, indent=2)
+print(f"    {len(result)} files blame-analyzed")
+BLAMEEOF
+
     echo "  Context gathering complete."
   ) || echo "  WARN: Context pre-pass had errors (non-fatal, continuing)"
   fi
@@ -556,11 +746,12 @@ for i in $(seq 1 "$TOTAL_WORKERS"); do
     -e "s|{{SPEC}}|$REVIEW_SPEC|g" \
     "$TEMPLATE_DIR/worker-seed.md" > "$SESSION_DIR/worker-$i-seed.md"
 
-  # Attack vectors may contain special chars — use python for safe substitution
-  python3 -c "
-import sys
+  # Attack vectors + REVIEW_CONFIG may contain special chars — use python for safe substitution
+  _REVIEW_CONFIG="$REVIEW_CONFIG" python3 -c "
+import sys, os
 with open(sys.argv[1]) as f: content = f.read()
 content = content.replace('{{ATTACK_VECTORS}}', sys.argv[2])
+content = content.replace('{{REVIEW_CONFIG}}', os.environ.get('_REVIEW_CONFIG', ''))
 with open(sys.argv[1], 'w') as f: f.write(content)
 " "$SESSION_DIR/worker-$i-seed.md" "$AV"
 done
@@ -580,6 +771,14 @@ sed \
   -e "s|{{DIFF_DESC}}|$DIFF_DESC|g" \
   -e "s|{{MATERIAL_TYPES}}|$MATERIAL_TYPES_STR|g" \
   "$TEMPLATE_DIR/coordinator-seed.md" > "$SESSION_DIR/coordinator-seed.md"
+
+# Safe-substitute REVIEW_CONFIG into coordinator (may contain special chars)
+_REVIEW_CONFIG="$REVIEW_CONFIG" python3 -c "
+import sys, os
+with open(sys.argv[1]) as f: content = f.read()
+content = content.replace('{{REVIEW_CONFIG}}', os.environ.get('_REVIEW_CONFIG', ''))
+with open(sys.argv[1], 'w') as f: f.write(content)
+" "$SESSION_DIR/coordinator-seed.md"
 
 # ── Create launch wrappers ───────────────────────────────────
 for i in $(seq 1 "$TOTAL_WORKERS"); do
@@ -605,6 +804,14 @@ if ! $NO_JUDGE && [ -f "$TEMPLATE_DIR/judge-seed.md" ]; then
     -e "s|{{PROJECT_ROOT}}|$PROJECT_ROOT|g" \
     -e "s|{{NUM_PASSES}}|$TOTAL_WORKERS|g" \
     "$TEMPLATE_DIR/judge-seed.md" > "$SESSION_DIR/judge-seed.md"
+
+  # Safe-substitute REVIEW_CONFIG into judge
+  _REVIEW_CONFIG="$REVIEW_CONFIG" python3 -c "
+import sys, os
+with open(sys.argv[1]) as f: content = f.read()
+content = content.replace('{{REVIEW_CONFIG}}', os.environ.get('_REVIEW_CONFIG', ''))
+with open(sys.argv[1], 'w') as f: f.write(content)
+" "$SESSION_DIR/judge-seed.md"
 
   cat > "$SESSION_DIR/run-judge.sh" << JEOF
 #!/usr/bin/env bash

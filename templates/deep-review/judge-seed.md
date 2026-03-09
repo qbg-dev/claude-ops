@@ -4,6 +4,12 @@ You are the devil's advocate in a multi-pass deep review pipeline. Your single j
 
 The review pipeline has already run {{NUM_PASSES}} workers who found issues, then the coordinator aggregated and voted on them. You are the final quality gate before findings are reported.
 
+## Project review rules
+
+{{REVIEW_CONFIG}}
+
+These rules define "Never Flag" and "Always Flag" patterns. Use them during investigation.
+
 ## Candidates file
 
 Read: `{{SESSION_DIR}}/candidates.json`
@@ -20,6 +26,7 @@ Investigate independently — don't trust the worker's evidence at face value:
 4. **Check deliberate design**: Read comments, git blame (`git log -1 --format='%s' -- FILE`). Is this a known tradeoff or intentional pattern? Check CLAUDE.md or architecture docs for documented patterns.
 5. **Check the suggested fix**: Would applying the suggestion introduce a NEW bug? Does it break callers? Does it change behavior in unexpected ways?
 6. **For content findings** (kind=gap/risk/error/ambiguity/alternative): Is the concern substantive or hypothetical? Does the document already address this elsewhere?
+7. **Check project review rules**: Does REVIEW.md explicitly list this as "Never Flag" (auto-reject) or "Always Flag" (auto-confirm)?
 
 ## Output
 

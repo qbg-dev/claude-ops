@@ -30,6 +30,13 @@ While you must review ALL material, pay **extra attention** to your focus area:
 
 Your specialization gives you a lens — use it to go deeper on patterns others might overlook. But still report findings in any category.
 
+## Project review rules
+
+{{REVIEW_CONFIG}}
+
+If the rules say "Never Flag" a pattern, do NOT report it regardless of confidence.
+If they say "Always Flag" something, treat matches as minimum-high severity.
+
 ## Review spec
 
 {{SPEC}}
@@ -47,8 +54,9 @@ If these files exist in `{{SESSION_DIR}}`, read them BEFORE reviewing — they c
 - **`static-analysis.txt`** — compiler/linter errors for changed files. These are ground truth — if tsc reports an error, it's real.
 - **`dep-graph.json`** — for each changed file: who imports it (`imported_by`), what it imports (`imports`), recent churn (`churn_30d`). High import count = high blast radius.
 - **`test-coverage.json`** — which changed files have test files and which don't. Untested files are riskier.
+- **`blame-context.json`** — for each changed file: how many lines are new in this diff vs pre-existing. Files with low `ratio_new` are mostly pre-existing code—issues there should be tagged `pre_existing: true`.
 
-Use these actively: compiler errors are confirmed bugs worth tracing. High-churn, high-import, untested files deserve extra scrutiny.
+Use these actively: compiler errors are confirmed bugs worth tracing. High-churn, high-import, untested files deserve extra scrutiny. Blame context helps distinguish new bugs from inherited debt.
 
 ## Investigation protocol
 
@@ -110,7 +118,8 @@ Write a JSON file with this exact structure:
       "description": "Clear explanation of the issue and its impact",
       "evidence": "Chain-of-thought: what you read, what you traced, why it's real (file:lines checked)",
       "suggestion": "Concrete recommendation for how to fix or address it",
-      "effort": "trivial|small|medium|large"
+      "effort": "trivial|small|medium|large",
+      "pre_existing": false
     }
   ]
 }

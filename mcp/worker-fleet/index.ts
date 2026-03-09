@@ -3082,7 +3082,7 @@ server.registerTool(
   "deep_review",
   {
     description:
-      "Launch a multi-pass deep review pipeline (v2: SOTA upgrades). Workers follow investigation protocols with structured attack vectors, confidence scoring, and chain-of-thought evidence. Context pre-pass gathers static analysis, dependency graphs, and test coverage. Judge agent does adversarial validation. Material is ADDITIVE — combine scope (git diff) and content (files). `scope` auto-detects: branch=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=PR. Graduated voting uses confidence + votes (not binary). Creates dedicated tmux session.",
+      "Launch a multi-pass deep review pipeline (v3). Workers follow investigation protocols with structured attack vectors, confidence scoring, and chain-of-thought evidence. Context pre-pass gathers static analysis, dependency graphs, test coverage, and git blame context. Judge agent does adversarial validation. Reads REVIEW.md for project-specific 'Always Flag'/'Never Flag' rules. Material is ADDITIVE — combine scope (git diff) and content (files). `scope` auto-detects: branch=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=PR. Graduated voting uses confidence + votes. Auto-skips trivial changes (lockfile-only, <5 lines). Smart focus auto-detects claude-md and silent-failure specializations. Emoji severity markers (🔴🟡🔵🟣) in reports. Pre-existing issues tracked separately via blame context. Creates dedicated tmux session.",
     inputSchema: {
       scope: z
         .string()
@@ -3111,7 +3111,7 @@ server.registerTool(
       focus: z
         .array(z.string())
         .optional()
-        .describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas."),
+        .describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas. Extra specializations: 'silent-failure' (error swallowing), 'claude-md' (CLAUDE.md compliance). Smart focus auto-includes these when patterns detected."),
       no_judge: z
         .boolean()
         .optional()
@@ -3120,6 +3120,10 @@ server.registerTool(
         .boolean()
         .optional()
         .describe("Skip context pre-pass (static analysis, dependency graph, test coverage). Default: false."),
+      force: z
+        .boolean()
+        .optional()
+        .describe("Force review even if auto-skip would trigger (lockfile-only changes, <5 substantive lines). Default: false."),
     },
   },
   async ({
@@ -3132,6 +3136,7 @@ server.registerTool(
     focus,
     no_judge,
     no_context,
+    force,
   }: {
     scope?: string;
     content?: string | string[];
@@ -3142,6 +3147,7 @@ server.registerTool(
     focus?: string[];
     no_judge?: boolean;
     no_context?: boolean;
+    force?: boolean;
   }) => {
     try {
       const scriptPath = join(CLAUDE_OPS, "scripts", "deep-review.sh");
@@ -3181,6 +3187,9 @@ server.registerTool(
       }
       if (no_context) {
         args.push("--no-context");
+      }
+      if (force) {
+        args.push("--force");
       }
 
       // Validate content files exist before spawning (fast fail with clear message)
