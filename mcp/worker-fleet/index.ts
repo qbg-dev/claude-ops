@@ -3131,13 +3131,18 @@ async function getBmsToken(): Promise<string> {
   const data = await resp.json() as any;
   const token = data.bearerToken as string;
 
-  // Persist to registry
+  // Persist to registry — do NOT silently swallow errors here.
+  // If this fails, the token works for this session but is lost on restart,
+  // leading to an unrecoverable 409 on next getBmsToken() call.
   try {
     withRegistryLocked((reg) => {
       if (!reg[WORKER_NAME]) ensureWorkerInRegistry(reg, WORKER_NAME);
       (reg[WORKER_NAME] as any).bms_token = token;
     });
-  } catch {}
+  } catch (e) {
+    console.error(`[getBmsToken] WARN: Failed to persist bms_token for ${WORKER_NAME} to registry.json: ${e}`);
+    console.error(`[getBmsToken] Token works for this session but will be lost on restart — 409 on next call.`);
+  }
 
   return token;
 }
