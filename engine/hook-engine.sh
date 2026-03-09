@@ -134,14 +134,15 @@ done
 if [ -n "$BLOCK_REASONS" ] && [ "$EVENT" != "PostToolUse" ]; then
   PENDING_COUNT=$(echo -e "$BLOCK_REASONS" | grep -c '\[' || echo "0")
   REASON=$(printf '## %s pending blocking hook(s)\n\n%b\nComplete each with complete_hook(id) before proceeding.' "$PENDING_COUNT" "$BLOCK_REASONS")
-  jq -n --arg reason "$REASON" '{"decision":"block","reason":$reason}'
+  # Use -c (compact) to prevent Apple jq from emitting literal newlines in string values
+  jq -cn --arg reason "$REASON" '{"decision":"block","reason":$reason}'
   exit 0
 fi
 
 # Inject context if any non-blocking hooks matched
 if [ -n "$INJECT_CONTEXTS" ]; then
   CTX=$(printf '%b' "$INJECT_CONTEXTS" | head -c 2000)
-  jq -n --arg ctx "$CTX" '{"additionalContext":$ctx}'
+  jq -cn --arg ctx "$CTX" '{"additionalContext":$ctx}'
   exit 0
 fi
 
