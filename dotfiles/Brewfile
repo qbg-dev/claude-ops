@@ -1,0 +1,138 @@
+# Brewfile — declarative Homebrew package list
+# Install: brew bundle --file=~/.claude-ops/dotfiles/Brewfile
+# Check:   brew bundle check --file=~/.claude-ops/dotfiles/Brewfile
+# Cleanup: brew bundle cleanup --file=~/.claude-ops/dotfiles/Brewfile
+
+# ===== Required (dotfiles break without these) =====
+brew "tmux"
+brew "git"
+brew "gh"
+brew "git-lfs"
+brew "powerlevel10k"
+brew "zsh-autosuggestions"
+brew "zsh-syntax-highlighting"
+brew "bat"
+brew "eza"
+brew "fzf"
+brew "zoxide"
+brew "neovim"
+brew "ripgrep"
+
+# ===== Language runtimes =====
+brew "python@3.11"
+brew "python@3.12"
+brew "rbenv"
+brew "ruby@3.3"
+brew "pyenv"
+brew "go"
+brew "deno"
+
+# ===== Dev tools =====
+brew "fd"
+brew "cloc"
+brew "coreutils"
+brew "cmake"
+brew "pandoc"
+brew "poppler"             # pdftotext
+brew "graphviz"
+brew "imagemagick"
+brew "tesseract-lang"
+brew "htop"
+brew "watch"
+brew "sd"                  # sed alternative
+brew "pipx"
+
+# ===== Cloud & infra =====
+brew "awscli"
+brew "aliyun-cli"
+brew "hcloud"              # Hetzner CLI
+brew "cloudflared"
+brew "flyctl"
+brew "tailscale"
+
+# ===== Security tools =====
+brew "age"
+brew "gitleaks"
+brew "semgrep"
+brew "trivy"
+brew "trufflehog"
+brew "osv-scanner"
+brew "nuclei"
+brew "nmap"
+brew "testssl"
+brew "ffuf"
+brew "sshpass"
+tap "bearer/tap"
+brew "bearer/tap/bearer"
+
+# ===== Media & files =====
+brew "ffmpeg"
+brew "yt-dlp"
+brew "mpv"
+brew "ghostscript"
+brew "unar"
+
+# ===== Misc CLI =====
+brew "aerc"                # TUI email client
+brew "cliclick"            # macOS mouse automation
+brew "duti"                # default app manager
+brew "fswatch"             # file watcher
+brew "gcalcli"             # Google Calendar CLI
+brew "git-filter-repo"
+brew "mas"                 # Mac App Store CLI
+brew "msmtp"               # SMTP client
+brew "mysql"               # MySQL client
+brew "libpq"               # PostgreSQL client lib
+brew "ollama"
+brew "qemu"
+brew "reattach-to-user-namespace"  # tmux clipboard fix
+brew "ruff"                # Python linter
+brew "television"
+brew "terminal-notifier"   # macOS notifications from CLI
+brew "tlrc"                # tldr pages
+brew "ttyd"                # terminal over web
+brew "vhs"                 # terminal GIF recorder
+brew "zsh-autocomplete"
+
+# ===== Casks =====
+cask "calibre"
+cask "codex"
+cask "db-browser-for-sqlite"
+cask "dbeaver-community"
+cask "font-jetbrains-mono"
+cask "hammerspoon"
+cask "kitty"
+cask "libreoffice"
+cask "mactex"
+cask "mitmproxy"
+cask "tailscale-app"
+cask "utm"
+
+# ===== Mac App Store =====
+mas "1Focus", id: 969210610
+mas "DingTalk", id: 1435447041
+mas "Draw Things", id: 6444050820
+mas "FlowVPN", id: 1208164242
+mas "iMovie", id: 408981434
+mas "Kindle", id: 302584613
+mas "Okta Verify", id: 490179405
+mas "WeChat", id: 836500024
+mas "WhatsApp", id: 310633997
+
+# ===== VS Code extensions =====
+vscode "anthropic.claude-code"
+vscode "ms-azuretools.vscode-containers"
+vscode "ms-vscode-remote.remote-containers"
+vscode "ms-vscode-remote.remote-ssh"
+vscode "ms-vscode-remote.remote-ssh-edit"
+vscode "ms-vscode.remote-explorer"
+
+# ===== Cargo packages =====
+cargo "eq"
+cargo "fzs"
+
+# ===== UV tools =====
+uv "claudemd-cli"
+uv "snippets-cli"
+uv "claude-history-backup"
+uv "cookiecutter"
