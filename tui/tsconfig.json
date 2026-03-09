@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "moduleResolution": "node",
+    "target": "esnext",
+    "module": "esnext",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["bun-types", "node"],
+    "baseUrl": "..",
+    "paths": {
+      "ink": ["node_modules/ink"],
+      "react": ["node_modules/react"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}
