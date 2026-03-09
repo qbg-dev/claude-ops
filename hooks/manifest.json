@@ -7,7 +7,7 @@
       "path": "~/.claude-ops/hooks/publishers/worker-session-register.sh",
       "required": true,
       "category": "core",
-      "description": "Registers worker pane in fleet on each prompt submit"
+      "description": "[PUBLISH] Registers worker's tmux pane and session in fleet registry on each prompt"
     },
     {
       "id": "snippet-injector",
@@ -17,7 +17,7 @@
       "matcher": ".*",
       "required": false,
       "category": "plugin",
-      "description": "Injects contextual snippets into prompts"
+      "description": "[INJECT] Injects contextual snippets into prompts based on keyword matching"
     },
     {
       "id": "prompt-publisher",
@@ -25,7 +25,7 @@
       "path": "~/.claude-ops/hooks/publishers/prompt-publisher.sh",
       "required": true,
       "category": "core",
-      "description": "Publishes prompt events to event bus (watchdog, coordinator inbox)"
+      "description": "[PUBLISH] Emits prompt events to event bus for watchdog liveness and coordinator inbox routing"
     },
     {
       "id": "prompt-echo-deferred",
@@ -33,7 +33,7 @@
       "path": "~/.claude-ops/hooks/publishers/prompt-echo-deferred.sh",
       "required": false,
       "category": "user",
-      "description": "Deferred echo chain — feeds queued prompts from stop-echo.sh"
+      "description": "[INJECT] Deferred echo chain — feeds queued follow-up prompts from stop-echo.sh back into the session"
     },
     {
       "id": "pii-firewall",
@@ -41,7 +41,7 @@
       "path": "{PROJECT_ROOT}/.claude/hooks/pii-firewall.sh",
       "required": false,
       "category": "project",
-      "description": "Blocks direct access to customer conversation content (PIPL compliance). Project-specific."
+      "description": "[GATE] Blocks direct access to customer conversation content for PIPL compliance. Requires qwen-analyst MCP for data analysis"
     },
     {
       "id": "tool-policy-gate",
@@ -49,7 +49,7 @@
       "path": "~/.claude-ops/hooks/gates/tool-policy-gate.sh",
       "required": true,
       "category": "core",
-      "description": "Enforces per-worker tool permission policies (disallowedTools)"
+      "description": "[GATE] Enforces per-worker tool deny-list from permissions.json. Blocks matching tool calls with explanation"
     },
     {
       "id": "git-safety-gate",
@@ -57,7 +57,7 @@
       "path": "~/.claude-ops/hooks/gates/git-safety-gate.sh",
       "required": true,
       "category": "core",
-      "description": "Blocks dangerous git operations (amend, branch -D, rebase -i) and enforces worker/* branch naming"
+      "description": "[GATE] Blocks dangerous git operations: --amend (use new commits), branch names not matching worker/*, direct prod SSH"
     },
     {
       "id": "pre-tool-context-injector",
@@ -65,7 +65,7 @@
       "path": "~/.claude-ops/hooks/interceptors/pre-tool-context-injector.sh",
       "required": true,
       "category": "core",
-      "description": "Injects contextual hints before tool execution (policy, inbox, phase)"
+      "description": "[INJECT] Injects policy hints, inbox scan, phase context, and subagent agent_id before each tool call"
     },
     {
       "id": "liveness-heartbeat-post",
@@ -73,7 +73,7 @@
       "path": "~/.claude-ops/hooks/publishers/liveness-heartbeat.sh",
       "required": true,
       "category": "core",
-      "description": "Touches liveness timestamp on every tool call for watchdog stuck detection"
+      "description": "[PUBLISH] Touches liveness timestamp after each tool call — watchdog uses this for stuck detection (>10min = stuck)"
     },
     {
       "id": "liveness-heartbeat-prompt",
@@ -81,7 +81,7 @@
       "path": "~/.claude-ops/hooks/publishers/liveness-heartbeat.sh",
       "required": true,
       "category": "core",
-      "description": "Touches liveness timestamp on every prompt for watchdog stuck detection"
+      "description": "[PUBLISH] Touches liveness timestamp on prompt submit — watchdog uses this for stuck detection (>10min = stuck)"
     },
     {
       "id": "subagent-start",
@@ -89,7 +89,7 @@
       "path": "~/.claude-ops/hooks/publishers/subagent-lifecycle.sh",
       "required": true,
       "category": "core",
-      "description": "Tracks subagent lifecycle for resource management"
+      "description": "[PUBLISH] Tracks subagent spawn for resource management and auto-completion of agent-scoped hooks"
     },
     {
       "id": "subagent-stop",
@@ -97,7 +97,7 @@
       "path": "~/.claude-ops/hooks/publishers/subagent-lifecycle.sh",
       "required": true,
       "category": "core",
-      "description": "Tracks subagent lifecycle for resource management"
+      "description": "[PUBLISH] Tracks subagent exit — auto-completes dynamic hooks scoped to this agent_id"
     },
     {
       "id": "pre-compact",
@@ -106,7 +106,7 @@
       "timeout": 5000,
       "required": true,
       "category": "core",
-      "description": "Re-injects seed template + worker state before context compaction"
+      "description": "[INJECT] Re-injects seed template, worker state, and task queue before context compaction to prevent amnesia"
     },
     {
       "id": "liveness-heartbeat-stop",
@@ -114,7 +114,7 @@
       "path": "~/.claude-ops/hooks/publishers/liveness-heartbeat.sh",
       "required": true,
       "category": "core",
-      "description": "Touches liveness timestamp on stop for watchdog stuck detection"
+      "description": "[PUBLISH] Touches liveness timestamp on session stop — signals clean exit to watchdog"
     },
     {
       "id": "stop-worker-dispatch",
@@ -122,7 +122,7 @@
       "path": "~/.claude-ops/hooks/gates/stop-worker-dispatch.sh",
       "required": true,
       "category": "core",
-      "description": "Routes worker sessions — blocks until tasks complete"
+      "description": "[GATE] Blocks session exit if worker has in-progress tasks. Ensures work is completed or handed off before stopping"
     },
     {
       "id": "stop-inbox-drain",
@@ -130,7 +130,7 @@
       "path": "~/.claude-ops/hooks/gates/stop-inbox-drain.sh",
       "required": true,
       "category": "core",
-      "description": "Blocks stopping if unread inbox messages or pending ACKs exist"
+      "description": "[GATE] Blocks session exit if unread BMS messages or pending ACKs exist. Ensures inbox is drained before stopping"
     },
     {
       "id": "stop-echo",
@@ -138,7 +138,7 @@
       "path": "~/.claude-ops/hooks/publishers/stop-echo.sh",
       "required": false,
       "category": "user",
-      "description": "Echo chain support — pops queued items and re-injects as block reasons"
+      "description": "[GATE] Echo chain — pops queued follow-up commands and re-injects them as block reasons to continue the session"
     },
 
     {"_comment": "── Universal infrastructure (ALL events) ──"},
@@ -149,7 +149,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log SessionStart to event bus"
+      "description": "[LOG] Logs SessionStart event to event bus with timestamp, session ID, and worker name"
     },
     {
       "id": "universal-logger-session-end",
@@ -157,7 +157,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log SessionEnd to event bus"
+      "description": "[LOG] Logs SessionEnd event to event bus with timestamp and session ID"
     },
     {
       "id": "universal-logger-instructions-loaded",
@@ -165,7 +165,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log InstructionsLoaded to event bus"
+      "description": "[LOG] Logs InstructionsLoaded event — confirms CLAUDE.md was parsed"
     },
     {
       "id": "universal-logger-permission-request",
@@ -173,7 +173,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log PermissionRequest to event bus"
+      "description": "[LOG] Logs PermissionRequest event — records when user is prompted for tool approval"
     },
     {
       "id": "universal-logger-post-tool-use-failure",
@@ -181,7 +181,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log PostToolUseFailure to event bus"
+      "description": "[LOG] Logs PostToolUseFailure — records tool failures for debugging and pattern detection"
     },
     {
       "id": "universal-logger-notification",
@@ -189,7 +189,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log Notification to event bus"
+      "description": "[LOG] Logs system Notification events to event bus"
     },
     {
       "id": "universal-logger-teammate-idle",
@@ -197,7 +197,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log TeammateIdle to event bus"
+      "description": "[LOG] Logs TeammateIdle event — records when a team member goes idle for coordination"
     },
     {
       "id": "universal-logger-task-completed",
@@ -205,7 +205,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log TaskCompleted to event bus"
+      "description": "[LOG] Logs TaskCompleted event — records task completions for downstream chaining"
     },
     {
       "id": "universal-logger-config-change",
@@ -213,7 +213,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log ConfigChange to event bus"
+      "description": "[LOG] Logs ConfigChange event — records settings modifications"
     },
     {
       "id": "universal-logger-worktree-create",
@@ -221,7 +221,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log WorktreeCreate to event bus"
+      "description": "[LOG] Logs WorktreeCreate event — records when isolated worktrees are created for subagents"
     },
     {
       "id": "universal-logger-worktree-remove",
@@ -229,7 +229,7 @@
       "path": "~/.claude-ops/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "Log WorktreeRemove to event bus"
+      "description": "[LOG] Logs WorktreeRemove event — records when worktrees are cleaned up"
     },
 
     {"_comment": "── Dynamic hook dispatcher (ALL events) ──"},
@@ -240,7 +240,7 @@
       "path": "~/.claude-ops/hooks/interceptors/git-hooks-installer.sh",
       "required": true,
       "category": "core",
-      "description": "Auto-installs git hooks from manifest on every session start"
+      "description": "[INJECT] Auto-installs git pre-commit hooks from manifest on session start"
     },
     {
       "id": "dynamic-hooks-session-start",
@@ -248,7 +248,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for SessionStart"
+      "description": "[DISPATCH] Evaluates dynamic hooks registered via add_hook() for SessionStart events"
     },
     {
       "id": "dynamic-hooks-session-end",
@@ -256,7 +256,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for SessionEnd"
+      "description": "[DISPATCH] Evaluates dynamic hooks for SessionEnd events"
     },
     {
       "id": "dynamic-hooks-user-prompt",
@@ -264,7 +264,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for UserPromptSubmit"
+      "description": "[DISPATCH] Evaluates dynamic hooks for UserPromptSubmit events"
     },
     {
       "id": "dynamic-hooks-pre-tool-use",
@@ -272,7 +272,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for PreToolUse"
+      "description": "[DISPATCH] Evaluates dynamic hooks for PreToolUse — supports tool/file_glob/command_pattern conditions"
     },
     {
       "id": "dynamic-hooks-permission-request",
@@ -280,7 +280,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for PermissionRequest"
+      "description": "[DISPATCH] Evaluates dynamic hooks for PermissionRequest events"
     },
     {
       "id": "dynamic-hooks-post-tool-use",
@@ -288,7 +288,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for PostToolUse"
+      "description": "[DISPATCH] Evaluates dynamic hooks for PostToolUse events"
     },
     {
       "id": "dynamic-hooks-post-tool-use-failure",
@@ -296,7 +296,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for PostToolUseFailure"
+      "description": "[DISPATCH] Evaluates dynamic hooks for PostToolUseFailure events"
     },
     {
       "id": "dynamic-hooks-notification",
@@ -304,7 +304,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for Notification"
+      "description": "[DISPATCH] Evaluates dynamic hooks for Notification events"
     },
     {
       "id": "dynamic-hooks-stop",
@@ -312,7 +312,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for Stop"
+      "description": "[DISPATCH] Evaluates dynamic hooks for Stop events — blocks exit if any blocking hooks are pending"
     },
     {
       "id": "dynamic-hooks-subagent-start",
@@ -320,7 +320,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for SubagentStart"
+      "description": "[DISPATCH] Evaluates dynamic hooks for SubagentStart events"
     },
     {
       "id": "dynamic-hooks-subagent-stop",
@@ -328,7 +328,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for SubagentStop"
+      "description": "[DISPATCH] Evaluates dynamic hooks for SubagentStop events — auto-completes agent-scoped hooks"
     },
     {
       "id": "dynamic-hooks-teammate-idle",
@@ -336,7 +336,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for TeammateIdle"
+      "description": "[DISPATCH] Evaluates dynamic hooks for TeammateIdle events"
     },
     {
       "id": "dynamic-hooks-task-completed",
@@ -344,7 +344,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for TaskCompleted"
+      "description": "[DISPATCH] Evaluates dynamic hooks for TaskCompleted events"
     },
     {
       "id": "dynamic-hooks-config-change",
@@ -352,7 +352,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for ConfigChange"
+      "description": "[DISPATCH] Evaluates dynamic hooks for ConfigChange events"
     },
     {
       "id": "dynamic-hooks-pre-compact",
@@ -360,7 +360,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for PreCompact"
+      "description": "[DISPATCH] Evaluates dynamic hooks for PreCompact events"
     },
     {
       "id": "dynamic-hooks-worktree-create",
@@ -368,7 +368,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for WorktreeCreate"
+      "description": "[DISPATCH] Evaluates dynamic hooks for WorktreeCreate events"
     },
     {
       "id": "dynamic-hooks-worktree-remove",
@@ -376,7 +376,7 @@
       "path": "~/.claude-ops/hooks/interceptors/dynamic-hook-dispatcher.sh",
       "required": true,
       "category": "core",
-      "description": "Dynamic hooks for WorktreeRemove"
+      "description": "[DISPATCH] Evaluates dynamic hooks for WorktreeRemove events"
     }
   ]
 }

@@ -19464,6 +19464,8 @@ import {
   mkdirSync as mkdirSync2,
   readdirSync,
   statSync,
+  unlinkSync,
+  symlinkSync,
   lstatSync,
   rmSync as rmSync2,
   copyFileSync,
@@ -20035,18 +20037,70 @@ ${loadSeedContext(branch, _missionAuth)}`;
 
 ${handoff}`;
   }
-  const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
-  if (!handoff && existsSync(handoffPath)) {
+  const checkpointLatest = join(WORKERS_DIR, WORKER_NAME, "checkpoints", "latest.json");
+  if (!handoff && existsSync(checkpointLatest)) {
     try {
-      const handoffContent = readFileSync(handoffPath, "utf-8").trim();
-      if (handoffContent) {
-        seed += `
+      const cpRaw = readFileSync(checkpointLatest, "utf-8").trim();
+      const cp = JSON.parse(cpRaw);
+      let cpBlock = `
+
+## Checkpoint from Previous Cycle
+
+`;
+      cpBlock += `**Summary**: ${cp.summary || "No summary"}
+`;
+      if (cp.git_state?.branch) {
+        cpBlock += `**Git**: ${cp.git_state.branch} @ ${cp.git_state.sha || "?"} (${cp.git_state.dirty_count || 0} dirty, ${cp.git_state.staged_count || 0} staged)
+`;
+      }
+      if (cp.key_facts?.length > 0) {
+        cpBlock += `**Key facts**:
+${cp.key_facts.map((f) => `- ${f}`).join(`
+`)}
+`;
+      }
+      if (cp.dynamic_hooks?.length > 0) {
+        const pending = cp.dynamic_hooks.filter((h) => !h.completed);
+        if (pending.length > 0) {
+          cpBlock += `**Pending hooks**: ${pending.map((h) => `${h.id} (${h.event}: ${h.description})`).join(", ")}
+`;
+        }
+      }
+      if (cp.transcript_ref) {
+        cpBlock += `
+Transcript: ${cp.transcript_ref}
+`;
+      }
+      seed += cpBlock;
+    } catch {
+      const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
+      if (existsSync(handoffPath)) {
+        try {
+          const handoffContent = readFileSync(handoffPath, "utf-8").trim();
+          if (handoffContent) {
+            seed += `
 
 ## Handoff from Previous Cycle
 
 ${handoffContent}`;
+          }
+        } catch {}
       }
-    } catch {}
+    }
+  } else if (!handoff) {
+    const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
+    if (existsSync(handoffPath)) {
+      try {
+        const handoffContent = readFileSync(handoffPath, "utf-8").trim();
+        if (handoffContent) {
+          seed += `
+
+## Handoff from Previous Cycle
+
+${handoffContent}`;
+        }
+      } catch {}
+    }
   }
   return seed;
 }
@@ -20697,6 +20751,72 @@ ${pending.length} blocking hook(s) remaining.`
     }]
   };
 });
+server.registerTool("list_hooks", {
+  description: "List all active hooks (static infrastructure + dynamic runtime hooks). Shows what fires on each event, whether it blocks or injects, and its current status.",
+  inputSchema: {
+    event: exports_external.string().optional().describe("Filter to a specific event (e.g. 'Stop', 'PreToolUse'). Omit for all events"),
+    include_static: exports_external.boolean().optional().describe("Include static infrastructure hooks from manifest (default: true)")
+  }
+}, async ({ event, include_static }) => {
+  const showStatic = include_static !== false;
+  const lines = [`# Active Hooks
+`];
+  const dynamicList = [...dynamicHooks.values()].filter((h) => !event || h.event === event).sort((a, b) => a.event.localeCompare(b.event) || a.id.localeCompare(b.id));
+  if (dynamicList.length > 0) {
+    lines.push(`## Dynamic Hooks (${dynamicList.length})
+`);
+    for (const h of dynamicList) {
+      const type = h.blocking ? "GATE" : "INJECT";
+      const status = h.blocking ? h.completed ? `DONE${h.result ? ` (${h.result})` : ""}` : "PENDING" : "active";
+      const cond = h.condition ? ` [${Object.entries(h.condition).map(([k, v]) => `${k}=${v}`).join(", ")}]` : "";
+      const scope = h.agent_id ? ` (agent: ${h.agent_id})` : "";
+      lines.push(`- **[${h.id}]** ${h.event}/${type} \u2014 ${h.description}${cond}${scope}`);
+      lines.push(`  Status: ${status} | Added: ${h.added_at.slice(0, 16)}`);
+      if (h.content && h.content !== h.description) {
+        const preview = h.content.length > 100 ? h.content.slice(0, 97) + "..." : h.content;
+        lines.push(`  Content: "${preview}"`);
+      }
+    }
+  } else {
+    lines.push("## Dynamic Hooks\nNone registered. Use `add_hook()` to add verification gates or context injectors.\n");
+  }
+  if (showStatic) {
+    try {
+      const manifestPath = join(CLAUDE_OPS, "hooks", "manifest.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      const staticHooks = (manifest.hooks || []).filter((h) => h.id && h.event && (!event || h.event === event) && !h._comment);
+      if (staticHooks.length > 0) {
+        const byCategory = {};
+        for (const h of staticHooks) {
+          const cat = h.category || "other";
+          if (!byCategory[cat])
+            byCategory[cat] = [];
+          byCategory[cat].push(h);
+        }
+        lines.push(`
+## Static Hooks (${staticHooks.length} from manifest)
+`);
+        for (const [cat, hooks] of Object.entries(byCategory)) {
+          lines.push(`### ${cat}`);
+          for (const h of hooks) {
+            lines.push(`- **${h.id}** (${h.event}) \u2014 ${h.description}`);
+          }
+        }
+      }
+    } catch {
+      lines.push(`
+## Static Hooks
+_Could not read manifest.json_`);
+    }
+  }
+  const blocking = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
+  const inject = [...dynamicHooks.values()].filter((h) => !h.blocking);
+  lines.push(`
+---
+**Summary:** ${dynamicHooks.size} dynamic (${blocking.length} blocking pending, ${inject.length} inject active)`);
+  return { content: [{ type: "text", text: lines.join(`
+`) }] };
+});
 server.registerTool("remove_hook", {
   description: "Remove a dynamic hook entirely. Use for inject hooks you no longer need, or to clean up completed gates.",
   inputSchema: {
@@ -20784,10 +20904,61 @@ WARNING: ${unread} unread mail \u2014 call mail_inbox() before recycling.`;
   const worktreeDir = getWorktreeDir();
   const pathSlug = worktreeDir.replace(/\//g, "-").replace(/^-/, "-");
   const transcriptPath = sessionId ? join(HOME, ".claude/projects", pathSlug, `${sessionId}.jsonl`) : null;
-  const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
-  if (message || transcriptPath) {
+  const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
+  mkdirSync2(checkpointDir, { recursive: true });
+  try {
+    let gitState = {};
     try {
-      let handoffContent = message || "";
+      const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", timeout: 5000, cwd: getWorktreeDir() }).trim();
+      const sha = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000, cwd: getWorktreeDir() }).trim();
+      const porcelain = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd: getWorktreeDir() }).trim();
+      const lines = porcelain ? porcelain.split(`
+`) : [];
+      const staged = lines.filter((l) => /^[MADRC]/.test(l)).length;
+      const dirty = lines.filter((l) => /^.[MADRC?]/.test(l)).length;
+      gitState = { branch, sha, dirty_count: dirty, staged_count: staged };
+    } catch {}
+    const hooks = [...dynamicHooks.values()].map((h) => ({
+      id: h.id,
+      event: h.event,
+      description: h.description,
+      blocking: h.blocking,
+      completed: h.completed
+    }));
+    const checkpoint = {
+      timestamp: new Date().toISOString(),
+      type: "recycle",
+      summary: message || "Recycle without summary",
+      git_state: gitState,
+      dynamic_hooks: hooks,
+      key_facts: [],
+      transcript_ref: transcriptPath || ""
+    };
+    const ts = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T").slice(0, 15) + "Z";
+    const filename = `checkpoint-${ts}.json`;
+    const filepath = join(checkpointDir, filename);
+    writeFileSync(filepath, JSON.stringify(checkpoint, null, 2) + `
+`);
+    const latestLink = join(checkpointDir, "latest.json");
+    try {
+      unlinkSync(latestLink);
+    } catch {}
+    try {
+      symlinkSync(filename, latestLink);
+    } catch {}
+    try {
+      const allCheckpoints = readdirSync(checkpointDir).filter((f) => f.startsWith("checkpoint-") && f.endsWith(".json") && f !== "latest.json").sort();
+      if (allCheckpoints.length > 5) {
+        for (const old of allCheckpoints.slice(0, allCheckpoints.length - 5)) {
+          try {
+            unlinkSync(join(checkpointDir, old));
+          } catch {}
+        }
+      }
+    } catch {}
+    const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
+    if (message) {
+      let handoffContent = message;
       if (transcriptPath) {
         handoffContent += `
 
@@ -20795,9 +20966,9 @@ If you need specific details from before compaction (like exact code snippets, e
       }
       writeFileSync(handoffPath, handoffContent.trim() + `
 `);
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error writing handoff: ${e.message}` }], isError: true };
     }
+  } catch (e) {
+    return { content: [{ type: "text", text: `Error writing checkpoint: ${e.message}` }], isError: true };
   }
   try {
     const registry2 = readRegistry();
@@ -20928,7 +21099,7 @@ rm -f "${recycleScript2}"
       content: [{
         type: "text",
         text: `Recycling initiated. Watchdog will respawn in ${effectiveSleep}s (~${wakeStr}).
-` + `Handoff: ${message ? "written to handoff.md" : "none"}
+` + `Checkpoint: ${message ? "saved to checkpoints/" : "none"}
 ` + `Transcript: ${transcriptPath || "unknown"}
 ` + `Status: sleeping (until ${sleepUntil})
 ` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.` + pendingWarning
@@ -21024,7 +21195,7 @@ rm -f "${recycleScript}" "$LAUNCH_CMD_FILE"
     content: [{
       type: "text",
       text: `Recycling initiated. You will be restarted in ~10 seconds.
-` + `Handoff: ${message ? "written to handoff.md" : "none"}
+` + `Checkpoint: ${message ? "saved to checkpoints/" : "none"}
 ` + `Transcript: ${transcriptPath || "unknown"}
 ` + `Seed: ${seedFile}
 ` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.` + pendingWarning
@@ -21942,22 +22113,20 @@ server.registerTool("fleet_help", {
   inputSchema: {}
 }, async () => handleFleetHelp());
 server.registerTool("deep_review", {
-  description: "Launch a multi-pass deep code review pipeline. Total workers = passes \xD7 focus areas (default: 2\xD78=16). Each focus area gets `passes` independent workers seeing different randomized diff orderings. Voting within focus groups (\u22652/passes). Creates DEDICATED tmux session: coordinator window + worker windows (4 panes each). 8 default focus areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness). Configurable via `focus` param. Finds bugs, security issues, performance problems, design concerns, UX gaps, completeness issues, and improvements. Sentinel-file completion + optional notify callback. Auto-fallback for empty diffs.",
+  description: "Launch a multi-pass deep review pipeline. Material is ADDITIVE \u2014 combine scope (git diff) and content (files) in a single review, or use either alone. `scope` auto-detects: branch name=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=pull request. Default focus: diff-only=8 code areas, content-only=4 content areas, mixed=6 balanced areas. Creates DEDICATED tmux session with coordinator + worker panes. Voting within focus groups (\u22652/passes).",
   inputSchema: {
-    commit: exports_external.string().optional().describe("Specific commit SHA to review. Default: HEAD (current commit)"),
-    base_branch: exports_external.string().optional().describe("Review all changes since this branch (e.g. 'main'). Overrides commit."),
-    uncommitted: exports_external.boolean().optional().describe("Review staged + unstaged + untracked changes. Overrides commit and base_branch."),
-    pr_number: exports_external.string().optional().describe("Review a pull request by number (uses gh pr diff). Overrides other modes."),
-    passes: exports_external.number().optional().describe("Passes PER focus area (default: 2). Total workers = passes \xD7 focus areas. E.g. passes:3 + 2 focus = 6 workers."),
-    session_name: exports_external.string().optional().describe("Custom tmux session name (overrides auto-naming from worktree+commit)"),
-    notify: exports_external.string().optional().describe("Worker name or 'user' to notify on completion. Desktop notification always fires."),
-    focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Each focus gets `passes` independent workers. Examples: ['security', 'performance', 'ux-impact']. Tailor to review goals \u2014 e.g. ['security', 'auth', 'scope-bypass'] for auth review. Default: 8 areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness)")
+    scope: exports_external.string().optional().describe("Git diff scope. Auto-detects: branch name (e.g. 'main'), commit SHA, 'uncommitted', 'pr:42'. Default: HEAD if no content. Additive with content."),
+    content: exports_external.union([exports_external.string(), exports_external.array(exports_external.string())]).optional().describe("File path(s) to review. Comma-separated string or array. Additive with scope."),
+    spec: exports_external.string().optional().describe("What to review for \u2014 guides all workers. E.g., 'verify implementation matches the plan'."),
+    passes: exports_external.number().optional().describe("Passes PER focus area (default: 2). Total workers = passes \xD7 focus areas."),
+    session_name: exports_external.string().optional().describe("Custom tmux session name (overrides auto-naming)"),
+    notify: exports_external.string().optional().describe("Worker name or 'user' to notify on completion."),
+    focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas.")
   }
 }, async ({
-  commit,
-  base_branch,
-  uncommitted,
-  pr_number,
+  scope,
+  content,
+  spec,
   passes,
   session_name,
   notify,
@@ -21969,20 +22138,15 @@ server.registerTool("deep_review", {
       throw new Error(`deep-review.sh not found at ${scriptPath}`);
     }
     const args = [];
-    if (pr_number) {
-      args.push("--pr", pr_number);
-    } else if (uncommitted) {
-      args.push("--uncommitted");
-    } else if (base_branch) {
-      args.push("--base", base_branch);
-    } else if (commit) {
-      args.push("--commit", commit);
-    } else {
-      const headSha = execSync("git rev-parse HEAD", {
-        encoding: "utf-8",
-        cwd: PROJECT_ROOT
-      }).trim();
-      args.push("--commit", headSha);
+    if (scope) {
+      args.push("--scope", scope);
+    }
+    if (content) {
+      const contentPaths = Array.isArray(content) ? content.join(",") : content;
+      args.push("--content", contentPaths);
+    }
+    if (spec) {
+      args.push("--spec", spec);
     }
     if (passes) {
       args.push("--passes", String(passes));
@@ -22012,7 +22176,10 @@ server.registerTool("deep_review", {
     const reviewSessionMatch = stdout.match(/tmux switch-client -t (\S+)/);
     const reviewSession = reviewSessionMatch ? reviewSessionMatch[1] : session_name || "dr-unknown";
     const passesPerFocus = passes || 2;
-    const numFocus = focus?.length || 8;
+    const hasContent = !!content;
+    const hasScope = !!scope;
+    const defaultFocus = hasContent && !hasScope ? 4 : hasContent && hasScope ? 6 : 8;
+    const numFocus = focus?.length || defaultFocus;
     const totalWorkers = passesPerFocus * numFocus;
     const numWorkerWindows = Math.ceil(totalWorkers / 4);
     const windowLines = [];
@@ -22054,6 +22221,89 @@ server.registerTool("deep_review", {
       isError: true
     };
   }
+});
+server.registerTool("save_checkpoint", {
+  description: "Save a checkpoint of your current working state. Automatically captures git state and dynamic hooks. Use before complex operations, when context is getting long, or to preserve state across recycles. Checkpoints are auto-saved before context compaction and on recycle.",
+  inputSchema: {
+    summary: exports_external.string().describe("Brief description of what you're working on and current progress"),
+    key_facts: exports_external.array(exports_external.string()).optional().describe("Important facts to preserve across context boundaries (max 10)")
+  }
+}, async ({ summary, key_facts }) => {
+  const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
+  mkdirSync2(checkpointDir, { recursive: true });
+  let gitState = {};
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+    const sha = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+    const porcelain = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000 }).trim();
+    const lines = porcelain ? porcelain.split(`
+`) : [];
+    const staged = lines.filter((l) => /^[MADRC]/.test(l)).length;
+    const dirty = lines.filter((l) => /^.[MADRC?]/.test(l)).length;
+    gitState = { branch, sha, dirty_count: dirty, staged_count: staged };
+  } catch {}
+  let hooks = [];
+  try {
+    hooks = [...dynamicHooks.values()].map((h) => ({
+      id: h.id,
+      event: h.event,
+      description: h.description,
+      blocking: h.blocking,
+      completed: h.completed
+    }));
+  } catch {}
+  let transcriptRef = "";
+  try {
+    const worktreeDir = getWorktreeDir();
+    const pathSlug = worktreeDir.replace(/\//g, "-").replace(/^-/, "-");
+    const projectDir = join(HOME, ".claude/projects", pathSlug);
+    if (existsSync(projectDir)) {
+      const files = readdirSync(projectDir).filter((f) => f.endsWith(".jsonl")).sort().reverse();
+      if (files.length > 0) {
+        transcriptRef = join(projectDir, files[0]);
+      }
+    }
+  } catch {}
+  const checkpoint = {
+    timestamp: new Date().toISOString(),
+    type: "manual",
+    summary,
+    git_state: gitState,
+    dynamic_hooks: hooks,
+    key_facts: (key_facts || []).slice(0, 10),
+    transcript_ref: transcriptRef
+  };
+  const ts = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T").slice(0, 15) + "Z";
+  const filename = `checkpoint-${ts}.json`;
+  const filepath = join(checkpointDir, filename);
+  writeFileSync(filepath, JSON.stringify(checkpoint, null, 2) + `
+`);
+  const latestLink = join(checkpointDir, "latest.json");
+  try {
+    unlinkSync(latestLink);
+  } catch {}
+  try {
+    symlinkSync(filename, latestLink);
+  } catch {}
+  try {
+    const allCheckpoints = readdirSync(checkpointDir).filter((f) => f.startsWith("checkpoint-") && f.endsWith(".json") && f !== "latest.json").sort();
+    if (allCheckpoints.length > 5) {
+      for (const old of allCheckpoints.slice(0, allCheckpoints.length - 5)) {
+        try {
+          unlinkSync(join(checkpointDir, old));
+        } catch {}
+      }
+    }
+  } catch {}
+  return {
+    content: [{
+      type: "text",
+      text: `Checkpoint saved: ${filepath}
+Git: ${gitState.branch || "?"} @ ${gitState.sha || "?"} (${gitState.dirty_count || 0} dirty, ${gitState.staged_count || 0} staged)
+Hooks: ${hooks.length} active
+Facts: ${(key_facts || []).length} saved`
+    }]
+  };
 });
 var BMS_URL = process.env.BMS_URL || "http://127.0.0.1:8025";
 var _bmsUnreadCount = 0;

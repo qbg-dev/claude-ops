@@ -1,6 +1,6 @@
 ## MCP Tools (`mcp__worker-fleet__*`)
 
-22 tools. One action per tool for clear schemas and reliable tool selection.
+23 tools. One action per tool for clear schemas and reliable tool selection.
 
 | Tool | What it does |
 |------|-------------|
@@ -16,6 +16,7 @@
 | `add_hook(event, description, ...)` | Register a dynamic hook: gate (blocking) or inject (context). See Dynamic Hooks section |
 | `complete_hook(id, result?)` | Mark a blocking hook as done (`id="all"` to clear all) |
 | `remove_hook(id)` | Remove any hook entirely (`id="all"` to clear all) |
+| `list_hooks(event?)` | Show all active hooks (dynamic + static). Each shows type ([GATE]/[INJECT]/[LOG]), status, and description |
 | `recycle(message?)` | Restart fresh; `resume=true` for hot-restart; `sleep_seconds=N` overrides timer; `cancel=true` aborts sleep. **Blocked if stop checks pending** (shows pending list). |
 | `create_worker(name, mission, ...)` | Create a new worker: worktree, branch, registry entry, optional launch. |
 | `register_worker(model?, ...)` | Register yourself in the fleet registry. Auto-detects tmux pane. |

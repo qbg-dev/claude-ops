@@ -2,10 +2,10 @@
 /**
  * worker-fleet MCP server — Tools for worker fleet coordination.
  *
- * 22 tools (fine-grained, one action per tool):
+ * 23 tools (fine-grained, one action per tool):
  *   Tasks (3):      task_create, task_update, task_list
  *   State (2):      get_worker_state, update_state
- *   Hooks (3):      add_hook, complete_hook, remove_hook
+ *   Hooks (4):      add_hook, complete_hook, remove_hook, list_hooks
  *   Lifecycle (1):  recycle (gated on dynamic hooks, watchdog-deferred for perpetual workers)
  *   Checkpoint (1): save_checkpoint
  *   Fleet (7):      create_worker, register_worker, deregister_worker, move_worker, standby_worker, fleet_template, fleet_help
@@ -1463,6 +1463,84 @@ server.registerTool(
         text: `Completed: [${id}] ${hook.description}${resultNote}\n${pending.length} blocking hook(s) remaining.`,
       }],
     };
+  }
+);
+
+server.registerTool(
+  "list_hooks",
+  {
+    description: "List all active hooks (static infrastructure + dynamic runtime hooks). Shows what fires on each event, whether it blocks or injects, and its current status.",
+    inputSchema: {
+      event: z.string().optional().describe("Filter to a specific event (e.g. 'Stop', 'PreToolUse'). Omit for all events"),
+      include_static: z.boolean().optional().describe("Include static infrastructure hooks from manifest (default: true)"),
+    },
+  },
+  async ({ event, include_static }) => {
+    const showStatic = include_static !== false;
+    const lines: string[] = ["# Active Hooks\n"];
+
+    // ── Dynamic hooks (runtime-registered by this worker) ──
+    const dynamicList = [...dynamicHooks.values()]
+      .filter(h => !event || h.event === event)
+      .sort((a, b) => a.event.localeCompare(b.event) || a.id.localeCompare(b.id));
+
+    if (dynamicList.length > 0) {
+      lines.push(`## Dynamic Hooks (${dynamicList.length})\n`);
+      for (const h of dynamicList) {
+        const type = h.blocking ? "GATE" : "INJECT";
+        const status = h.blocking
+          ? (h.completed ? `DONE${h.result ? ` (${h.result})` : ""}` : "PENDING")
+          : "active";
+        const cond = h.condition ? ` [${Object.entries(h.condition).map(([k,v]) => `${k}=${v}`).join(", ")}]` : "";
+        const scope = h.agent_id ? ` (agent: ${h.agent_id})` : "";
+        lines.push(`- **[${h.id}]** ${h.event}/${type} — ${h.description}${cond}${scope}`);
+        lines.push(`  Status: ${status} | Added: ${h.added_at.slice(0, 16)}`);
+        if (h.content && h.content !== h.description) {
+          const preview = h.content.length > 100 ? h.content.slice(0, 97) + "..." : h.content;
+          lines.push(`  Content: "${preview}"`);
+        }
+      }
+    } else {
+      lines.push("## Dynamic Hooks\nNone registered. Use `add_hook()` to add verification gates or context injectors.\n");
+    }
+
+    // ── Static hooks (infrastructure, from manifest) ──
+    if (showStatic) {
+      try {
+        const manifestPath = join(CLAUDE_OPS, "hooks", "manifest.json");
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+        const staticHooks = (manifest.hooks || []).filter((h: any) =>
+          h.id && h.event && (!event || h.event === event) && !h._comment
+        );
+
+        if (staticHooks.length > 0) {
+          // Group by category
+          const byCategory: Record<string, any[]> = {};
+          for (const h of staticHooks) {
+            const cat = h.category || "other";
+            if (!byCategory[cat]) byCategory[cat] = [];
+            byCategory[cat].push(h);
+          }
+
+          lines.push(`\n## Static Hooks (${staticHooks.length} from manifest)\n`);
+          for (const [cat, hooks] of Object.entries(byCategory)) {
+            lines.push(`### ${cat}`);
+            for (const h of hooks) {
+              lines.push(`- **${h.id}** (${h.event}) — ${h.description}`);
+            }
+          }
+        }
+      } catch {
+        lines.push("\n## Static Hooks\n_Could not read manifest.json_");
+      }
+    }
+
+    // Summary
+    const blocking = [...dynamicHooks.values()].filter(h => h.blocking && !h.completed);
+    const inject = [...dynamicHooks.values()].filter(h => !h.blocking);
+    lines.push(`\n---\n**Summary:** ${dynamicHooks.size} dynamic (${blocking.length} blocking pending, ${inject.length} inject active)`);
+
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
   }
 );
 

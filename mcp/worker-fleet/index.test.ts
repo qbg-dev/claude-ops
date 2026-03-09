@@ -1980,14 +1980,14 @@ describe("seed content — tool refactor", () => {
     expect(seed).not.toContain('complete_stop_check(');
   });
 
-  test("seed includes all 21 tool names", () => {
+  test("seed includes all 23 tool names", () => {
     const seed = generateSeedContent();
     const expectedTools = [
       "mail_send", "mail_inbox", "mail_read", "mail_help",
       "task_create", "task_update", "task_list",
       "get_worker_state", "update_state",
-      "add_hook", "complete_hook", "remove_hook",
-      "recycle",
+      "add_hook", "complete_hook", "remove_hook", "list_hooks",
+      "recycle", "save_checkpoint",
       "create_worker", "register_worker", "deregister_worker",
       "move_worker", "standby_worker", "fleet_template", "fleet_help",
       "deep_review",
@@ -1999,7 +1999,7 @@ describe("seed content — tool refactor", () => {
 
   test("seed tool table uses correct count", () => {
     const seed = generateSeedContent();
-    expect(seed).toContain("21 tools");
+    expect(seed).toContain("23 tools");
   });
 
   test("seed references add_hook for stop gates, not add_stop_check", () => {
