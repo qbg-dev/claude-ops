@@ -7,6 +7,7 @@ All external tools, packages, and runtimes referenced by `~/.claude-ops/dotfiles
 | Package | Install | Used by |
 |---------|---------|---------|
 | **homebrew** | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` | zshenv, path.zsh |
+| **stow** | `brew install stow` | Symlink manager for all dotfiles |
 | **zsh** | System default on macOS | Base shell |
 | **tmux** | `brew install tmux` | tmux.conf + all modules |
 | **git** | `brew install git` | gitconfig |
@@ -118,19 +119,25 @@ All external tools, packages, and runtimes referenced by `~/.claude-ops/dotfiles
 | `~/.config/discord-bot/.env` | functions.zsh (load-discord-token) |
 | `~/.config/fzs/config.toml` | aliases.zsh (fzs launcher) |
 
-## Quick setup (essential packages only)
+## Quick setup (new machine)
 
 ```bash
-# Core
-brew install powerlevel10k zsh-autosuggestions zsh-syntax-highlighting
-brew install tmux git gh git-lfs
-brew install bat eza fzf zoxide neovim
+# 1. Clone claude-ops
+git clone git@github.com:qbg-dev/claude-ops.git ~/.claude-ops
 
-# Tmux plugins
+# 2. Install all packages (or just essentials manually)
+brew bundle --file=~/.claude-ops/dotfiles/Brewfile
+
+# 3. Create target dirs (stow needs them with --no-folding)
+mkdir -p ~/.zsh ~/.claude
+
+# 4. Stow all dotfile packages
+stow -d ~/.claude-ops/dotfiles -t ~ --no-folding shell tmux git claude editors
+
+# 5. Install tmux plugins (inside tmux: prefix + I)
 git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
-# Then in tmux: prefix + I to install plugins
 
-# Runtimes (as needed)
+# 6. Runtimes (as needed)
 curl -fsSL https://bun.sh/install | bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```

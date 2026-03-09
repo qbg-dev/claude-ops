@@ -4,6 +4,7 @@
 # Cleanup: brew bundle cleanup --file=~/.claude-ops/dotfiles/Brewfile
 
 # ===== Required (dotfiles break without these) =====
+brew "stow"
 brew "tmux"
 brew "git"
 brew "gh"
