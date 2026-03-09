@@ -440,7 +440,7 @@ function ensureWorkerInRegistry(registry: ProjectRegistry, name: string): Regist
     tmux_session: registry._config?.tmux_session || "w",
     session_id: null,
     session_file: null,
-    mission_file: `.claude/workers/${name}/mission.md`,
+    mission_file: join(FLEET_DIR, "missions", `${name}.md`),
     custom: { runtime: "claude" },
   };
 
@@ -2180,8 +2180,17 @@ function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult {
     writeFileSync(autoMemoryPath, `# ${name} Memory\n\n`);
   }
 
-  // mission.md
-  writeFileSync(join(workerDir, "mission.md"), mission.trim() + "\n");
+  // mission.md — write to central fleet missions + symlink from worktree
+  const centralMissionsDir = join(FLEET_DIR, "missions");
+  mkdirSync(centralMissionsDir, { recursive: true });
+  const centralMission = join(centralMissionsDir, `${name}.md`);
+  writeFileSync(centralMission, mission.trim() + "\n");
+  const worktreeMission = join(workerDir, "mission.md");
+  try { unlinkSync(worktreeMission); } catch {}
+  try { symlinkSync(centralMission, worktreeMission); } catch {
+    // Fallback: write a copy if symlink fails
+    writeFileSync(worktreeMission, mission.trim() + "\n");
+  }
 
   // Config — override precedence: explicit param > type template > runtime default > hardcoded default
   const defaultDisallowed = [

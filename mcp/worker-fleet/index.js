@@ -19779,7 +19779,7 @@ function ensureWorkerInRegistry(registry2, name) {
     tmux_session: registry2._config?.tmux_session || "w",
     session_id: null,
     session_file: null,
-    mission_file: `.claude/workers/${name}/mission.md`,
+    mission_file: join(FLEET_DIR, "missions", `${name}.md`),
     custom: { runtime: "claude" }
   };
   registry2[name] = entry;
@@ -21278,8 +21278,21 @@ function createWorkerFiles(input) {
 
 `);
   }
-  writeFileSync(join(workerDir, "mission.md"), mission.trim() + `
+  const centralMissionsDir = join(FLEET_DIR, "missions");
+  mkdirSync2(centralMissionsDir, { recursive: true });
+  const centralMission = join(centralMissionsDir, `${name}.md`);
+  writeFileSync(centralMission, mission.trim() + `
 `);
+  const worktreeMission = join(workerDir, "mission.md");
+  try {
+    unlinkSync(worktreeMission);
+  } catch {}
+  try {
+    symlinkSync(centralMission, worktreeMission);
+  } catch {
+    writeFileSync(worktreeMission, mission.trim() + `
+`);
+  }
   const defaultDisallowed = [
     "Bash(git checkout main*)",
     "Bash(git merge*)",
