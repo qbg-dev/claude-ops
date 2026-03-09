@@ -19539,31 +19539,59 @@ function detectWorkerName() {
   return "operator";
 }
 var WORKER_NAME = detectWorkerName();
-var stopChecks = new Map;
-var _stopCheckCounter = 0;
-var STOP_CHECKS_FILE = `/tmp/claude-stop-checks-${WORKER_NAME}.json`;
-function _persistStopChecks() {
+var dynamicHooks = new Map;
+var _hookCounter = 0;
+var HOOKS_FILE = `/tmp/claude-hooks-${WORKER_NAME}.json`;
+var LEGACY_STOP_CHECKS_FILE = `/tmp/claude-stop-checks-${WORKER_NAME}.json`;
+function _persistHooks() {
   try {
-    const checks4 = [...stopChecks.values()];
-    if (checks4.length === 0) {
+    const hooks = [...dynamicHooks.values()];
+    if (hooks.length === 0) {
       try {
-        rmSync2(STOP_CHECKS_FILE);
+        rmSync2(HOOKS_FILE);
       } catch {}
       return;
     }
-    writeFileSync(STOP_CHECKS_FILE, JSON.stringify({ worker: WORKER_NAME, checks: checks4 }, null, 2));
+    writeFileSync(HOOKS_FILE, JSON.stringify({ worker: WORKER_NAME, hooks }, null, 2));
   } catch {}
 }
 try {
-  if (existsSync(STOP_CHECKS_FILE)) {
-    const data = JSON.parse(readFileSync(STOP_CHECKS_FILE, "utf-8"));
+  if (existsSync(HOOKS_FILE)) {
+    const data = JSON.parse(readFileSync(HOOKS_FILE, "utf-8"));
+    if (data.worker === WORKER_NAME && Array.isArray(data.hooks)) {
+      for (const h of data.hooks) {
+        dynamicHooks.set(h.id, h);
+        const num = parseInt(h.id.replace("dh-", ""), 10);
+        if (!isNaN(num) && num > _hookCounter)
+          _hookCounter = num;
+      }
+    }
+  } else if (existsSync(LEGACY_STOP_CHECKS_FILE)) {
+    const data = JSON.parse(readFileSync(LEGACY_STOP_CHECKS_FILE, "utf-8"));
     if (data.worker === WORKER_NAME && Array.isArray(data.checks)) {
       for (const c of data.checks) {
-        stopChecks.set(c.id, c);
-        const num = parseInt(c.id.replace("sc-", ""), 10);
-        if (num > _stopCheckCounter)
-          _stopCheckCounter = num;
+        const id = c.id.replace("sc-", "dh-");
+        const hook = {
+          id,
+          event: "Stop",
+          blocking: true,
+          description: c.description,
+          content: c.description,
+          completed: c.completed,
+          added_at: c.added_at,
+          ...c.completed_at && { completed_at: c.completed_at },
+          ...c.result && { result: c.result },
+          ...c.agent_id && { agent_id: c.agent_id }
+        };
+        dynamicHooks.set(id, hook);
+        const num = parseInt(id.replace("dh-", ""), 10);
+        if (!isNaN(num) && num > _hookCounter)
+          _hookCounter = num;
       }
+      _persistHooks();
+      try {
+        rmSync2(LEGACY_STOP_CHECKS_FILE);
+      } catch {}
     }
   }
 } catch {}
@@ -20546,76 +20574,194 @@ function _replaceMemorySection(existing, section, content) {
 ` : "") + newBlock + (after ? `
 ` + after : "");
 }
-server.registerTool("add_stop_check", {
-  description: "Register a verification gate that must be completed before you can recycle. Creates a named check that blocks recycle() until explicitly marked done via complete_stop_check(). Use whenever you make a change that requires end-to-end verification \u2014 e.g. 'verify TypeScript compiles', 'test deploy to slot', 'confirm no console errors on page load'. This prevents accidental recycles before critical verification steps are done. Optionally tie to a background subagent's agent_id for auto-completion when that subagent finishes.",
+function _pendingHooksSummary(event) {
+  const hooks = [...dynamicHooks.values()];
+  const pending = hooks.filter((h) => h.blocking && !h.completed && (!event || h.event === event));
+  const injects = hooks.filter((h) => !h.blocking && (!event || h.event === event));
+  const parts = [];
+  if (pending.length > 0)
+    parts.push(`${pending.length} blocking`);
+  if (injects.length > 0)
+    parts.push(`${injects.length} inject`);
+  return parts.join(", ") || "none";
+}
+server.registerTool("add_hook", {
+  description: "Register a dynamic hook that fires on a hook event. Can block the event (gate) or inject context. Use for self-governance: add verification gates before recycling, inject guidance before tool calls, or block specific tool usage until conditions are met. Hook scripts read these at runtime.",
   inputSchema: {
-    description: exports_external.string().describe("Human-readable description of what must be verified (e.g. 'TypeScript compiles without errors', 'slot loads correctly in browser', 'all unit tests pass')"),
-    agent_id: exports_external.string().optional().describe("Subagent ID to tie this check to. When set, the check is auto-completed by subagent-lifecycle.sh when that subagent stops. Use after spawning a background Agent: Agent(run_in_background=true) returns agent_id, pass it here")
+    event: exports_external.enum(["Stop", "PreToolUse"]).describe("Which hook event to fire on. Stop: blocks session exit. PreToolUse: fires before each tool call"),
+    description: exports_external.string().describe("Human-readable purpose (e.g. 'verify build passes', 'ontology guidance')"),
+    blocking: exports_external.boolean().optional().describe("If true (default for Stop), blocks the event until complete_hook(id) is called. If false (default for PreToolUse), injects content as context and passes through"),
+    content: exports_external.string().optional().describe("For inject hooks: context text to add. For blocking hooks: block reason shown to agent. Falls back to description if omitted"),
+    condition: exports_external.object({
+      tool: exports_external.string().optional().describe("Only fire when this tool is called (e.g. 'Bash', 'Edit', 'Write')"),
+      file_glob: exports_external.string().optional().describe("Only fire when file path matches glob (e.g. 'src/ontology/**')"),
+      command_pattern: exports_external.string().optional().describe("Only fire when Bash command matches regex (e.g. 'git push.*')")
+    }).optional().describe("Condition for when this hook fires (PreToolUse only). Omit for unconditional"),
+    agent_id: exports_external.string().optional().describe("Scope to a specific subagent. Auto-completed on SubagentStop. Subagents: use the agent_id injected by pre-tool-context-injector")
+  }
+}, async ({ event, description, blocking, content, condition, agent_id }) => {
+  const id = `dh-${++_hookCounter}`;
+  const isBlocking = blocking ?? event === "Stop";
+  const hook = {
+    id,
+    event,
+    description,
+    blocking: isBlocking,
+    completed: false,
+    added_at: new Date().toISOString()
+  };
+  if (content)
+    hook.content = content;
+  if (condition)
+    hook.condition = condition;
+  if (agent_id)
+    hook.agent_id = agent_id;
+  dynamicHooks.set(id, hook);
+  _persistHooks();
+  const agentNote = agent_id ? ` (scoped to subagent ${agent_id})` : "";
+  const typeLabel = isBlocking ? "blocking" : "inject";
+  const condNote = condition ? ` [condition: ${JSON.stringify(condition)}]` : "";
+  return {
+    content: [{
+      type: "text",
+      text: `Hook registered: [${id}] ${event}/${typeLabel} \u2014 ${description}${agentNote}${condNote}
+Active hooks: ${_pendingHooksSummary()}.`
+    }]
+  };
+});
+server.registerTool("complete_hook", {
+  description: "Mark a blocking hook as completed (unblocks the event). Call after performing the verification described in the hook. Pass 'all' to complete every pending blocking hook at once.",
+  inputSchema: {
+    id: exports_external.string().describe("Hook ID (e.g. 'dh-1'). Use 'all' to complete all pending blocking hooks"),
+    result: exports_external.string().optional().describe("Brief outcome (e.g. 'PASS \u2014 0 errors'). Stored for audit")
+  }
+}, async ({ id, result }) => {
+  if (id === "all") {
+    const pending2 = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
+    if (pending2.length === 0) {
+      return { content: [{ type: "text", text: "No pending blocking hooks to complete." }] };
+    }
+    const now = new Date().toISOString();
+    for (const hook2 of pending2) {
+      hook2.completed = true;
+      hook2.completed_at = now;
+      if (result)
+        hook2.result = result;
+    }
+    _persistHooks();
+    return {
+      content: [{
+        type: "text",
+        text: `Completed ${pending2.length} hook(s). All blocking hooks cleared.`
+      }]
+    };
+  }
+  const hook = dynamicHooks.get(id);
+  if (!hook) {
+    return { content: [{ type: "text", text: `No hook with ID '${id}'.` }], isError: true };
+  }
+  hook.completed = true;
+  hook.completed_at = new Date().toISOString();
+  if (result)
+    hook.result = result;
+  _persistHooks();
+  const pending = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
+  const resultNote = result ? ` (${result})` : "";
+  return {
+    content: [{
+      type: "text",
+      text: `Completed: [${id}] ${hook.description}${resultNote}
+${pending.length} blocking hook(s) remaining.`
+    }]
+  };
+});
+server.registerTool("remove_hook", {
+  description: "Remove a dynamic hook entirely. Use for inject hooks you no longer need, or to clean up completed gates.",
+  inputSchema: {
+    id: exports_external.string().describe("Hook ID to remove (e.g. 'dh-2'). Use 'all' to remove all hooks")
+  }
+}, async ({ id }) => {
+  if (id === "all") {
+    const count = dynamicHooks.size;
+    dynamicHooks.clear();
+    _persistHooks();
+    return { content: [{ type: "text", text: `Removed all ${count} hook(s).` }] };
+  }
+  const hook = dynamicHooks.get(id);
+  if (!hook) {
+    return { content: [{ type: "text", text: `No hook with ID '${id}'.` }], isError: true };
+  }
+  dynamicHooks.delete(id);
+  _persistHooks();
+  return {
+    content: [{
+      type: "text",
+      text: `Removed: [${id}] ${hook.description}
+Remaining hooks: ${_pendingHooksSummary()}.`
+    }]
+  };
+});
+server.registerTool("add_stop_check", {
+  description: "Alias for add_hook(event='Stop', blocking=true). Register a verification gate that blocks recycle() until completed.",
+  inputSchema: {
+    description: exports_external.string().describe("What must be verified"),
+    agent_id: exports_external.string().optional().describe("Subagent ID for auto-completion on SubagentStop")
   }
 }, async ({ description, agent_id }) => {
-  const id = `sc-${++_stopCheckCounter}`;
-  const check2 = {
+  const id = `dh-${++_hookCounter}`;
+  const hook = {
     id,
+    event: "Stop",
+    blocking: true,
     description,
-    added_at: new Date().toISOString(),
-    completed: false
+    completed: false,
+    added_at: new Date().toISOString()
   };
   if (agent_id)
-    check2.agent_id = agent_id;
-  stopChecks.set(id, check2);
-  _persistStopChecks();
+    hook.agent_id = agent_id;
+  dynamicHooks.set(id, hook);
+  _persistHooks();
   const agentNote = agent_id ? ` (auto-completes when subagent ${agent_id} stops)` : "";
   return {
     content: [{
       type: "text",
       text: `Stop check registered: [${id}] ${description}${agentNote}
-${stopChecks.size} total check(s), ${[...stopChecks.values()].filter((c) => !c.completed).length} pending.`
+${dynamicHooks.size} total hook(s), ${[...dynamicHooks.values()].filter((h) => h.blocking && !h.completed).length} blocking.`
     }]
   };
 });
 server.registerTool("complete_stop_check", {
-  description: "Mark a stop check as verified and completed. Call this after you have actually performed the verification described in the check \u2014 do not mark checks complete without verifying. Once all checks are completed, recycle() is unblocked. Pass 'all' to mark every pending check done at once (use only when you've genuinely verified everything).",
+  description: "Alias for complete_hook(). Mark a stop check as verified and completed.",
   inputSchema: {
-    id: exports_external.string().describe("Check ID to complete (e.g. 'sc-1'). Use 'all' to mark every pending check as completed simultaneously"),
-    result: exports_external.string().optional().describe("Brief verification outcome to record (e.g. 'PASS \u2014 0 TypeScript errors', 'PASS \u2014 slot renders correctly'). Stored alongside the check for audit purposes")
+    id: exports_external.string().describe("Hook ID to complete (e.g. 'dh-1'). Use 'all' to complete all pending"),
+    result: exports_external.string().optional().describe("Brief verification outcome")
   }
 }, async ({ id, result }) => {
   if (id === "all") {
-    const pending2 = [...stopChecks.values()].filter((c) => !c.completed);
-    if (pending2.length === 0) {
-      return { content: [{ type: "text", text: "No pending checks to complete." }] };
-    }
+    const pending2 = [...dynamicHooks.values()].filter((h) => h.event === "Stop" && h.blocking && !h.completed);
+    if (pending2.length === 0)
+      return { content: [{ type: "text", text: "No pending stop checks." }] };
     const now = new Date().toISOString();
-    for (const check3 of pending2) {
-      check3.completed = true;
-      check3.completed_at = now;
+    for (const h of pending2) {
+      h.completed = true;
+      h.completed_at = now;
+      if (result)
+        h.result = result;
     }
-    _persistStopChecks();
-    return {
-      content: [{
-        type: "text",
-        text: `Completed ${pending2.length} check(s). All stop checks cleared \u2014 ready to recycle.`
-      }]
-    };
+    _persistHooks();
+    return { content: [{ type: "text", text: `Completed ${pending2.length} stop check(s). All clear.` }] };
   }
-  const check2 = stopChecks.get(id);
-  if (!check2) {
-    return { content: [{ type: "text", text: `No check with ID '${id}'. Use list_stop_checks to see registered checks.` }], isError: true };
-  }
-  check2.completed = true;
-  check2.completed_at = new Date().toISOString();
+  const hook = dynamicHooks.get(id);
+  if (!hook)
+    return { content: [{ type: "text", text: `No hook with ID '${id}'.` }], isError: true };
+  hook.completed = true;
+  hook.completed_at = new Date().toISOString();
   if (result)
-    check2.result = result;
-  _persistStopChecks();
-  const pending = [...stopChecks.values()].filter((c) => !c.completed);
-  const resultNote = result ? ` (${result})` : "";
-  return {
-    content: [{
-      type: "text",
-      text: `Completed: [${id}] ${check2.description}${resultNote}
-${pending.length} check(s) remaining.` + (pending.length === 0 ? " All clear \u2014 ready to recycle." : "")
-    }]
-  };
+    hook.result = result;
+  _persistHooks();
+  const pending = [...dynamicHooks.values()].filter((h) => h.event === "Stop" && h.blocking && !h.completed);
+  return { content: [{ type: "text", text: `Completed: [${id}] ${hook.description}
+${pending.length} stop check(s) remaining.` }] };
 });
 server.registerTool("recycle", { description: "Restart yourself in the same tmux pane to get a fresh context window. Three modes: (1) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session. (2) resume=true (hot restart): resume same session ID \u2014 preserves full conversation history but reloads MCP config. (3) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds (no immediate relaunch). Use sleep_seconds to override sleep_duration for this cycle. Blocked by pending stop checks unless force=true.", inputSchema: {
   message: exports_external.string().optional().describe("Handoff context for the next instance. Include: what was accomplished, what remains, any blockers or decisions needed. Written to handoff.md and injected into the next session's seed"),
@@ -20635,18 +20781,18 @@ server.registerTool("recycle", { description: "Restart yourself in the same tmux
     });
     return { content: [{ type: "text", text: "Sleep timer cancelled. Status restored to active." }] };
   }
-  const pendingChecks = [...stopChecks.values()].filter((c) => !c.completed);
+  const pendingChecks = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
   if (pendingChecks.length > 0 && !force) {
-    const checkList = pendingChecks.map((c) => `  [${c.id}] ${c.description}`).join(`
+    const checkList = pendingChecks.map((h) => `  [${h.id}] ${h.event}/${h.blocking ? "gate" : "inject"} \u2014 ${h.description}`).join(`
 `);
     return {
       content: [{
         type: "text",
-        text: `BLOCKED: ${pendingChecks.length} pending stop check(s) \u2014 complete these before recycling:
+        text: `BLOCKED: ${pendingChecks.length} pending hook(s) \u2014 complete these before recycling:
 
 ${checkList}
 
-Use complete_stop_check(id) to mark each done after verifying, or recycle(force=true) to skip.`
+Use complete_hook(id) to mark each done, or recycle(force=true) to skip.`
       }],
       isError: true
     };

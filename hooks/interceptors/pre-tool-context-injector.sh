@@ -118,6 +118,45 @@ if [ "$INBOX_ENABLED" = "true" ]; then
   fi
 fi
 
+# -- Dynamic hooks (agent-registered via add_hook MCP tool) ----
+DYNAMIC_CONTEXT=""
+_HF="/tmp/claude-hooks-${WORKER_NAME:-unknown}.json"
+if [ -f "$_HF" ]; then
+  # Extract file path + command for condition matching
+  _DH_FILE=""
+  case "$TOOL_NAME" in
+    Edit|Write|Read) _DH_FILE=$(echo "$TOOL_INPUT" | jq -r '.file_path // ""' 2>/dev/null || echo "") ;;
+  esac
+  _DH_CMD=""
+  [ "$TOOL_NAME" = "Bash" ] && _DH_CMD=$(echo "$TOOL_INPUT" | jq -r '.command // ""' 2>/dev/null || echo "")
+
+  # Check blocking PreToolUse hooks first (any pending = block the tool call)
+  _DH_BLOCK=$(jq -r --arg tool "$TOOL_NAME" --arg file "$_DH_FILE" --arg cmd "$_DH_CMD" \
+    '[.hooks[] | select(.event=="PreToolUse" and .blocking==true and .completed==false) |
+     select(
+       (.condition == null) or
+       ((.condition.tool == null or .condition.tool == $tool) and
+        (.condition.file_glob == null or ($file | test(.condition.file_glob // "^$"))) and
+        (.condition.command_pattern == null or ($cmd | test(.condition.command_pattern // "^$"))))
+     )] | first | .content // .description // empty' \
+    "$_HF" 2>/dev/null || echo "")
+  if [ -n "$_DH_BLOCK" ]; then
+    hook_block "$_DH_BLOCK"
+    exit 0
+  fi
+
+  # Collect non-blocking inject hooks
+  DYNAMIC_CONTEXT=$(jq -r --arg tool "$TOOL_NAME" --arg file "$_DH_FILE" --arg cmd "$_DH_CMD" \
+    '[.hooks[] | select(.event=="PreToolUse" and .blocking==false) |
+     select(
+       (.condition == null) or
+       ((.condition.tool == null or .condition.tool == $tool) and
+        (.condition.file_glob == null or ($file | test(.condition.file_glob // "^$"))) and
+        (.condition.command_pattern == null or ($cmd | test(.condition.command_pattern // "^$"))))
+     )] | map(.content // .description) | join("\n- ")' \
+    "$_HF" 2>/dev/null || echo "")
+fi
+
 # -- Merge all context sources ----
 MERGED=""
 if [ -n "$CONTEXT" ]; then
@@ -128,6 +167,9 @@ if [ -n "$PHASE_CONTEXT" ]; then
 fi
 if [ -n "$INBOX_CONTEXT" ]; then
   [ -n "$MERGED" ] && MERGED="${MERGED}\n${INBOX_CONTEXT}" || MERGED="$INBOX_CONTEXT"
+fi
+if [ -n "$DYNAMIC_CONTEXT" ]; then
+  [ -n "$MERGED" ] && MERGED="${MERGED}\n- ${DYNAMIC_CONTEXT}" || MERGED="- ${DYNAMIC_CONTEXT}"
 fi
 
 # If we have context to inject, return it as additionalContext (replaces python3 json.dumps)

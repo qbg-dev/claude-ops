@@ -20,18 +20,18 @@ INPUT=$(cat)
 
 # Parse session ID
 hook_parse_input "$INPUT"
-# Subagents: skip task/inbox/pane checks, but honor their own stop checks
+# Subagents: skip task/inbox/pane checks, but honor their own blocking hooks
 if _is_subagent; then
-  _sc_file="/tmp/claude-stop-checks-${WORKER_NAME:-unknown}.json"
-  if [ -f "$_sc_file" ]; then
-    _sc_pending=$(jq --arg aid "$_HOOK_AGENT_ID" \
-      '[.checks[] | select(.completed == false and .agent_id == $aid)] | length' \
-      "$_sc_file" 2>/dev/null || echo "0")
-    if [ "$_sc_pending" -gt 0 ]; then
-      _sc_list=$(jq -r --arg aid "$_HOOK_AGENT_ID" \
-        '.checks[] | select(.completed == false and .agent_id == $aid) | "  [\(.id)] \(.description)"' \
-        "$_sc_file" 2>/dev/null || echo "  (could not read checks)")
-      hook_block "$(printf '## Subagent: %s pending stop check(s)\n\n%s\n\nComplete each with complete_stop_check(id) before stopping.' "$_sc_pending" "$_sc_list")"
+  _hf="/tmp/claude-hooks-${WORKER_NAME:-unknown}.json"
+  if [ -f "$_hf" ]; then
+    _pending=$(jq --arg aid "$_HOOK_AGENT_ID" \
+      '[.hooks[] | select(.event=="Stop" and .blocking==true and .completed==false and .agent_id==$aid)] | length' \
+      "$_hf" 2>/dev/null || echo "0")
+    if [ "$_pending" -gt 0 ]; then
+      _list=$(jq -r --arg aid "$_HOOK_AGENT_ID" \
+        '.hooks[] | select(.event=="Stop" and .blocking==true and .completed==false and .agent_id==$aid) | "  [\(.id)] \(.description)"' \
+        "$_hf" 2>/dev/null || echo "  (could not read hooks)")
+      hook_block "$(printf '## Subagent: %s pending blocking hook(s)\n\n%s\n\nComplete each with complete_hook(id) before stopping.' "$_pending" "$_list")"
       exit 0
     fi
   fi
@@ -143,14 +143,13 @@ TASKS_FILE="$_wdir/tasks.json"
 _status=$(jq -r '.status // "running"' "$_wstate" 2>/dev/null || echo "running")
 [ "$_status" = "stopped" ] && { hook_pass; exit 0; }
 
-# ── Stop checks gate (file-persisted by MCP add_stop_check) ──
-# Parent scope: checks without agent_id (own checks) + checks with agent_id (waiting for subagent)
-_sc_file="/tmp/claude-stop-checks-${_wname}.json"
-if [ -f "$_sc_file" ]; then
-  _sc_pending=$(jq '[.checks[] | select(.completed == false)] | length' "$_sc_file" 2>/dev/null || echo "0")
-  if [ "$_sc_pending" -gt 0 ]; then
-    _sc_list=$(jq -r '.checks[] | select(.completed == false) | "  [\(.id)] \(.description)" + (if .agent_id then " (waiting for subagent \(.agent_id))" else "" end)' "$_sc_file" 2>/dev/null || echo "  (could not read checks)")
-    hook_block "$(printf '## %s: %s pending stop check(s)\n\nYou registered verification items that are not yet completed:\n\n%s\n\nComplete each check, then call complete_stop_check(id) before stopping.\nOr: recycle(force=true) to bypass.\n\nEscape: touch %s/allow-stop' "$_wname" "$_sc_pending" "$_sc_list" "$_SESSION_DIR")"
+# ── Dynamic hooks gate (file-persisted by MCP add_hook / add_stop_check) ──
+_hf="/tmp/claude-hooks-${_wname}.json"
+if [ -f "$_hf" ]; then
+  _hf_pending=$(jq '[.hooks[] | select(.event=="Stop" and .blocking==true and .completed==false)] | length' "$_hf" 2>/dev/null || echo "0")
+  if [ "$_hf_pending" -gt 0 ]; then
+    _hf_list=$(jq -r '.hooks[] | select(.event=="Stop" and .blocking==true and .completed==false) | "  [\(.id)] \(.description)" + (if .agent_id then " (subagent \(.agent_id))" else "" end)' "$_hf" 2>/dev/null || echo "  (could not read hooks)")
+    hook_block "$(printf '## %s: %s pending blocking hook(s)\n\n%s\n\nComplete each with complete_hook(id), or recycle(force=true) to bypass.\n\nEscape: touch %s/allow-stop' "$_wname" "$_hf_pending" "$_hf_list" "$_SESSION_DIR")"
     exit 0
   fi
 fi

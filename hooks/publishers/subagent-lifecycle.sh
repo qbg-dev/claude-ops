@@ -60,16 +60,16 @@ case "$EVENT" in
       rm -f "$_SESSION_DIR/agent-id"
     fi
 
-    # Auto-complete stop checks tied to this agent_id
+    # Auto-complete dynamic hooks tied to this agent_id
     _WORKER="${WORKER_NAME:-}"
-    _SC_FILE="/tmp/claude-stop-checks-${_WORKER}.json"
-    if [ -n "$_WORKER" ] && [ -n "$AGENT_ID" ] && [ -f "$_SC_FILE" ]; then
+    _HF="/tmp/claude-hooks-${_WORKER}.json"
+    if [ -n "$_WORKER" ] && [ -n "$AGENT_ID" ] && [ -f "$_HF" ]; then
       _NOW=$(date -Iseconds)
       _UPDATED=$(jq --arg aid "$AGENT_ID" --arg now "$_NOW" \
-        '.checks = [.checks[] | if (.agent_id == $aid and .completed == false) then .completed = true | .completed_at = $now | .result = "auto-completed: subagent stopped" else . end]' \
-        "$_SC_FILE" 2>/dev/null)
+        '.hooks = [.hooks[] | if (.agent_id == $aid and .completed == false) then .completed = true | .completed_at = $now | .result = "auto-completed: subagent stopped" else . end]' \
+        "$_HF" 2>/dev/null)
       if [ -n "$_UPDATED" ]; then
-        echo "$_UPDATED" > "$_SC_FILE" 2>/dev/null || true
+        echo "$_UPDATED" > "$_HF" 2>/dev/null || true
       fi
     fi
 
