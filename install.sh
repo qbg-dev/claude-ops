@@ -97,22 +97,35 @@ setup_path() {
   export PATH="$bin_dir:$PATH"
 }
 
-# ── Backwards-compat symlink ─────────────────────────────────────
-# When installed to a custom dir, symlink ~/.claude-ops → $INSTALL_DIR
-# so existing hook paths and scripts continue working.
-setup_compat_symlink() {
+# ── Symlinks ─────────────────────────────────────────────────────
+# Canonical path: ~/.claude/ops → repo
+# Backwards-compat: ~/.claude-ops → repo
+setup_symlinks() {
+  local canonical="$HOME/.claude/ops"
   local legacy="$HOME/.claude-ops"
-  if [[ "$INSTALL_DIR" != "$HOME/.claude-ops" ]]; then
-    if [[ -L "$legacy" ]] && [[ "$(readlink "$legacy")" == "$INSTALL_DIR" ]]; then
-      info "Compat symlink already in place ($legacy → $INSTALL_DIR)"
-    elif [[ -d "$legacy" ]] && [[ ! -L "$legacy" ]]; then
-      warn "$legacy exists as a real directory — not replacing with symlink."
-      warn "Existing Claude Code hooks pointing to ~/.claude-ops will still work."
-    else
-      ln -sfn "$INSTALL_DIR" "$legacy"
-      info "Created compat symlink: $legacy → $INSTALL_DIR"
-    fi
+
+  # Canonical: ~/.claude/ops → $INSTALL_DIR
+  mkdir -p "$HOME/.claude" 2>/dev/null || true
+  if [[ -L "$canonical" ]] && [[ "$(readlink "$canonical")" == "$INSTALL_DIR" ]]; then
+    info "Canonical symlink already in place ($canonical → $INSTALL_DIR)"
+  else
+    ln -sfn "$INSTALL_DIR" "$canonical"
+    info "Created canonical symlink: $canonical → $INSTALL_DIR"
   fi
+
+  # Legacy: ~/.claude-ops → $INSTALL_DIR (backwards compat)
+  if [[ -L "$legacy" ]] && [[ "$(readlink "$legacy")" == "$INSTALL_DIR" ]]; then
+    info "Legacy symlink already in place ($legacy → $INSTALL_DIR)"
+  elif [[ -d "$legacy" ]] && [[ ! -L "$legacy" ]]; then
+    warn "$legacy exists as a real directory — not replacing with symlink."
+  else
+    ln -sfn "$INSTALL_DIR" "$legacy"
+    info "Created legacy symlink: $legacy → $INSTALL_DIR"
+  fi
+
+  # Runtime directories (gitignored)
+  mkdir -p "$INSTALL_DIR/logs" "$INSTALL_DIR/hooks/dynamic" "$INSTALL_DIR/engine" 2>/dev/null || true
+  info "Ensured runtime directories exist (logs/, hooks/dynamic/)"
 }
 
 # ── Slash commands (claude-ops:*) ─────────────────────────────────
@@ -230,7 +243,7 @@ main() {
   check_prereqs
   install_repo
   setup_path
-  setup_compat_symlink
+  setup_symlinks
   register_hooks
   register_mcp_servers
   setup_commands

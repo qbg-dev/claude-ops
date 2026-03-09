@@ -1,5 +1,7 @@
 # Runtime state (agent-specific, not portable)
 state/
+logs/
+hooks/dynamic/
 harness/manifests/
 harness/reports/
 harness/data/

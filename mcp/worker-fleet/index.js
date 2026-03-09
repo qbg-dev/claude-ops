@@ -18644,6 +18644,7 @@ class ExperimentalMcpServerTasks {
     return mcpServerInternal._createRegisteredTool(name, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 }
+
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 class McpServer {
   constructor(serverInfo, options) {
@@ -19365,7 +19366,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "process";
+import process2 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -19454,7 +19455,6 @@ class StdioServerTransport {
     });
   }
 }
-
 // index.ts
 import {
   readFileSync,
@@ -19466,10 +19466,12 @@ import {
   statSync,
   unlinkSync,
   symlinkSync,
+  renameSync,
   lstatSync,
   rmSync as rmSync2,
   copyFileSync,
-  cpSync
+  cpSync,
+  realpathSync
 } from "fs";
 import { join, basename } from "path";
 import { execSync, spawnSync, spawn } from "child_process";
@@ -19513,6 +19515,67 @@ function _setWorkersDir(dir) {
   WORKERS_DIR = dir;
 }
 var HARNESS_LOCK_DIR = join(CLAUDE_OPS, "state/locks");
+function _captureGitState(cwd) {
+  try {
+    const opts = { encoding: "utf-8", timeout: 5000, cwd: cwd || getWorktreeDir() };
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", opts).trim();
+    const sha = execSync("git rev-parse --short HEAD", opts).trim();
+    const porcelain = execSync("git status --porcelain", opts).trim();
+    const lines = porcelain ? porcelain.split(`
+`) : [];
+    const staged = lines.filter((l) => /^[MADRC]/.test(l)).length;
+    const dirty = lines.filter((l) => /^.[MADRC?]/.test(l)).length;
+    return { branch, sha, dirty_count: dirty, staged_count: staged };
+  } catch {
+    return { dirty_count: 0, staged_count: 0 };
+  }
+}
+function _captureHooksSnapshot() {
+  return [...dynamicHooks.values()].map((h) => ({
+    id: h.id,
+    event: h.event,
+    description: h.description,
+    blocking: h.blocking,
+    completed: h.completed
+  }));
+}
+function _timestampFilename() {
+  return `checkpoint-${new Date().toISOString().replace(/[:.]/g, "").slice(0, 18)}Z.json`;
+}
+function _writeCheckpoint(checkpointDir, checkpoint, keepCount = 5) {
+  mkdirSync2(checkpointDir, { recursive: true });
+  const filename = _timestampFilename();
+  const filepath = join(checkpointDir, filename);
+  writeFileSync(filepath, JSON.stringify(checkpoint, null, 2) + `
+`);
+  const latestLink = join(checkpointDir, "latest.json");
+  const latestTmp = join(checkpointDir, "latest.json.tmp");
+  try {
+    try {
+      unlinkSync(latestTmp);
+    } catch {}
+    symlinkSync(filename, latestTmp);
+    renameSync(latestTmp, latestLink);
+  } catch {
+    try {
+      unlinkSync(latestLink);
+    } catch {}
+    try {
+      symlinkSync(filename, latestLink);
+    } catch {}
+  }
+  try {
+    const all = readdirSync(checkpointDir).filter((f) => f.startsWith("checkpoint-") && f.endsWith(".json")).sort();
+    if (all.length > keepCount) {
+      for (const old of all.slice(0, all.length - keepCount)) {
+        try {
+          unlinkSync(join(checkpointDir, old));
+        } catch {}
+      }
+    }
+  } catch {}
+  return filepath;
+}
 function loadSeedContext(branch, missionAuthority) {
   const tmplPath = join(CLAUDE_OPS, "templates/seed-context.md");
   try {
@@ -19521,7 +19584,32 @@ function loadSeedContext(branch, missionAuthority) {
     return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;
   }
 }
-var REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
+function resolveProjectName() {
+  return basename(PROJECT_ROOT).replace(/-w-.*$/, "");
+}
+var FLEET_DIR = join(HOME, ".claude/fleet", resolveProjectName());
+var REGISTRY_PATH = join(FLEET_DIR, "registry.json");
+var LEGACY_REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
+function migrateRegistryIfNeeded() {
+  mkdirSync2(FLEET_DIR, { recursive: true });
+  if (existsSync(REGISTRY_PATH))
+    return;
+  let legacyPath = LEGACY_REGISTRY_PATH;
+  try {
+    legacyPath = realpathSync(LEGACY_REGISTRY_PATH);
+  } catch {}
+  if (!existsSync(legacyPath))
+    return;
+  try {
+    const raw = JSON.parse(readFileSync(legacyPath, "utf-8"));
+    if (raw._migrated_to)
+      return;
+  } catch {
+    return;
+  }
+  copyFileSync(legacyPath, REGISTRY_PATH);
+}
+migrateRegistryIfNeeded();
 function detectWorkerName() {
   if (process.env.WORKER_NAME)
     return process.env.WORKER_NAME;
@@ -19543,8 +19631,11 @@ function detectWorkerName() {
 var WORKER_NAME = detectWorkerName();
 var dynamicHooks = new Map;
 var _hookCounter = 0;
-var HOOKS_FILE = `/tmp/claude-hooks-${WORKER_NAME}.json`;
-var LEGACY_STOP_CHECKS_FILE = `/tmp/claude-stop-checks-${WORKER_NAME}.json`;
+var HOOKS_DIR = process.env.CLAUDE_HOOKS_DIR || join(HOME, ".claude/ops/hooks/dynamic");
+try {
+  mkdirSync2(HOOKS_DIR, { recursive: true });
+} catch {}
+var HOOKS_FILE = join(HOOKS_DIR, `${WORKER_NAME}.json`);
 function _persistHooks() {
   try {
     const hooks = [...dynamicHooks.values()];
@@ -19555,7 +19646,9 @@ function _persistHooks() {
       return;
     }
     writeFileSync(HOOKS_FILE, JSON.stringify({ worker: WORKER_NAME, hooks }, null, 2));
-  } catch {}
+  } catch (e) {
+    console.error(`[_persistHooks] Failed to write ${HOOKS_FILE}: ${e}`);
+  }
 }
 try {
   if (existsSync(HOOKS_FILE)) {
@@ -19567,33 +19660,6 @@ try {
         if (!isNaN(num) && num > _hookCounter)
           _hookCounter = num;
       }
-    }
-  } else if (existsSync(LEGACY_STOP_CHECKS_FILE)) {
-    const data = JSON.parse(readFileSync(LEGACY_STOP_CHECKS_FILE, "utf-8"));
-    if (data.worker === WORKER_NAME && Array.isArray(data.checks)) {
-      for (const c of data.checks) {
-        const id = c.id.replace("sc-", "dh-");
-        const hook = {
-          id,
-          event: "Stop",
-          blocking: true,
-          description: c.description,
-          content: c.description,
-          completed: c.completed,
-          added_at: c.added_at,
-          ...c.completed_at && { completed_at: c.completed_at },
-          ...c.result && { result: c.result },
-          ...c.agent_id && { agent_id: c.agent_id }
-        };
-        dynamicHooks.set(id, hook);
-        const num = parseInt(id.replace("dh-", ""), 10);
-        if (!isNaN(num) && num > _hookCounter)
-          _hookCounter = num;
-      }
-      _persistHooks();
-      try {
-        rmSync2(LEGACY_STOP_CHECKS_FILE);
-      } catch {}
     }
   }
 } catch {}
@@ -19613,14 +19679,31 @@ function readJsonFile(path) {
   }
 }
 var LINT_ENABLED = process.env.WORKER_FLEET_LINT !== "0";
+function isMissionAuthority(name, config2) {
+  if (!config2?.mission_authority)
+    return false;
+  const ma = config2.mission_authority;
+  return Array.isArray(ma) ? ma.includes(name) : ma === name;
+}
+function getMissionAuthorityLabel(config2) {
+  const ma = config2?.mission_authority;
+  if (!ma)
+    return "chief-of-staff";
+  return Array.isArray(ma) ? ma.join(", ") : ma;
+}
 function getReportTo(w, config2) {
-  return w.report_to || config2?.mission_authority || null;
+  if (w.report_to)
+    return w.report_to;
+  const ma = config2?.mission_authority;
+  if (!ma)
+    return null;
+  return Array.isArray(ma) ? ma[0] : ma;
 }
 function canUpdateWorker(callerName, targetName, registry2) {
   if (callerName === targetName)
     return true;
   const config2 = registry2._config;
-  if (callerName === config2?.mission_authority)
+  if (isMissionAuthority(callerName, config2))
     return true;
   const target = registry2[targetName];
   if (target && getReportTo(target, config2) === callerName)
@@ -19628,8 +19711,15 @@ function canUpdateWorker(callerName, targetName, registry2) {
   return false;
 }
 function readRegistry() {
-  const raw = readJsonFile(REGISTRY_PATH);
-  if (!raw || !raw._config) {
+  let raw = readJsonFile(REGISTRY_PATH);
+  if ((!raw || raw._migrated_to) && existsSync(LEGACY_REGISTRY_PATH)) {
+    const legacy = readJsonFile(LEGACY_REGISTRY_PATH);
+    if (legacy && legacy._config && !legacy._migrated_to) {
+      raw = legacy;
+      migrateRegistryIfNeeded();
+    }
+  }
+  if (!raw || !raw._config || raw._migrated_to) {
     return {
       _config: {
         commit_notify: ["merger"],
@@ -19637,7 +19727,7 @@ function readRegistry() {
         deploy_authority: "merger",
         mission_authority: "chief-of-staff",
         tmux_session: "w",
-        project_name: basename(PROJECT_ROOT)
+        project_name: resolveProjectName()
       }
     };
   }
@@ -19672,7 +19762,7 @@ function ensureWorkerInRegistry(registry2, name) {
       e.custom = {};
     return e;
   }
-  const projectName = PROJECT_ROOT.split("/").pop();
+  const projectName = resolveProjectName();
   const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
   const entry = {
     model: "opus",
@@ -19694,16 +19784,6 @@ function ensureWorkerInRegistry(registry2, name) {
   };
   registry2[name] = entry;
   return entry;
-}
-function syncTasksToFilesystem(name, tasks) {
-  try {
-    const tasksPath = join(WORKERS_DIR, name, "tasks.json");
-    const dir = join(WORKERS_DIR, name);
-    if (existsSync(dir)) {
-      writeFileSync(tasksPath, JSON.stringify(tasks, null, 2) + `
-`);
-    }
-  } catch {}
 }
 function lintRegistry(registry2) {
   if (!LINT_ENABLED)
@@ -19762,37 +19842,6 @@ function lintRegistry(registry2) {
   }
   return issues;
 }
-function getTasksPath(worker) {
-  return join(WORKERS_DIR, worker, "tasks.json");
-}
-function readTasks(worker) {
-  const path = getTasksPath(worker);
-  try {
-    const data = JSON.parse(readFileSync(path, "utf-8"));
-    return data && typeof data === "object" ? data : {};
-  } catch {
-    return {};
-  }
-}
-function writeTasks(worker, tasks) {
-  syncTasksToFilesystem(worker, tasks);
-}
-function nextTaskId(tasks) {
-  const ids = Object.keys(tasks);
-  if (ids.length === 0)
-    return "T001";
-  const nums = ids.map((id) => parseInt(id.replace(/^T/, ""), 10)).filter((n) => !isNaN(n));
-  const max = nums.length > 0 ? Math.max(...nums) : 0;
-  const next = max + 1;
-  return next < 1000 ? `T${String(next).padStart(3, "0")}` : `T${next}`;
-}
-function isTaskBlocked(tasks, taskId) {
-  const task = tasks[taskId];
-  if (!task)
-    return false;
-  const deps = task.blocked_by || [];
-  return deps.length > 0 && deps.some((d) => tasks[d]?.status !== "completed");
-}
 function writeToTriageQueue(content, summary, fromWorker, opts) {
   try {
     const triageDir = join(PROJECT_ROOT, ".claude/triage");
@@ -19845,7 +19894,7 @@ function resolveRecipient(to) {
       const registry2 = readRegistry();
       const config2 = registry2._config;
       const myEntry = registry2[WORKER_NAME];
-      const reportToName = myEntry ? getReportTo(myEntry, config2) : config2?.mission_authority;
+      const reportToName = myEntry ? getReportTo(myEntry, config2) : getMissionAuthorityLabel(config2);
       if (reportToName && reportToName !== WORKER_NAME) {
         return { type: "worker", workerName: reportToName };
       }
@@ -19955,6 +20004,19 @@ function findOwnPane() {
     return { paneId: tmuxPane, paneTarget: "" };
   }
   const entry = getWorkerEntry(WORKER_NAME);
+  if (entry?.session_id) {
+    const paneMapPath = join(HOME, ".claude/pane-map", entry.session_id);
+    try {
+      const mappedPane = readFileSync(paneMapPath, "utf-8").trim();
+      if (mappedPane && isPaneAlive(mappedPane)) {
+        try {
+          const target = execSync(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${mappedPane}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
+          return { paneId: mappedPane, paneTarget: target };
+        } catch {}
+        return { paneId: mappedPane, paneTarget: "" };
+      }
+    } catch {}
+  }
   if (entry?.pane_id) {
     return { paneId: entry.pane_id, paneTarget: entry.pane_target || "" };
   }
@@ -19985,7 +20047,7 @@ function generateSeedContent(handoff) {
   const worktreeDir = getWorktreeDir();
   const branch = `worker/${WORKER_NAME}`;
   const _seedConfig = readRegistry()._config;
-  const _missionAuth = _seedConfig?.mission_authority || "chief-of-staff";
+  const _missionAuth = getMissionAuthorityLabel(_seedConfig);
   let stateBlock = "";
   let proposalBlock = "";
   try {
@@ -20014,10 +20076,79 @@ These values were saved by your previous instance via \`update_state()\`. Use th
   } catch {}
   const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
   const workerMemoryDir = join(HOME, ".claude", "projects", projectSlug, "memory", WORKER_NAME);
+  let handoffBlock = "";
+  if (handoff) {
+    handoffBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+${handoff}`;
+  } else {
+    const checkpointLatest = join(WORKERS_DIR, WORKER_NAME, "checkpoints", "latest.json");
+    if (existsSync(checkpointLatest)) {
+      try {
+        const cpRaw = readFileSync(checkpointLatest, "utf-8").trim();
+        const cp = JSON.parse(cpRaw);
+        let cpBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+`;
+        cpBlock += `**Summary**: ${cp.summary || "No summary"}
+`;
+        if (cp.git_state?.branch) {
+          cpBlock += `**Git**: ${cp.git_state.branch} @ ${cp.git_state.sha || "?"} (${cp.git_state.dirty_count || 0} dirty, ${cp.git_state.staged_count || 0} staged)
+`;
+        }
+        if (cp.key_facts?.length > 0) {
+          cpBlock += `**Key facts**:
+${cp.key_facts.map((f) => `- ${f}`).join(`
+`)}
+`;
+        }
+        if (cp.dynamic_hooks?.length > 0) {
+          const pending = cp.dynamic_hooks.filter((h) => !h.completed);
+          if (pending.length > 0) {
+            cpBlock += `**Pending hooks**: ${pending.map((h) => `${h.id} (${h.event}: ${h.description})`).join(", ")}
+`;
+          }
+        }
+        if (cp.transcript_ref) {
+          cpBlock += `**Transcript**: ${cp.transcript_ref} \u2014 Read this if you need details from before recycling
+`;
+        }
+        handoffBlock = cpBlock;
+      } catch {
+        const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
+        if (existsSync(handoffPath)) {
+          try {
+            const handoffContent = readFileSync(handoffPath, "utf-8").trim();
+            if (handoffContent) {
+              handoffBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+${handoffContent}`;
+            }
+          } catch {}
+        }
+      }
+    } else {
+      const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
+      if (existsSync(handoffPath)) {
+        try {
+          const handoffContent = readFileSync(handoffPath, "utf-8").trim();
+          if (handoffContent) {
+            handoffBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+${handoffContent}`;
+          }
+        } catch {}
+      }
+    }
+  }
   let seed = `You are worker **${WORKER_NAME}**.
 Worktree: ${worktreeDir} (branch: ${branch})
 Worker config: ${workerDir}/
-
+${handoffBlock}
 Read these files NOW in this order:
 1. ${workerDir}/mission.md \u2014 your mission and goals (you own this file \u2014 update it as your mission evolves)
 2. Call \`mail_inbox()\` \u2014 check for messages before anything else
@@ -20030,78 +20161,6 @@ This path is under the project-level auto-memory \u2014 it persists across recyc
 If your inbox has a message from the user or ${_missionAuth} (mission_authority), prioritize it over your current work.${stateBlock}${proposalBlock}
 
 ${loadSeedContext(branch, _missionAuth)}`;
-  if (handoff) {
-    seed += `
-
-## Handoff from Previous Cycle
-
-${handoff}`;
-  }
-  const checkpointLatest = join(WORKERS_DIR, WORKER_NAME, "checkpoints", "latest.json");
-  if (!handoff && existsSync(checkpointLatest)) {
-    try {
-      const cpRaw = readFileSync(checkpointLatest, "utf-8").trim();
-      const cp = JSON.parse(cpRaw);
-      let cpBlock = `
-
-## Checkpoint from Previous Cycle
-
-`;
-      cpBlock += `**Summary**: ${cp.summary || "No summary"}
-`;
-      if (cp.git_state?.branch) {
-        cpBlock += `**Git**: ${cp.git_state.branch} @ ${cp.git_state.sha || "?"} (${cp.git_state.dirty_count || 0} dirty, ${cp.git_state.staged_count || 0} staged)
-`;
-      }
-      if (cp.key_facts?.length > 0) {
-        cpBlock += `**Key facts**:
-${cp.key_facts.map((f) => `- ${f}`).join(`
-`)}
-`;
-      }
-      if (cp.dynamic_hooks?.length > 0) {
-        const pending = cp.dynamic_hooks.filter((h) => !h.completed);
-        if (pending.length > 0) {
-          cpBlock += `**Pending hooks**: ${pending.map((h) => `${h.id} (${h.event}: ${h.description})`).join(", ")}
-`;
-        }
-      }
-      if (cp.transcript_ref) {
-        cpBlock += `
-Transcript: ${cp.transcript_ref}
-`;
-      }
-      seed += cpBlock;
-    } catch {
-      const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
-      if (existsSync(handoffPath)) {
-        try {
-          const handoffContent = readFileSync(handoffPath, "utf-8").trim();
-          if (handoffContent) {
-            seed += `
-
-## Handoff from Previous Cycle
-
-${handoffContent}`;
-          }
-        } catch {}
-      }
-    }
-  } else if (!handoff) {
-    const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
-    if (existsSync(handoffPath)) {
-      try {
-        const handoffContent = readFileSync(handoffPath, "utf-8").trim();
-        if (handoffContent) {
-          seed += `
-
-## Handoff from Previous Cycle
-
-${handoffContent}`;
-        }
-      } catch {}
-    }
-  }
   return seed;
 }
 function runDiagnostics() {
@@ -20132,13 +20191,6 @@ function runDiagnostics() {
       }
       if (!regEntry.model) {
         issues.push({ severity: "warning", check: "registry.model", message: "registry entry missing 'model' field \u2014 defaulting to opus", fix: `update_state("model", "opus")` });
-      }
-    }
-    const tasksPath = join(workerDir, "tasks.json");
-    if (existsSync(tasksPath)) {
-      const tasks = readJsonFile(tasksPath);
-      if (!tasks) {
-        issues.push({ severity: "error", check: "tasks.json", message: "tasks.json is invalid JSON", fix: `Fix or delete ${tasksPath} (will be recreated on create_task)` });
       }
     }
     const inboxPath = join(workerDir, "inbox.jsonl");
@@ -20226,7 +20278,7 @@ function getCachedDiagnostics() {
   return issues;
 }
 function withLint(result) {
-  refreshBmsUnread();
+  refreshFleetMailUnread();
   let text = result.content[0]?.text || "";
   const issues = getCachedDiagnostics();
   const errors4 = issues.filter((i) => i.severity === "error");
@@ -20237,216 +20289,16 @@ function withLint(result) {
 ` + errors4.map((i) => `  \u2718 [${i.check}] ${i.message}${i.fix ? ` \u2192 ${i.fix}` : ""}`).join(`
 `);
   }
-  if (_bmsUnreadCount > 0) {
+  if (_fleetMailUnreadCount > 0) {
     text += `
 
-\uD83D\uDCEC ${_bmsUnreadCount} unread mail \u2014 call mail_inbox() to read`;
+\uD83D\uDCEC ${_fleetMailUnreadCount} unread mail \u2014 call mail_inbox() to read`;
   }
   return { content: [{ type: "text", text }] };
 }
 var server = new McpServer({
   name: "worker-fleet",
   version: "2.0.0"
-});
-server.registerTool("task_create", { description: "Add a new task to your queue.", inputSchema: {
-  subject: exports_external.string().describe("Task title in imperative form"),
-  description: exports_external.string().optional().describe("Task description or notes"),
-  priority: exports_external.enum(["critical", "high", "medium", "low"]).optional().describe("Execution priority (default: medium)"),
-  active_form: exports_external.string().optional().describe("Present-continuous label for status displays"),
-  blocks: exports_external.string().optional().describe("Comma-separated task IDs that cannot start until this completes"),
-  blocked_by: exports_external.string().optional().describe("Comma-separated task IDs that must complete first"),
-  recurring: exports_external.boolean().optional().describe("If true, auto-resets to pending after completion")
-} }, async ({ subject, description, priority, active_form, blocks, blocked_by, recurring }) => {
-  try {
-    const tasks = readTasks(WORKER_NAME);
-    const id = nextTaskId(tasks);
-    const now = new Date().toISOString();
-    const blockedByList = blocked_by ? blocked_by.split(",").map((s) => s.trim()).filter(Boolean) : [];
-    const task = {
-      subject,
-      description: description || "",
-      activeForm: active_form || `Working on: ${subject}`,
-      status: "pending",
-      priority: priority || "medium",
-      recurring: recurring || false,
-      blocked_by: blockedByList,
-      metadata: {},
-      cycles_completed: 0,
-      owner: null,
-      created_at: now,
-      completed_at: null
-    };
-    tasks[id] = task;
-    if (blocks) {
-      for (const targetId of blocks.split(",").map((s) => s.trim()).filter(Boolean)) {
-        if (tasks[targetId]) {
-          const existing = tasks[targetId].blocked_by || [];
-          if (!existing.includes(id))
-            tasks[targetId].blocked_by = [...existing, id];
-        }
-      }
-    }
-    writeTasks(WORKER_NAME, tasks);
-    let suffix = ` [${task.priority}]`;
-    if (recurring)
-      suffix += " (recurring)";
-    if (blockedByList.length > 0)
-      suffix += ` (after: ${blockedByList.join(",")})`;
-    if (blocks)
-      suffix += ` (blocks: ${blocks})`;
-    return withLint({ content: [{ type: "text", text: `Added ${id}: ${subject}${suffix}` }] });
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-  }
-});
-server.registerTool("task_update", { description: "Update a task's status or fields.", inputSchema: {
-  task_id: exports_external.string().describe("Task identifier (e.g. 'T001')"),
-  status: exports_external.enum(["pending", "in_progress", "completed", "deleted"]).optional().describe("Target status"),
-  subject: exports_external.string().optional().describe("Updated task title"),
-  description: exports_external.string().optional().describe("Updated description or notes"),
-  priority: exports_external.enum(["critical", "high", "medium", "low"]).optional().describe("Updated priority"),
-  active_form: exports_external.string().optional().describe("Updated present-continuous label"),
-  owner: exports_external.string().optional().describe("Reassign to a different worker"),
-  add_blocked_by: exports_external.string().optional().describe("Comma-separated task IDs to add as blockers"),
-  add_blocks: exports_external.string().optional().describe("Comma-separated task IDs to block with this task")
-} }, async ({ task_id, status, subject, description, priority, active_form, owner, add_blocked_by, add_blocks }) => {
-  try {
-    const tasks = readTasks(WORKER_NAME);
-    const task = tasks[task_id];
-    if (!task)
-      return { content: [{ type: "text", text: `Error: Task ${task_id} not found` }], isError: true };
-    const changes = [];
-    const now = new Date().toISOString();
-    if (status) {
-      if (status === "in_progress") {
-        if (task.status === "completed")
-          return { content: [{ type: "text", text: `Error: Task ${task_id} already completed` }], isError: true };
-        if (task.status === "deleted")
-          return { content: [{ type: "text", text: `Error: Task ${task_id} has been deleted` }], isError: true };
-        if (isTaskBlocked(tasks, task_id)) {
-          const blockers = (task.blocked_by || []).filter((d) => tasks[d]?.status !== "completed");
-          return { content: [{ type: "text", text: `Error: Task ${task_id} blocked by: ${blockers.join(", ")}` }], isError: true };
-        }
-        task.status = "in_progress";
-        task.owner = owner || WORKER_NAME;
-        changes.push("claimed");
-      } else if (status === "completed") {
-        if (task.recurring) {
-          task.status = "pending";
-          task.owner = null;
-          task.completed_at = null;
-          task.last_completed_at = now;
-          task.cycles_completed = (task.cycles_completed || 0) + 1;
-          changes.push(`completed (recurring \u2014 reset to pending, cycle #${task.cycles_completed})`);
-        } else {
-          task.status = "completed";
-          task.completed_at = now;
-          changes.push("completed");
-        }
-      } else if (status === "deleted") {
-        task.status = "deleted";
-        task.deleted_at = now;
-        changes.push("deleted");
-      } else if (status === "pending") {
-        task.status = "pending";
-        changes.push("set to pending");
-      }
-    }
-    if (subject) {
-      task.subject = subject;
-      changes.push("subject updated");
-    }
-    if (description !== undefined) {
-      task.description = description;
-      changes.push("description updated");
-    }
-    if (active_form) {
-      task.activeForm = active_form;
-      changes.push("activeForm updated");
-    }
-    if (priority) {
-      task.priority = priority;
-      changes.push(`priority \u2192 ${priority}`);
-    }
-    if (owner && !status) {
-      task.owner = owner;
-      changes.push(`owner \u2192 ${owner}`);
-    }
-    if (add_blocked_by) {
-      const ids = add_blocked_by.split(",").map((s) => s.trim()).filter(Boolean);
-      task.blocked_by = [...new Set([...task.blocked_by || [], ...ids])];
-      changes.push(`blocked by: ${ids.join(",")}`);
-    }
-    if (add_blocks) {
-      const ids = add_blocks.split(",").map((s) => s.trim()).filter(Boolean);
-      for (const targetId of ids) {
-        if (tasks[targetId]) {
-          const existing = tasks[targetId].blocked_by || [];
-          if (!existing.includes(task_id))
-            tasks[targetId].blocked_by = [...existing, task_id];
-        }
-      }
-      changes.push(`blocks: ${ids.join(",")}`);
-    }
-    if (changes.length === 0)
-      return { content: [{ type: "text", text: `No changes specified for ${task_id}` }] };
-    writeTasks(WORKER_NAME, tasks);
-    return withLint({ content: [{ type: "text", text: `Updated ${task_id}: ${changes.join(", ")}` }] });
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-  }
-});
-server.registerTool("task_list", { description: "View tasks with optional filtering.", inputSchema: {
-  filter: exports_external.enum(["all", "pending", "in_progress", "blocked"]).optional().describe("Filter by status (default: all)"),
-  worker: exports_external.string().optional().describe("Whose tasks (omit=self, 'all'=fleet-wide)")
-} }, async ({ filter, worker }) => {
-  try {
-    const targetWorkers = [];
-    const wn = worker || WORKER_NAME;
-    if (wn === "all") {
-      targetWorkers.push(...readdirSync(WORKERS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_")).map((d) => d.name));
-    } else {
-      targetWorkers.push(wn);
-    }
-    const results = [];
-    let total = 0;
-    for (const w of targetWorkers) {
-      const tasks = readTasks(w);
-      if (Object.keys(tasks).length === 0)
-        continue;
-      const entries = Object.entries(tasks);
-      const filtered = entries.filter(([tid, t]) => {
-        if (t.status === "deleted")
-          return false;
-        const blocked = isTaskBlocked(tasks, tid);
-        if (filter === "pending")
-          return t.status === "pending" && !blocked;
-        if (filter === "in_progress")
-          return t.status === "in_progress";
-        if (filter === "blocked")
-          return blocked && t.status !== "completed";
-        return true;
-      });
-      if (filtered.length === 0)
-        continue;
-      results.push(`## ${w}`);
-      for (const [id, t] of filtered) {
-        const blocked = isTaskBlocked(tasks, id);
-        const st = blocked ? "blocked" : t.status;
-        const deps = (t.blocked_by || []).length > 0 ? ` [after:${t.blocked_by.join(",")}]` : "";
-        const rec = t.recurring ? " (recurring)" : "";
-        results.push(`  ${id} [${t.priority || "medium"}] ${st}: ${t.subject}${deps}${rec}`);
-        total++;
-      }
-    }
-    if (!results.length)
-      return { content: [{ type: "text", text: "No tasks found" }] };
-    return withLint({ content: [{ type: "text", text: `${total} tasks:
-${results.join(`
-`)}` }] });
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-  }
 });
 server.registerTool("get_worker_state", { description: "Read a worker's state from the central registry. Returns status, perpetual/sleep config, last commit info, issue counts, and any custom state keys. For a single worker, returns raw JSON. For name='all', returns a formatted fleet dashboard with a table of all workers showing runtime, status, pane health (alive/dead), and current in-progress task \u2014 plus a custom state section. The fleet view also auto-discovers workers from the filesystem and prunes dead panes.", inputSchema: {
   name: exports_external.string().optional().describe("Worker name to query. Omit for your own state. Use 'all' for a fleet-wide dashboard showing every registered worker, pane health, and active tasks")
@@ -20492,13 +20344,7 @@ ${new Date().toISOString()}
       const entries = Object.entries(registry2).filter(([k]) => k !== "_config").sort(([a], [b]) => a.localeCompare(b));
       for (const [n, entry2] of entries) {
         const w = entry2;
-        let task = "";
-        try {
-          const tasks = readTasks(n);
-          const ip = Object.entries(tasks).find(([_, t]) => t.status === "in_progress");
-          if (ip)
-            task = `${ip[0]}: ${ip[1].subject}`.slice(0, 40);
-        } catch {}
+        const task = "";
         const paneStatus = w.pane_id ? checkPaneAlive(w.pane_id) ? `${w.pane_id}` : `${w.pane_id} DEAD` : "\u2014";
         const runtime = String(w.custom?.runtime || "claude");
         output += `${n.padEnd(22)} ${runtime.padEnd(9)} ${String(w.status || "?").padEnd(10)} ${paneStatus.padEnd(12)} ${task}
@@ -20546,8 +20392,8 @@ ${new Date().toISOString()}
   }
 });
 server.registerTool("update_state", { description: "Write a key-value pair to the worker registry that persists across recycles. Use for sleep_duration, custom metrics, feature flags, or any state that must survive restarts. Known keys (status, perpetual, sleep_duration, last_commit_sha/msg/at, issues_found/fixed, report_to) are stored at the top level; all other keys go into the custom state bag. Cross-worker updates require authority \u2014 you must be the target's report_to or the mission_authority.", inputSchema: {
-  key: exports_external.string().describe("State key name. Known keys (status, perpetual, sleep_duration, report_to, last_commit_sha, last_commit_msg, last_commit_at, issues_found, issues_fixed) go top-level. Any other key goes into the custom state bag"),
-  value: exports_external.union([exports_external.string(), exports_external.number(), exports_external.boolean()]).describe("Value to store. Must be a primitive (string, number, or boolean)"),
+  key: exports_external.string().describe("State key name. Known keys (status, perpetual, sleep_duration, report_to, model, permission_mode, disallowed_tools, branch, worktree, mission_file, pane_id, pane_target, tmux_session, window, session_id, session_file, bms_token, forked_from, last_commit_sha, last_commit_msg, last_commit_at, issues_found, issues_fixed) go top-level. Any other key goes into the custom state bag"),
+  value: exports_external.union([exports_external.string(), exports_external.number(), exports_external.boolean(), exports_external.null(), exports_external.array(exports_external.string())]).describe("Value to store. Primitives, null, or string arrays (for disallowed_tools)"),
   worker: exports_external.string().optional().describe("Target worker. Omit to update your own state. Cross-worker updates are authorized only if you are the target's report_to or the mission_authority")
 } }, async ({ key, value, worker }) => {
   try {
@@ -20567,7 +20413,21 @@ server.registerTool("update_state", { description: "Write a key-value pair to th
         "last_commit_at",
         "issues_found",
         "issues_fixed",
-        "report_to"
+        "report_to",
+        "model",
+        "permission_mode",
+        "disallowed_tools",
+        "branch",
+        "worktree",
+        "mission_file",
+        "pane_id",
+        "pane_target",
+        "tmux_session",
+        "window",
+        "session_id",
+        "session_file",
+        "bms_token",
+        "forked_from"
       ]);
       if (STATE_KEYS.has(key)) {
         entry[key] = value;
@@ -20595,6 +20455,35 @@ server.registerTool("update_state", { description: "Write a key-value pair to th
     } catch {}
     const prefix = targetName !== WORKER_NAME ? `${targetName}.` : "state.";
     return withLint({ content: [{ type: "text", text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
+  } catch (e) {
+    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+  }
+});
+server.registerTool("update_config", { description: "Update fleet-wide _config fields in the registry (commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups). Only mission_authority or operator can call this.", inputSchema: {
+  key: exports_external.string().describe("Config key: commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups"),
+  value: exports_external.union([exports_external.string(), exports_external.array(exports_external.string()), exports_external.record(exports_external.string(), exports_external.array(exports_external.string()))]).describe("Value. mission_authority and commit_notify accept string or string[]; window_groups accepts Record<string, string[]>; others accept strings")
+} }, async ({ key, value }) => {
+  try {
+    const validKeys = new Set([
+      "commit_notify",
+      "merge_authority",
+      "deploy_authority",
+      "mission_authority",
+      "tmux_session",
+      "project_name",
+      "window_groups"
+    ]);
+    if (!validKeys.has(key)) {
+      return { content: [{ type: "text", text: `Invalid config key '${key}'. Valid: ${[...validKeys].join(", ")}` }], isError: true };
+    }
+    withRegistryLocked((registry2) => {
+      const config2 = registry2._config;
+      if (!isMissionAuthority(WORKER_NAME, config2) && WORKER_NAME !== "operator" && WORKER_NAME !== "user") {
+        throw new Error(`Only ${getMissionAuthorityLabel(config2)} (mission_authority) or operator can update _config`);
+      }
+      config2[key] = value;
+    });
+    return { content: [{ type: "text", text: `Updated _config.${key} = ${JSON.stringify(value)}` }] };
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
@@ -20882,17 +20771,19 @@ Use complete_hook(id) to mark each done, or recycle(force=true) to skip.`
     return { content: [{ type: "text", text: "Error: Could not find own pane in registry. Are you running in tmux?" }], isError: true };
   }
   let pendingWarning = "";
+  let hasUnreadMail = false;
   try {
-    const bmsToken = getWorkerEntry(WORKER_NAME)?.bms_token;
-    if (bmsToken) {
-      const resp = await fetch(`${BMS_URL}/api/messages?label=UNREAD&maxResults=1`, {
-        headers: { Authorization: `Bearer ${bmsToken}` },
+    const mailToken = getWorkerEntry(WORKER_NAME)?.bms_token;
+    if (mailToken) {
+      const resp = await fetch(`${FLEET_MAIL_URL}/api/messages?label=UNREAD&maxResults=1`, {
+        headers: { Authorization: `Bearer ${mailToken}` },
         signal: AbortSignal.timeout(3000)
       });
       if (resp.ok) {
         const data = await resp.json();
         const unread = data?._diagnostics?.unread_count || 0;
         if (unread > 0) {
+          hasUnreadMail = true;
           pendingWarning = `
 
 WARNING: ${unread} unread mail \u2014 call mail_inbox() before recycling.`;
@@ -20900,31 +20791,93 @@ WARNING: ${unread} unread mail \u2014 call mail_inbox() before recycling.`;
       }
     }
   } catch {}
+  const entry0 = getWorkerEntry(WORKER_NAME);
+  const isPerpetual0 = entry0?.perpetual === true;
+  if (isPerpetual0 && !hasUnreadMail && !resume) {
+    const hasSubstantiveHandoff = message && message.trim().length > 20;
+    if (!hasSubstantiveHandoff) {
+      const registrySleepDur0 = entry0?.sleep_duration ?? 1800;
+      const effectiveSleep0 = sleep_seconds !== undefined ? sleep_seconds : registrySleepDur0;
+      if (effectiveSleep0 > 0) {
+        const sleepUntil0 = new Date(Date.now() + effectiveSleep0 * 1000).toISOString();
+        try {
+          const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
+          const gitState = _captureGitState();
+          const hooks = _captureHooksSnapshot();
+          const checkpoint = {
+            timestamp: new Date().toISOString(),
+            type: "idle-sleep",
+            summary: message || "Idle \u2014 no pending work, sleeping",
+            git_state: gitState,
+            dynamic_hooks: hooks,
+            key_facts: [],
+            transcript_ref: ""
+          };
+          _writeCheckpoint(checkpointDir, checkpoint);
+        } catch {}
+        withRegistryLocked((registry2) => {
+          const w = registry2[WORKER_NAME];
+          if (w) {
+            w.status = "sleeping";
+            w.custom = w.custom || {};
+            w.custom.sleep_until = sleepUntil0;
+            w.custom.last_recycle_at = new Date().toISOString();
+            w.custom.last_recycle_reason = "idle";
+          }
+        });
+        const rt0 = getWorkerRuntime();
+        const recycleScript0 = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
+        writeFileSync(recycleScript0, `#!/bin/bash
+# Auto-generated IDLE SLEEP for ${WORKER_NAME} \u2014 no pending work, watchdog will wake on mail or timer
+set -uo pipefail
+PANE_ID="${ownPane.paneId}"
+sleep 5
+tmux send-keys -t "$PANE_ID" "${rt0.exitCommand}"
+tmux send-keys -t "$PANE_ID" -H 0d
+WAIT=0
+while [ "$WAIT" -lt 30 ]; do
+  sleep 2; WAIT=$((WAIT+2))
+  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
+  [ -z "$PANE_PID" ] && break
+  AGENT_RUNNING=false
+  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+    [[ "$cmd" == *${rt0.binary}* ]] && AGENT_RUNNING=true && break
+  done
+  [ "$AGENT_RUNNING" = "false" ] && break
+done
+rm -f "${recycleScript0}"
+`);
+        try {
+          execSync(`nohup bash "${recycleScript0}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
+            shell: "/bin/bash",
+            timeout: 5000
+          });
+        } catch (e) {
+          return { content: [{ type: "text", text: `Error spawning idle sleep: ${e.message}` }], isError: true };
+        }
+        const wakeTime0 = new Date(Date.now() + effectiveSleep0 * 1000);
+        const wakeStr0 = `${wakeTime0.getHours().toString().padStart(2, "0")}:${wakeTime0.getMinutes().toString().padStart(2, "0")}`;
+        return {
+          content: [{
+            type: "text",
+            text: `IDLE SLEEP \u2014 no pending work detected. Sleeping for ${effectiveSleep0}s (~${wakeStr0}).
+` + `Watchdog will wake early if mail arrives.
+` + `Status: sleeping (until ${sleepUntil0})
+` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.`
+          }]
+        };
+      }
+    }
+  }
   const sessionId = getSessionId(ownPane.paneId);
   const worktreeDir = getWorktreeDir();
   const pathSlug = worktreeDir.replace(/\//g, "-").replace(/^-/, "-");
   const transcriptPath = sessionId ? join(HOME, ".claude/projects", pathSlug, `${sessionId}.jsonl`) : null;
-  const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
-  mkdirSync2(checkpointDir, { recursive: true });
   try {
-    let gitState = {};
-    try {
-      const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", timeout: 5000, cwd: getWorktreeDir() }).trim();
-      const sha = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000, cwd: getWorktreeDir() }).trim();
-      const porcelain = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd: getWorktreeDir() }).trim();
-      const lines = porcelain ? porcelain.split(`
-`) : [];
-      const staged = lines.filter((l) => /^[MADRC]/.test(l)).length;
-      const dirty = lines.filter((l) => /^.[MADRC?]/.test(l)).length;
-      gitState = { branch, sha, dirty_count: dirty, staged_count: staged };
-    } catch {}
-    const hooks = [...dynamicHooks.values()].map((h) => ({
-      id: h.id,
-      event: h.event,
-      description: h.description,
-      blocking: h.blocking,
-      completed: h.completed
-    }));
+    const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
+    const gitState = _captureGitState();
+    const hooks = _captureHooksSnapshot();
     const checkpoint = {
       timestamp: new Date().toISOString(),
       type: "recycle",
@@ -20934,28 +20887,7 @@ WARNING: ${unread} unread mail \u2014 call mail_inbox() before recycling.`;
       key_facts: [],
       transcript_ref: transcriptPath || ""
     };
-    const ts = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T").slice(0, 15) + "Z";
-    const filename = `checkpoint-${ts}.json`;
-    const filepath = join(checkpointDir, filename);
-    writeFileSync(filepath, JSON.stringify(checkpoint, null, 2) + `
-`);
-    const latestLink = join(checkpointDir, "latest.json");
-    try {
-      unlinkSync(latestLink);
-    } catch {}
-    try {
-      symlinkSync(filename, latestLink);
-    } catch {}
-    try {
-      const allCheckpoints = readdirSync(checkpointDir).filter((f) => f.startsWith("checkpoint-") && f.endsWith(".json") && f !== "latest.json").sort();
-      if (allCheckpoints.length > 5) {
-        for (const old of allCheckpoints.slice(0, allCheckpoints.length - 5)) {
-          try {
-            unlinkSync(join(checkpointDir, old));
-          } catch {}
-        }
-      }
-    } catch {}
+    _writeCheckpoint(checkpointDir, checkpoint);
     const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
     if (message) {
       let handoffContent = message;
@@ -20974,11 +20906,13 @@ If you need specific details from before compaction (like exact code snippets, e
     const registry2 = readRegistry();
     const config2 = registry2._config;
     const cycleReport = message ? `[${WORKER_NAME}] Cycle complete: ${message}` : `[${WORKER_NAME}] Cycle complete (no summary provided)`;
-    const operatorName = config2?.mission_authority || null;
-    if (operatorName && operatorName !== WORKER_NAME) {
-      getBmsToken().then(async () => {
-        const toIds = await resolveBmsRecipients([operatorName]);
-        await bmsRequest("POST", "/api/messages/send", {
+    const maList = config2?.mission_authority;
+    const operatorNames = !maList ? [] : Array.isArray(maList) ? maList : [maList];
+    const filteredOps = operatorNames.filter((n) => n !== WORKER_NAME);
+    if (filteredOps.length > 0) {
+      getFleetMailToken().then(async () => {
+        const toIds = await resolveFleetMailRecipients(filteredOps);
+        await fleetMailRequest("POST", "/api/messages/send", {
           to: toIds,
           subject: `${WORKER_NAME} cycle done`,
           body: cycleReport,
@@ -21363,30 +21297,8 @@ function createWorkerFiles(input) {
   if (isPerpetual) {
     state.sleep_duration = sleep_duration ?? tpl.sleep_duration ?? 1800;
   }
-  const tasksObj = {};
-  const now = new Date().toISOString();
-  const taskIds = [];
-  for (const entry of taskEntries) {
-    const taskId = nextTaskId(tasksObj);
-    taskIds.push(taskId);
-    tasksObj[taskId] = {
-      subject: entry.subject,
-      description: entry.description || "",
-      activeForm: `Working on: ${entry.subject}`,
-      status: "pending",
-      priority: entry.priority || "medium",
-      recurring: false,
-      blocked_by: [],
-      metadata: {},
-      cycles_completed: 0,
-      owner: null,
-      created_at: now,
-      completed_at: null
-    };
-  }
-  writeFileSync(join(workerDir, "tasks.json"), JSON.stringify(tasksObj, null, 2) + `
-`);
-  return { ok: true, workerDir, model: selectedModel, runtime: resolvedRuntime, perpetual: isPerpetual, taskIds, tasks: tasksObj, state, permissions };
+  const taskIds = taskEntries.map((_, i) => `TASK-${i + 1}`);
+  return { ok: true, workerDir, model: selectedModel, runtime: resolvedRuntime, perpetual: isPerpetual, taskIds, taskEntries, state, permissions };
 }
 function moveWorkerPane(paneId, tmuxSession, targetWindow) {
   try {
@@ -21486,8 +21398,9 @@ async function handleFleetCreate(params) {
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
     }
     const config2 = readRegistry()._config;
-    const missionAuthority = config2?.mission_authority || "chief-of-staff";
-    const reportTo = direct_report ? WORKER_NAME : report_to || missionAuthority;
+    const firstMa = config2?.mission_authority;
+    const defaultReportTo = Array.isArray(firstMa) ? firstMa[0] : firstMa || "chief-of-staff";
+    const reportTo = direct_report ? WORKER_NAME : report_to || defaultReportTo;
     const { state, permissions, runtime: resolvedRuntime, taskIds, model: selectedModel, perpetual: isPerpetual } = result;
     withRegistryLocked((registry2) => {
       ensureWorkerInRegistry(registry2, name);
@@ -21617,7 +21530,31 @@ async function handleFleetCreate(params) {
       launchInfo = `
   Launch: manual \u2014 bash launch-flat-worker.sh ${name}`;
     }
-    const taskSummary = taskIds.length > 0 ? `${taskIds.length} (${taskIds.join(", ")})` : "none";
+    const sentTaskIds = [];
+    if (result.taskEntries && result.taskEntries.length > 0) {
+      for (const task of result.taskEntries) {
+        try {
+          const toIds = await resolveFleetMailRecipients([name]);
+          const priority = task.priority || "medium";
+          const priorityLabel = priority === "critical" ? "P0" : priority === "high" ? "P1" : priority === "low" ? "P3" : "P2";
+          const sent = await fleetMailRequest("POST", "/api/messages/send", {
+            to: toIds,
+            subject: `[TASK] ${task.subject}`,
+            body: task.description || task.subject,
+            cc: [],
+            thread_id: null,
+            in_reply_to: null,
+            reply_by: null,
+            labels: ["TASK", priorityLabel, "PENDING"],
+            attachments: []
+          });
+          sentTaskIds.push(sent?.id || "?");
+        } catch {
+          sentTaskIds.push("FAILED");
+        }
+      }
+    }
+    const taskSummary = sentTaskIds.length > 0 ? `${sentTaskIds.length} sent via Fleet Mail` : "none";
     const summary = [
       `Created worker/${name}:`,
       `  Dir: .claude/workers/${name}/`,
@@ -21688,8 +21625,8 @@ async function handleFleetMove(params) {
   const targetName = name || WORKER_NAME;
   const _mwRegistry = readRegistry();
   const _mwConfig = _mwRegistry._config;
-  const _mwAuth = _mwConfig?.mission_authority || "chief-of-staff";
-  if (targetName !== WORKER_NAME && WORKER_NAME !== _mwAuth) {
+  const _mwAuth = getMissionAuthorityLabel(_mwConfig);
+  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _mwConfig)) {
     return {
       content: [{
         type: "text",
@@ -21759,8 +21696,8 @@ async function handleFleetStandby(params) {
   const targetName = name || WORKER_NAME;
   const _sbRegistry = readRegistry();
   const _sbConfig = _sbRegistry._config;
-  const _sbAuth = _sbConfig?.mission_authority || "chief-of-staff";
-  if (targetName !== WORKER_NAME && WORKER_NAME !== _sbAuth) {
+  const _sbAuth = getMissionAuthorityLabel(_sbConfig);
+  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _sbConfig)) {
     return {
       content: [{
         type: "text",
@@ -21824,10 +21761,10 @@ Worker is in standby \u2014 registered but not running. Call standby_worker(name
   let standbyPendingWarning = "";
   try {
     const targetEntry = getWorkerEntry(targetName);
-    const bmsToken = targetEntry?.bms_token;
-    if (bmsToken) {
-      const resp = await fetch(`${BMS_URL}/api/messages?label=UNREAD&maxResults=1`, {
-        headers: { Authorization: `Bearer ${bmsToken}` },
+    const mailToken = targetEntry?.bms_token;
+    if (mailToken) {
+      const resp = await fetch(`${FLEET_MAIL_URL}/api/messages?label=UNREAD&maxResults=1`, {
+        headers: { Authorization: `Bearer ${mailToken}` },
         signal: AbortSignal.timeout(3000)
       });
       if (resp.ok) {
@@ -21882,7 +21819,8 @@ async function handleFleetRegister(params) {
     }
     const registry2 = readRegistry();
     const config2 = registry2._config;
-    const defaultReportTo = config2?.mission_authority || "chief-of-staff";
+    const maVal = config2?.mission_authority;
+    const defaultReportTo = Array.isArray(maVal) ? maVal[0] : maVal || "chief-of-staff";
     withRegistryLocked((reg) => {
       const entry = ensureWorkerInRegistry(reg, WORKER_NAME);
       entry.status = "active";
@@ -21900,13 +21838,18 @@ async function handleFleetRegister(params) {
         entry.pane_id = ownPane.paneId;
         entry.pane_target = paneTarget;
         entry.tmux_session = tmuxSession;
+        const sid = getSessionId(ownPane.paneId);
+        if (sid)
+          entry.session_id = sid;
       }
     });
+    const sessionId = ownPane ? getSessionId(ownPane.paneId) : null;
     const paneInfo = ownPane ? `pane ${ownPane.paneId} (${paneTarget})` : "no pane detected";
+    const sessionInfo = sessionId ? `, session: ${sessionId.slice(0, 8)}\u2026` : "";
     return {
       content: [{
         type: "text",
-        text: `Registered '${WORKER_NAME}' in registry.json \u2014 ${paneInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}`
+        text: `Registered '${WORKER_NAME}' in registry.json \u2014 ${paneInfo}${sessionInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}`
       }]
     };
   } catch (e) {
@@ -21918,8 +21861,8 @@ async function handleFleetDeregister(params) {
   const targetName = name || WORKER_NAME;
   const _drRegistry = readRegistry();
   const _drConfig = _drRegistry._config;
-  const _drAuth = _drConfig?.mission_authority || "chief-of-staff";
-  if (targetName !== WORKER_NAME && WORKER_NAME !== _drAuth) {
+  const _drAuth = getMissionAuthorityLabel(_drConfig);
+  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _drConfig)) {
     return {
       content: [{
         type: "text",
@@ -22113,7 +22056,7 @@ server.registerTool("fleet_help", {
   inputSchema: {}
 }, async () => handleFleetHelp());
 server.registerTool("deep_review", {
-  description: "Launch a multi-pass deep review pipeline. Material is ADDITIVE \u2014 combine scope (git diff) and content (files) in a single review, or use either alone. `scope` auto-detects: branch name=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=pull request. Default focus: diff-only=8 code areas, content-only=4 content areas, mixed=6 balanced areas. Creates DEDICATED tmux session with coordinator + worker panes. Voting within focus groups (\u22652/passes).",
+  description: "Launch a multi-pass deep review pipeline (v2: SOTA upgrades). Workers follow investigation protocols with structured attack vectors, confidence scoring, and chain-of-thought evidence. Context pre-pass gathers static analysis, dependency graphs, and test coverage. Judge agent does adversarial validation. Material is ADDITIVE \u2014 combine scope (git diff) and content (files). `scope` auto-detects: branch=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=PR. Graduated voting uses confidence + votes (not binary). Creates dedicated tmux session.",
   inputSchema: {
     scope: exports_external.string().optional().describe("Git diff scope. Auto-detects: branch name (e.g. 'main'), commit SHA, 'uncommitted', 'pr:42'. Default: HEAD if no content. Additive with content."),
     content: exports_external.union([exports_external.string(), exports_external.array(exports_external.string())]).optional().describe("File path(s) to review. Comma-separated string or array. Additive with scope."),
@@ -22121,7 +22064,9 @@ server.registerTool("deep_review", {
     passes: exports_external.number().optional().describe("Passes PER focus area (default: 2). Total workers = passes \xD7 focus areas."),
     session_name: exports_external.string().optional().describe("Custom tmux session name (overrides auto-naming)"),
     notify: exports_external.string().optional().describe("Worker name or 'user' to notify on completion."),
-    focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas.")
+    focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas."),
+    no_judge: exports_external.boolean().optional().describe("Skip the adversarial judge validation stage (faster but less precise). Default: false."),
+    no_context: exports_external.boolean().optional().describe("Skip context pre-pass (static analysis, dependency graph, test coverage). Default: false.")
   }
 }, async ({
   scope,
@@ -22130,7 +22075,9 @@ server.registerTool("deep_review", {
   passes,
   session_name,
   notify,
-  focus
+  focus,
+  no_judge,
+  no_context
 }) => {
   try {
     const scriptPath = join(CLAUDE_OPS, "scripts", "deep-review.sh");
@@ -22160,15 +22107,36 @@ server.registerTool("deep_review", {
     if (focus?.length) {
       args.push("--focus", focus.join(","));
     }
+    if (no_judge) {
+      args.push("--no-judge");
+    }
+    if (no_context) {
+      args.push("--no-context");
+    }
+    if (content) {
+      const paths = Array.isArray(content) ? content : content.split(",");
+      for (const p of paths) {
+        const resolved = p.trim().replace(/^~/, HOME);
+        const abs = resolved.startsWith("/") ? resolved : join(PROJECT_ROOT, resolved);
+        if (!existsSync(abs)) {
+          throw new Error(`Content file not found: ${p.trim()} (resolved: ${abs})`);
+        }
+      }
+    }
     const launchResult = spawnSync("bash", [scriptPath, ...args], {
       encoding: "utf-8",
       cwd: PROJECT_ROOT,
       env: { ...process.env, PROJECT_ROOT },
-      timeout: 60000
+      timeout: 120000
     });
-    if (launchResult.status !== 0) {
+    if (launchResult.status !== 0 && launchResult.status !== null) {
       const stderr = launchResult.stderr?.slice(0, 1000) || "";
       throw new Error(`deep-review.sh failed (exit ${launchResult.status}): ${stderr}`);
+    }
+    if (launchResult.status === null) {
+      const signal = launchResult.signal || "unknown";
+      const stderr = launchResult.stderr?.slice(0, 500) || "";
+      throw new Error(`deep-review.sh killed by ${signal} (likely timeout \u2014 try --no-context to skip static analysis, or reduce scope). ${stderr}`);
     }
     const stdout = launchResult.stdout || "";
     const tmuxSessionMatch = stdout.match(/Session:\s+(\S+)/);
@@ -22230,28 +22198,8 @@ server.registerTool("save_checkpoint", {
   }
 }, async ({ summary, key_facts }) => {
   const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
-  mkdirSync2(checkpointDir, { recursive: true });
-  let gitState = {};
-  try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
-    const sha = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
-    const porcelain = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000 }).trim();
-    const lines = porcelain ? porcelain.split(`
-`) : [];
-    const staged = lines.filter((l) => /^[MADRC]/.test(l)).length;
-    const dirty = lines.filter((l) => /^.[MADRC?]/.test(l)).length;
-    gitState = { branch, sha, dirty_count: dirty, staged_count: staged };
-  } catch {}
-  let hooks = [];
-  try {
-    hooks = [...dynamicHooks.values()].map((h) => ({
-      id: h.id,
-      event: h.event,
-      description: h.description,
-      blocking: h.blocking,
-      completed: h.completed
-    }));
-  } catch {}
+  const gitState = _captureGitState();
+  const hooks = _captureHooksSnapshot();
   let transcriptRef = "";
   try {
     const worktreeDir = getWorktreeDir();
@@ -22273,28 +22221,7 @@ server.registerTool("save_checkpoint", {
     key_facts: (key_facts || []).slice(0, 10),
     transcript_ref: transcriptRef
   };
-  const ts = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T").slice(0, 15) + "Z";
-  const filename = `checkpoint-${ts}.json`;
-  const filepath = join(checkpointDir, filename);
-  writeFileSync(filepath, JSON.stringify(checkpoint, null, 2) + `
-`);
-  const latestLink = join(checkpointDir, "latest.json");
-  try {
-    unlinkSync(latestLink);
-  } catch {}
-  try {
-    symlinkSync(filename, latestLink);
-  } catch {}
-  try {
-    const allCheckpoints = readdirSync(checkpointDir).filter((f) => f.startsWith("checkpoint-") && f.endsWith(".json") && f !== "latest.json").sort();
-    if (allCheckpoints.length > 5) {
-      for (const old of allCheckpoints.slice(0, allCheckpoints.length - 5)) {
-        try {
-          unlinkSync(join(checkpointDir, old));
-        } catch {}
-      }
-    }
-  } catch {}
+  const filepath = _writeCheckpoint(checkpointDir, checkpoint);
   return {
     content: [{
       type: "text",
@@ -22305,42 +22232,55 @@ Facts: ${(key_facts || []).length} saved`
     }]
   };
 });
-var BMS_URL = process.env.BMS_URL || "http://127.0.0.1:8025";
-var _bmsUnreadCount = 0;
-var _bmsUnreadLastCheck = 0;
-function refreshBmsUnread() {
+var FLEET_MAIL_URL = process.env.FLEET_MAIL_URL ?? "http://127.0.0.1:8025";
+var FLEET_MAIL_PROJECT = resolveProjectName().toLowerCase();
+function mailAccountName(localName) {
+  if (localName.includes("@") || localName.startsWith("list:"))
+    return localName;
+  return `${localName}@${FLEET_MAIL_PROJECT}`;
+}
+function stripMailNamespace(mailName) {
+  const suffix = `@${FLEET_MAIL_PROJECT}`;
+  if (mailName.endsWith(suffix))
+    return mailName.slice(0, -suffix.length);
+  return mailName;
+}
+var _fleetMailUnreadCount = 0;
+var _fleetMailUnreadLastCheck = 0;
+function refreshFleetMailUnread() {
   const now = Date.now();
-  if (now - _bmsUnreadLastCheck < 30000)
+  if (now - _fleetMailUnreadLastCheck < 30000)
     return;
-  _bmsUnreadLastCheck = now;
+  _fleetMailUnreadLastCheck = now;
   const entry = getWorkerEntry(WORKER_NAME);
-  const bmsToken = entry?.bms_token;
-  if (!bmsToken)
+  const mailToken = entry?.bms_token;
+  if (!mailToken)
     return;
-  fetch(`${BMS_URL}/api/messages?label=UNREAD&maxResults=1`, {
-    headers: { Authorization: `Bearer ${bmsToken}` },
+  fetch(`${FLEET_MAIL_URL}/api/messages?label=UNREAD&maxResults=1`, {
+    headers: { Authorization: `Bearer ${mailToken}` },
     signal: AbortSignal.timeout(3000)
   }).then((r) => r.ok ? r.json() : null).then((data) => {
     if (data)
-      _bmsUnreadCount = data?._diagnostics?.unread_count || data?.messages?.length || 0;
+      _fleetMailUnreadCount = data?._diagnostics?.unread_count || data?.messages?.length || 0;
   }).catch(() => {});
 }
-async function getBmsToken() {
+async function getFleetMailToken() {
   const registry2 = readRegistry();
   const entry = registry2[WORKER_NAME];
   if (entry?.bms_token)
     return entry.bms_token;
-  const resp = await fetch(`${BMS_URL}/api/accounts`, {
+  const nsName = mailAccountName(WORKER_NAME);
+  const resp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: WORKER_NAME, bio: `Fleet worker: ${WORKER_NAME}` })
+    body: JSON.stringify({ name: nsName, bio: `Fleet worker: ${WORKER_NAME} (${FLEET_MAIL_PROJECT})` })
   });
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
     if (resp.status === 409) {
-      throw new Error(`BMS account '${WORKER_NAME}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
+      throw new Error(`Fleet Mail account '${nsName}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
     }
-    throw new Error(`BMS register failed (${resp.status}): ${errText}`);
+    throw new Error(`Fleet Mail register failed (${resp.status}): ${errText}`);
   }
   const data = await resp.json();
   const token = data.bearerToken;
@@ -22351,14 +22291,14 @@ async function getBmsToken() {
       reg[WORKER_NAME].bms_token = token;
     });
   } catch (e) {
-    console.error(`[getBmsToken] WARN: Failed to persist bms_token for ${WORKER_NAME} to registry.json: ${e}`);
-    console.error(`[getBmsToken] Token works for this session but will be lost on restart \u2014 409 on next call.`);
+    console.error(`[getFleetMailToken] WARN: Failed to persist bms_token for ${WORKER_NAME} to registry.json: ${e}`);
+    console.error(`[getFleetMailToken] Token works for this session but will be lost on restart \u2014 409 on next call.`);
   }
   return token;
 }
-async function bmsRequest(method, path, body) {
-  const token = await getBmsToken();
-  const url = `${BMS_URL}${path}`;
+async function fleetMailRequest(method, path, body) {
+  const token = await getFleetMailToken();
+  const url = `${FLEET_MAIL_URL}${path}`;
   const opts = {
     method,
     headers: {
@@ -22370,7 +22310,7 @@ async function bmsRequest(method, path, body) {
   const resp = await fetch(url, opts);
   const text = await resp.text();
   if (!resp.ok) {
-    throw new Error(`BMS ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
+    throw new Error(`Fleet Mail ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
   }
   try {
     return JSON.parse(text);
@@ -22378,42 +22318,63 @@ async function bmsRequest(method, path, body) {
     return text;
   }
 }
-function bmsTextResult(data) {
-  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+function stripMailNamespaceFromResult(data) {
+  if (!data || typeof data !== "object")
+    return data;
+  if (Array.isArray(data))
+    return data.map(stripMailNamespaceFromResult);
+  const out = { ...data };
+  if (typeof out.from === "string")
+    out.from = stripMailNamespace(out.from);
+  if (out.from?.name)
+    out.from = { ...out.from, name: stripMailNamespace(out.from.name) };
+  if (Array.isArray(out.to))
+    out.to = out.to.map((t) => typeof t === "string" ? stripMailNamespace(t) : t?.name ? { ...t, name: stripMailNamespace(t.name) } : t);
+  if (Array.isArray(out.cc))
+    out.cc = out.cc.map((t) => typeof t === "string" ? stripMailNamespace(t) : t?.name ? { ...t, name: stripMailNamespace(t.name) } : t);
+  if (Array.isArray(out.messages))
+    out.messages = out.messages.map(stripMailNamespaceFromResult);
+  return out;
+}
+function fleetMailTextResult(data) {
+  const cleaned = stripMailNamespaceFromResult(data);
+  const text = typeof cleaned === "string" ? cleaned : JSON.stringify(cleaned, null, 2);
   return { content: [{ type: "text", text }] };
 }
-var _bmsDirectoryCache = null;
-var _bmsDirectoryCacheTime = 0;
-var BMS_DIR_CACHE_TTL = 60000;
-async function resolveBmsAccountId(name) {
+var _fleetMailDirectoryCache = null;
+var _fleetMailDirCacheTime = 0;
+var FLEET_MAIL_DIR_CACHE_TTL = 60000;
+async function resolveFleetMailAccountId(name) {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name))
     return name;
   if (name.startsWith("list:"))
     return name;
+  const nsName = mailAccountName(name);
   const now = Date.now();
-  if (!_bmsDirectoryCache || now - _bmsDirectoryCacheTime > BMS_DIR_CACHE_TTL) {
-    const token = await getBmsToken();
-    const resp = await fetch(`${BMS_URL}/api/directory`, {
+  if (!_fleetMailDirectoryCache || now - _fleetMailDirCacheTime > FLEET_MAIL_DIR_CACHE_TTL) {
+    const token = await getFleetMailToken();
+    const resp = await fetch(`${FLEET_MAIL_URL}/api/directory`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (resp.ok) {
       const data = await resp.json();
-      _bmsDirectoryCache = {};
+      _fleetMailDirectoryCache = {};
       for (const acct of data.directory || []) {
-        _bmsDirectoryCache[acct.name] = acct.id;
+        _fleetMailDirectoryCache[acct.name] = acct.id;
       }
-      _bmsDirectoryCacheTime = now;
+      _fleetMailDirCacheTime = now;
     }
   }
-  const id = _bmsDirectoryCache?.[name];
+  const id = _fleetMailDirectoryCache?.[nsName];
   if (id)
     return id;
   if (name === "user") {
+    const nsUserName = mailAccountName("user");
     try {
-      const provResp = await fetch(`${BMS_URL}/api/accounts`, {
+      const provResp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "user", display_name: "operator", bio: "Human operator" })
+        body: JSON.stringify({ name: nsUserName, display_name: "operator", bio: `Human operator (${FLEET_MAIL_PROJECT})` })
       });
       if (provResp.ok) {
         const acct = await provResp.json();
@@ -22426,32 +22387,32 @@ async function resolveBmsAccountId(name) {
             reg.user.status = "active";
           });
         } catch {}
-        if (!_bmsDirectoryCache)
-          _bmsDirectoryCache = {};
-        _bmsDirectoryCache["user"] = acct.id;
+        if (!_fleetMailDirectoryCache)
+          _fleetMailDirectoryCache = {};
+        _fleetMailDirectoryCache[nsUserName] = acct.id;
         return acct.id;
       }
       if (provResp.status === 409) {
-        _bmsDirectoryCache = null;
-        _bmsDirectoryCacheTime = 0;
-        return resolveBmsAccountId(name);
+        _fleetMailDirectoryCache = null;
+        _fleetMailDirCacheTime = 0;
+        return resolveFleetMailAccountId(name);
       }
     } catch {}
   }
-  throw new Error(`BMS account '${name}' not found in directory`);
+  throw new Error(`Fleet Mail account '${nsName}' not found in directory`);
 }
-async function resolveBmsRecipients(names) {
-  return Promise.all(names.map(resolveBmsAccountId));
+async function resolveFleetMailRecipients(names) {
+  return Promise.all(names.map(resolveFleetMailAccountId));
 }
 server.registerTool("mail_send", {
-  description: `Send a message to another worker, the human operator, or the entire fleet. Messages are durably stored in boring-mail-server (persist across restarts, searchable, threaded) and delivered instantly via tmux overlay if the recipient's pane is live.
+  description: `Send a message to another worker, the human operator, or the entire fleet. Messages are durably stored in Fleet Mail (persist across restarts, searchable, threaded) and delivered instantly via tmux overlay if the recipient's pane is live.
 
 Routing:
-- Worker name (e.g. "merger"): direct message via BMS email + tmux push.
+- Worker name (e.g. "merger"): direct message via Fleet Mail + tmux push.
 - "report": message whoever you report_to (resolved from registry).
 - "direct_reports": fan-out to all workers who report_to you.
 - "all": broadcast to every registered worker (expensive \u2014 use sparingly).
-- "user": escalate to the human operator (triage queue + desktop notification, NOT via BMS).
+- "user": escalate to the human operator (triage queue + desktop notification, NOT via Fleet Mail).
 - Raw pane ID (e.g. "%42"): tmux-only delivery, no durable storage.
 
 Escalate to user when: (1) design/architecture decisions need human judgment, (2) security or auth changes arise, (3) business logic changes affect end users, (4) new product surface area, (5) removing functionality, (6) external coordination needed, (7) blocked and need product direction. When in doubt, escalate.`,
@@ -22469,9 +22430,9 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
   if (to === "user") {
     let msgId = "";
     try {
-      const toIds = await resolveBmsRecipients(["user"]);
-      const ccIds = cc ? await resolveBmsRecipients(cc) : [];
-      const result = await bmsRequest("POST", "/api/messages/send", {
+      const toIds = await resolveFleetMailRecipients(["user"]);
+      const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
+      const result = await fleetMailRequest("POST", "/api/messages/send", {
         to: toIds,
         subject,
         body,
@@ -22484,12 +22445,12 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
       });
       msgId = result?.id || "";
     } catch (e) {
-      return { content: [{ type: "text", text: `Error sending to user via BMS: ${e.message}` }], isError: true };
+      return { content: [{ type: "text", text: `Error sending to user via Fleet Mail: ${e.message}` }], isError: true };
     }
     try {
       execSync(`terminal-notifier -title "Worker Escalation" -message ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} -sound default 2>/dev/null || osascript -e 'display notification ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} with title "Worker Escalation" sound name "default"'`, { timeout: 5000, shell: "/bin/bash" });
     } catch {}
-    return withLint({ content: [{ type: "text", text: `Sent to user via BMS [${msgId}] + desktop notification` }] });
+    return withLint({ content: [{ type: "text", text: `Sent to user via Fleet Mail [${msgId}] + desktop notification` }] });
   }
   if (to.startsWith("%")) {
     if (!isPaneAlive(to)) {
@@ -22497,7 +22458,7 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
     }
     try {
       tmuxSendMessage(to, `[msg from ${WORKER_NAME}] ${body}`);
-      return { content: [{ type: "text", text: `Sent to pane ${to} (tmux-only, no BMS)` }] };
+      return { content: [{ type: "text", text: `Sent to pane ${to} (tmux-only, no Fleet Mail)` }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
     }
@@ -22525,15 +22486,15 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
   if (recipientNames.length === 0) {
     return { content: [{ type: "text", text: "No recipients resolved" }], isError: true };
   }
-  const bmsSuccesses = [];
-  const bmsFailures = [];
+  const mailSuccesses = [];
+  const mailFailures = [];
   const tmuxDelivered = [];
   let lastMsgId = "";
   for (const name of recipientNames) {
     try {
-      const toIds = await resolveBmsRecipients([name]);
-      const ccIds = cc ? await resolveBmsRecipients(cc) : [];
-      const result = await bmsRequest("POST", "/api/messages/send", {
+      const toIds = await resolveFleetMailRecipients([name]);
+      const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
+      const result = await fleetMailRequest("POST", "/api/messages/send", {
         to: toIds,
         subject,
         body,
@@ -22545,9 +22506,9 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
         attachments: []
       });
       lastMsgId = result?.id || "";
-      bmsSuccesses.push(name);
+      mailSuccesses.push(name);
     } catch (e) {
-      bmsFailures.push(`${name}: ${e.message?.slice(0, 80)}`);
+      mailFailures.push(`${name}: ${e.message?.slice(0, 80)}`);
     }
   }
   const registry2 = (() => {
@@ -22557,7 +22518,7 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
       return {};
     }
   })();
-  for (const name of bmsSuccesses) {
+  for (const name of mailSuccesses) {
     try {
       const entry = registry2[name];
       const paneId = entry?.pane_id;
@@ -22568,9 +22529,9 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
       }
     } catch {}
   }
-  if (bmsSuccesses.length === 0) {
+  if (mailSuccesses.length === 0) {
     return { content: [{ type: "text", text: `Failed to send to all recipients:
-${bmsFailures.join(`
+${mailFailures.join(`
 `)}` }], isError: true };
   }
   const parts = [];
@@ -22578,21 +22539,21 @@ ${bmsFailures.join(`
     let paneWarning = "";
     const entry = registry2[recipientNames[0]];
     if (entry && (!entry.pane_id || !isPaneAlive(entry.pane_id))) {
-      paneWarning = ` (WARNING: no active pane \u2014 queued in BMS inbox)`;
+      paneWarning = ` (WARNING: no active pane \u2014 queued in Fleet Mail inbox)`;
     }
     parts.push(`Sent to ${recipientNames[0]} [${lastMsgId}]${paneWarning}`);
   } else {
-    parts.push(`Sent to ${bmsSuccesses.length}/${recipientNames.length} workers`);
+    parts.push(`Sent to ${mailSuccesses.length}/${recipientNames.length} workers`);
     if (tmuxDelivered.length > 0)
       parts.push(`Tmux overlay: ${tmuxDelivered.join(", ")}`);
-    if (bmsFailures.length > 0)
-      parts.push(`Failed: ${bmsFailures.join(", ")}`);
+    if (mailFailures.length > 0)
+      parts.push(`Failed: ${mailFailures.join(", ")}`);
   }
   return withLint({ content: [{ type: "text", text: parts.join(`
 `) }] });
 });
 server.registerTool("mail_inbox", {
-  description: "Read messages from your BMS inbox. Call at the start of every cycle \u2014 messages may contain instructions, merge notifications, or approval requests that should be acted on before starting new work. Returns messages with sender, subject, labels, and timestamps. Use label='UNREAD' for unread-only.",
+  description: "Read messages from your Fleet Mail inbox. Call at the start of every cycle \u2014 messages may contain instructions, merge notifications, or approval requests that should be acted on before starting new work. Returns messages with sender, subject, labels, and timestamps. Use label='UNREAD' for unread-only.",
   inputSchema: {
     label: exports_external.string().optional().describe("Label filter (default: UNREAD). Common: INBOX, UNREAD, SENT, STARRED, TRASH"),
     maxResults: exports_external.number().optional().describe("Max messages to return (default: 20)"),
@@ -22603,8 +22564,8 @@ server.registerTool("mail_inbox", {
     let path = `/api/messages?label=${label || "UNREAD"}&maxResults=${maxResults || 20}`;
     if (pageToken)
       path += `&pageToken=${encodeURIComponent(pageToken)}`;
-    const result = await bmsRequest("GET", path);
-    return withLint(bmsTextResult(result));
+    const result = await fleetMailRequest("GET", path);
+    return withLint(fleetMailTextResult(result));
   } catch (e) {
     return { content: [{ type: "text", text: e.message }], isError: true };
   }
@@ -22616,43 +22577,43 @@ server.registerTool("mail_read", {
   }
 }, async ({ id }) => {
   try {
-    const result = await bmsRequest("GET", `/api/messages/${encodeURIComponent(id)}`);
-    return bmsTextResult(result);
+    const result = await fleetMailRequest("GET", `/api/messages/${encodeURIComponent(id)}`);
+    return fleetMailTextResult(result);
   } catch (e) {
     return { content: [{ type: "text", text: e.message }], isError: true };
   }
 });
 server.registerTool("mail_help", {
-  description: "Get BMS CLI docs for search, threads, labels, trash, directory, mailing lists, and raw curl. Call this for any mail operation beyond send/inbox/read.",
+  description: "Get Fleet Mail CLI docs for search, threads, labels, trash, directory, mailing lists, and raw curl. Call this for any mail operation beyond send/inbox/read.",
   inputSchema: {}
 }, async () => {
-  const token = await getBmsToken().catch(() => "<your-bms-token>");
-  return bmsTextResult(`# Boring Mail Server \u2014 Management CLI
+  const token = await getFleetMailToken().catch(() => "<your-token>");
+  return fleetMailTextResult(`# Fleet Mail \u2014 Management CLI
 
-Server: ${BMS_URL}
-Your account: ${WORKER_NAME}
+Server: ${FLEET_MAIL_URL}
+Your account: ${mailAccountName(WORKER_NAME)}
 Your token: ${token}
 
 ## Search (replaces mail_search tool)
 
   # Gmail-style query syntax: from:, to:, subject:, has:attachment, label:, date ranges
-  curl -sf "${BMS_URL}/api/search?q=from:merger&maxResults=20" \\
+  curl -sf "${FLEET_MAIL_URL}/api/search?q=from:merger&maxResults=20" \\
     -H "Authorization: Bearer $TOKEN"
 
 ## Threads (replaces mail_thread tool)
 
   # Get full conversation thread
-  curl -sf "${BMS_URL}/api/threads/<thread-id>" \\
+  curl -sf "${FLEET_MAIL_URL}/api/threads/<thread-id>" \\
     -H "Authorization: Bearer $TOKEN"
 
   # List threads by label
-  curl -sf "${BMS_URL}/api/threads?label=INBOX&maxResults=20" \\
+  curl -sf "${FLEET_MAIL_URL}/api/threads?label=INBOX&maxResults=20" \\
     -H "Authorization: Bearer $TOKEN"
 
 ## Token Management
 
   # Reset your bearer token (invalidates old one, returns new)
-  curl -sf -X POST "${BMS_URL}/api/accounts/me/reset-token" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/accounts/me/reset-token" \\
     -H "Authorization: Bearer $TOKEN"
   # Response: {"bearerToken":"<new-uuid>","id":"...","name":"..."}
   # After reset, update registry.json: bms_token field for your worker
@@ -22660,68 +22621,68 @@ Your token: ${token}
 ## Label Operations
 
   # List labels with counts
-  curl -sf "${BMS_URL}/api/labels" -H "Authorization: Bearer $TOKEN"
+  curl -sf "${FLEET_MAIL_URL}/api/labels" -H "Authorization: Bearer $TOKEN"
 
   # Add/remove labels on a message
-  curl -sf -X POST "${BMS_URL}/api/messages/<msg-id>/modify" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/messages/<msg-id>/modify" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
     -d '{"addLabelIds":["STARRED"],"removeLabelIds":["UNREAD"]}'
 
   # Create custom label
-  curl -sf -X POST "${BMS_URL}/api/labels" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/labels" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
     -d '{"name":"MY-LABEL"}'
 
   # Delete custom label
-  curl -sf -X DELETE "${BMS_URL}/api/labels/MY-LABEL" \\
+  curl -sf -X DELETE "${FLEET_MAIL_URL}/api/labels/MY-LABEL" \\
     -H "Authorization: Bearer $TOKEN"
 
 ## Message Management
 
   # Trash a message
-  curl -sf -X POST "${BMS_URL}/api/messages/<msg-id>/trash" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/messages/<msg-id>/trash" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
 
   # Permanently delete
-  curl -sf -X DELETE "${BMS_URL}/api/messages/<msg-id>" \\
+  curl -sf -X DELETE "${FLEET_MAIL_URL}/api/messages/<msg-id>" \\
     -H "Authorization: Bearer $TOKEN"
 
   # Batch modify labels
-  curl -sf -X POST "${BMS_URL}/api/messages/batchModify" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/messages/batchModify" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
     -d '{"ids":["id1","id2"],"addLabelIds":["STARRED"],"removeLabelIds":[]}'
 
 ## Threads
 
   # List threads by label
-  curl -sf "${BMS_URL}/api/threads?label=INBOX&maxResults=20" \\
+  curl -sf "${FLEET_MAIL_URL}/api/threads?label=INBOX&maxResults=20" \\
     -H "Authorization: Bearer $TOKEN"
 
 ## Directory & Profile
 
   # List all accounts
-  curl -sf "${BMS_URL}/api/directory" -H "Authorization: Bearer $TOKEN"
+  curl -sf "${FLEET_MAIL_URL}/api/directory" -H "Authorization: Bearer $TOKEN"
 
   # Search accounts
-  curl -sf "${BMS_URL}/api/directory?q=merger" -H "Authorization: Bearer $TOKEN"
+  curl -sf "${FLEET_MAIL_URL}/api/directory?q=merger" -H "Authorization: Bearer $TOKEN"
 
   # View own profile
-  curl -sf "${BMS_URL}/api/accounts/me" -H "Authorization: Bearer $TOKEN"
+  curl -sf "${FLEET_MAIL_URL}/api/accounts/me" -H "Authorization: Bearer $TOKEN"
 
   # Update bio
-  curl -sf -X PUT "${BMS_URL}/api/accounts/me" \\
+  curl -sf -X PUT "${FLEET_MAIL_URL}/api/accounts/me" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
     -d '{"bio":"I handle code reviews"}'
 
 ## Mailing Lists
 
   # Create list
-  curl -sf -X POST "${BMS_URL}/api/lists" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/lists" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
     -d '{"name":"team-all","description":"All team members"}'
 
   # Subscribe (self)
-  curl -sf -X POST "${BMS_URL}/api/lists/<list-id>/subscribe" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/lists/<list-id>/subscribe" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
 
   # Send to list (use list:name in to field)
@@ -22730,24 +22691,24 @@ Your token: ${token}
 ## Blob Attachments
 
   # Upload blob
-  curl -sf -X POST "${BMS_URL}/api/blobs" \\
+  curl -sf -X POST "${FLEET_MAIL_URL}/api/blobs" \\
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/octet-stream" \\
     --data-binary @file.txt
 
   # Download blob
-  curl -sf "${BMS_URL}/api/blobs/<sha256-hash>" -H "Authorization: Bearer $TOKEN" -o file.txt
+  curl -sf "${FLEET_MAIL_URL}/api/blobs/<sha256-hash>" -H "Authorization: Bearer $TOKEN" -o file.txt
 
 ## Health & Analytics
 
-  curl -sf "${BMS_URL}/health"
-  curl -sf "${BMS_URL}/api/analytics" -H "Authorization: Bearer $TOKEN"
+  curl -sf "${FLEET_MAIL_URL}/health"
+  curl -sf "${FLEET_MAIL_URL}/api/analytics" -H "Authorization: Bearer $TOKEN"
 `);
 });
 async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
 }
-if (import.meta.main) {
+if (__require.main == __require.module) {
   main().catch((e) => {
     console.error("worker-fleet MCP server fatal:", e);
     process.exit(1);
@@ -22755,23 +22716,18 @@ if (import.meta.main) {
 }
 export {
   writeToTriageQueue,
-  writeTasks,
   withRegistryLocked,
   runDiagnostics,
   resolveRecipient,
   releaseLock,
-  readTasks,
   readRegistry,
   readJsonFile,
-  nextTaskId,
   lintRegistry,
-  isTaskBlocked,
   isPaneAlive,
   getWorktreeDir,
   getWorkerRuntime,
   getWorkerModel,
   getWorkerEntry,
-  getTasksPath,
   getSessionId,
   getReportTo,
   generateSeedContent,
@@ -22781,8 +22737,12 @@ export {
   canUpdateWorker,
   buildMessageBody,
   acquireLock,
+  _writeCheckpoint,
+  _timestampFilename,
   _setWorkersDir,
   _replaceMemorySection,
+  _captureHooksSnapshot,
+  _captureGitState,
   WORKER_NAME,
   WORKERS_DIR,
   RUNTIMES,

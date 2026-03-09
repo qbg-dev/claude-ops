@@ -24,7 +24,7 @@ import { z } from "zod";
 import {
   readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync,
   readdirSync, statSync, unlinkSync, symlinkSync, renameSync,
-  lstatSync, rmSync, copyFileSync, cpSync,
+  lstatSync, rmSync, copyFileSync, cpSync, realpathSync,
 } from "fs";
 import { join, basename } from "path";
 import { execSync, spawnSync, spawn } from "child_process";
@@ -126,8 +126,35 @@ function loadSeedContext(branch: string, missionAuthority: string): string {
   }
 }
 
-/** Project-level unified registry — replaces per-worker permissions.json, state.json, and pane-registry.json */
-const REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
+/** Derive canonical project name — strips worktree suffix (-w-*) */
+function resolveProjectName(): string {
+  return basename(PROJECT_ROOT).replace(/-w-.*$/, '');
+}
+
+/** Single-source registry outside git — no symlinks needed across worktrees */
+const FLEET_DIR = join(HOME, ".claude/fleet", resolveProjectName());
+const REGISTRY_PATH = join(FLEET_DIR, "registry.json");
+const LEGACY_REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
+
+/** Auto-migrate registry from legacy per-worktree path to fleet-global path */
+function migrateRegistryIfNeeded(): void {
+  mkdirSync(FLEET_DIR, { recursive: true });
+  if (existsSync(REGISTRY_PATH)) return;
+
+  // Resolve legacy path (may be a symlink to main repo)
+  let legacyPath = LEGACY_REGISTRY_PATH;
+  try { legacyPath = realpathSync(LEGACY_REGISTRY_PATH); } catch {}
+  if (!existsSync(legacyPath)) return;
+
+  // Validate it's actual registry content, not a migration stub
+  try {
+    const raw = JSON.parse(readFileSync(legacyPath, "utf-8"));
+    if (raw._migrated_to) return; // Already a stub
+  } catch { return; }
+
+  copyFileSync(legacyPath, REGISTRY_PATH);
+}
+migrateRegistryIfNeeded();
 
 
 // ── Worker Identity Detection ────────────────────────────────────────
@@ -183,9 +210,9 @@ interface DynamicHook {
 }
 const dynamicHooks: Map<string, DynamicHook> = new Map();
 let _hookCounter = 0;
-const HOOKS_FILE = `/tmp/claude-hooks-${WORKER_NAME}.json`;
-// Legacy file for migration
-const LEGACY_STOP_CHECKS_FILE = `/tmp/claude-stop-checks-${WORKER_NAME}.json`;
+const HOOKS_DIR = process.env.CLAUDE_HOOKS_DIR || join(HOME, ".claude/ops/hooks/dynamic");
+try { mkdirSync(HOOKS_DIR, { recursive: true }); } catch {}
+const HOOKS_FILE = join(HOOKS_DIR, `${WORKER_NAME}.json`);
 
 /** Persist hooks to file for hook scripts to read */
 function _persistHooks(): void {
@@ -211,27 +238,6 @@ try {
         const num = parseInt(h.id.replace("dh-", ""), 10);
         if (!isNaN(num) && num > _hookCounter) _hookCounter = num;
       }
-    }
-  } else if (existsSync(LEGACY_STOP_CHECKS_FILE)) {
-    // One-time migration from old stop-checks format
-    const data = JSON.parse(readFileSync(LEGACY_STOP_CHECKS_FILE, "utf-8"));
-    if (data.worker === WORKER_NAME && Array.isArray(data.checks)) {
-      for (const c of data.checks) {
-        const id = c.id.replace("sc-", "dh-");
-        const hook: DynamicHook = {
-          id, event: "Stop", blocking: true,
-          description: c.description, content: c.description,
-          completed: c.completed, added_at: c.added_at,
-          ...(c.completed_at && { completed_at: c.completed_at }),
-          ...(c.result && { result: c.result }),
-          ...(c.agent_id && { agent_id: c.agent_id }),
-        };
-        dynamicHooks.set(id, hook);
-        const num = parseInt(id.replace("dh-", ""), 10);
-        if (!isNaN(num) && num > _hookCounter) _hookCounter = num;
-      }
-      _persistHooks();
-      try { rmSync(LEGACY_STOP_CHECKS_FILE); } catch {}
     }
   }
 } catch {}
@@ -274,7 +280,7 @@ interface RegistryConfig {
   commit_notify: string[];
   merge_authority: string;
   deploy_authority: string;
-  mission_authority: string;
+  mission_authority: string | string[];
   tmux_session: string;
   project_name: string;
 }
@@ -322,16 +328,33 @@ interface ProjectRegistry {
 
 const LINT_ENABLED = process.env.WORKER_FLEET_LINT !== "0";
 
-/** Resolve report_to (falls back to config.mission_authority) */
+/** Check if a worker name is in the mission_authority group (supports string or string[]) */
+function isMissionAuthority(name: string, config?: RegistryConfig): boolean {
+  if (!config?.mission_authority) return false;
+  const ma = config.mission_authority;
+  return Array.isArray(ma) ? ma.includes(name) : ma === name;
+}
+
+/** Get the first mission authority name (for display/fallback purposes) */
+function getMissionAuthorityLabel(config?: RegistryConfig): string {
+  const ma = config?.mission_authority;
+  if (!ma) return "chief-of-staff";
+  return Array.isArray(ma) ? ma.join(", ") : ma;
+}
+
+/** Resolve report_to (falls back to first mission_authority) */
 function getReportTo(w: RegistryWorkerEntry, config?: RegistryConfig): string | null {
-  return w.report_to || config?.mission_authority || null;
+  if (w.report_to) return w.report_to;
+  const ma = config?.mission_authority;
+  if (!ma) return null;
+  return Array.isArray(ma) ? ma[0] : ma;
 }
 
 /** Check if caller has authority to update target worker's state */
 function canUpdateWorker(callerName: string, targetName: string, registry: ProjectRegistry): boolean {
   if (callerName === targetName) return true;
   const config = registry._config as RegistryConfig;
-  if (callerName === config?.mission_authority) return true;
+  if (isMissionAuthority(callerName, config)) return true;
   const target = registry[targetName] as RegistryWorkerEntry | undefined;
   if (target && getReportTo(target, config) === callerName) return true;
   return false;
@@ -339,8 +362,19 @@ function canUpdateWorker(callerName: string, targetName: string, registry: Proje
 
 /** Read project registry from disk (no locking — caller handles concurrency) */
 function readRegistry(): ProjectRegistry {
-  const raw = readJsonFile(REGISTRY_PATH);
-  if (!raw || !raw._config) {
+  let raw = readJsonFile(REGISTRY_PATH);
+
+  // Fallback: try legacy path if new location doesn't exist yet
+  if ((!raw || raw._migrated_to) && existsSync(LEGACY_REGISTRY_PATH)) {
+    const legacy = readJsonFile(LEGACY_REGISTRY_PATH);
+    if (legacy && legacy._config && !legacy._migrated_to) {
+      raw = legacy;
+      // Auto-migrate on next read
+      migrateRegistryIfNeeded();
+    }
+  }
+
+  if (!raw || !raw._config || raw._migrated_to) {
     // Bootstrap empty registry
     return {
       _config: {
@@ -349,7 +383,7 @@ function readRegistry(): ProjectRegistry {
         deploy_authority: "merger",
         mission_authority: "chief-of-staff",
         tmux_session: "w",
-        project_name: basename(PROJECT_ROOT),
+        project_name: resolveProjectName(),
       },
     };
   }
@@ -388,7 +422,7 @@ function ensureWorkerInRegistry(registry: ProjectRegistry, name: string): Regist
     return e;
   }
 
-  const projectName = PROJECT_ROOT.split("/").pop()!;
+  const projectName = resolveProjectName();
   const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
 
   const entry: RegistryWorkerEntry = {
@@ -560,7 +594,7 @@ function resolveRecipient(to: string): {
       const registry = readRegistry();
       const config = registry._config as RegistryConfig;
       const myEntry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
-      const reportToName = myEntry ? getReportTo(myEntry, config) : config?.mission_authority;
+      const reportToName = myEntry ? getReportTo(myEntry, config) : getMissionAuthorityLabel(config);
       if (reportToName && reportToName !== WORKER_NAME) {
         return { type: "worker", workerName: reportToName };
       }
@@ -671,7 +705,7 @@ function isPaneAlive(paneId: string): boolean {
 
 // ── Pane & Session Helpers ───────────────────────────────────────────
 
-/** Find this worker's pane. Prefers TMUX_PANE env (exact), falls back to registry search. */
+/** Find this worker's pane. Priority: TMUX_PANE env → session_id pane-map → registry. */
 function findOwnPane(): { paneId: string; paneTarget: string } | null {
   const tmuxPane = process.env.TMUX_PANE;
   if (tmuxPane) {
@@ -691,8 +725,27 @@ function findOwnPane(): { paneId: string; paneTarget: string } | null {
     return { paneId: tmuxPane, paneTarget: "" };
   }
 
-  // Fallback: search registry by worker name
+  // Session-based fallback: if we have a session_id in registry, look up its pane from pane-map
   const entry = getWorkerEntry(WORKER_NAME);
+  if (entry?.session_id) {
+    const paneMapPath = join(HOME, ".claude/pane-map", entry.session_id);
+    try {
+      const mappedPane = readFileSync(paneMapPath, "utf-8").trim();
+      if (mappedPane && isPaneAlive(mappedPane)) {
+        // Resolve target
+        try {
+          const target = execSync(
+            `tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${mappedPane}" '$1 == id {print $2}'`,
+            { encoding: "utf-8", timeout: 5000 }
+          ).trim();
+          return { paneId: mappedPane, paneTarget: target };
+        } catch {}
+        return { paneId: mappedPane, paneTarget: "" };
+      }
+    } catch {}
+  }
+
+  // Final fallback: registry pane_id
   if (entry?.pane_id) {
     return { paneId: entry.pane_id, paneTarget: entry.pane_target || "" };
   }
@@ -725,7 +778,7 @@ function generateSeedContent(handoff?: string): string {
   const worktreeDir = getWorktreeDir();
   const branch = `worker/${WORKER_NAME}`;
   const _seedConfig = readRegistry()._config as RegistryConfig | undefined;
-  const _missionAuth = _seedConfig?.mission_authority || "chief-of-staff";
+  const _missionAuth = getMissionAuthorityLabel(_seedConfig);
 
   // Include persisted state in seed so workers resume where they left off
   let stateBlock = "";
@@ -1113,8 +1166,8 @@ server.registerTool(
 server.registerTool(
   "update_state",
   { description: "Write a key-value pair to the worker registry that persists across recycles. Use for sleep_duration, custom metrics, feature flags, or any state that must survive restarts. Known keys (status, perpetual, sleep_duration, last_commit_sha/msg/at, issues_found/fixed, report_to) are stored at the top level; all other keys go into the custom state bag. Cross-worker updates require authority — you must be the target's report_to or the mission_authority.", inputSchema: {
-    key: z.string().describe("State key name. Known keys (status, perpetual, sleep_duration, report_to, last_commit_sha, last_commit_msg, last_commit_at, issues_found, issues_fixed) go top-level. Any other key goes into the custom state bag"),
-    value: z.union([z.string(), z.number(), z.boolean()]).describe("Value to store. Must be a primitive (string, number, or boolean)"),
+    key: z.string().describe("State key name. Known keys (status, perpetual, sleep_duration, report_to, model, permission_mode, disallowed_tools, branch, worktree, mission_file, pane_id, pane_target, tmux_session, window, session_id, session_file, bms_token, forked_from, last_commit_sha, last_commit_msg, last_commit_at, issues_found, issues_fixed) go top-level. Any other key goes into the custom state bag"),
+    value: z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string())]).describe("Value to store. Primitives, null, or string arrays (for disallowed_tools)"),
     worker: z.string().optional().describe("Target worker. Omit to update your own state. Cross-worker updates are authorized only if you are the target's report_to or the mission_authority"),
   } },
   async ({ key, value, worker }) => {
@@ -1130,9 +1183,11 @@ server.registerTool(
         }
 
         const entry = ensureWorkerInRegistry(registry, targetName);
-        // Allowlist of state-owned fields (prevents overwriting pane_id, branch, etc.)
+        // Allowlist of top-level fields (all worker entry fields are now editable)
         const STATE_KEYS = new Set(["status","perpetual","sleep_duration",
-          "last_commit_sha","last_commit_msg","last_commit_at","issues_found","issues_fixed","report_to"]);
+          "last_commit_sha","last_commit_msg","last_commit_at","issues_found","issues_fixed","report_to",
+          "model","permission_mode","disallowed_tools","branch","worktree","mission_file",
+          "pane_id","pane_target","tmux_session","window","session_id","session_file","bms_token","forked_from"]);
         if (STATE_KEYS.has(key)) {
           (entry as any)[key] = value;
         } else {
@@ -1172,6 +1227,36 @@ server.registerTool(
 );
 
 // fleet_status removed — merged into get_worker_state(name="all")
+
+server.registerTool(
+  "update_config",
+  { description: "Update fleet-wide _config fields in the registry (commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups). Only mission_authority or operator can call this.", inputSchema: {
+    key: z.string().describe("Config key: commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups"),
+    value: z.union([z.string(), z.array(z.string()), z.record(z.string(), z.array(z.string()))]).describe("Value. mission_authority and commit_notify accept string or string[]; window_groups accepts Record<string, string[]>; others accept strings"),
+  } },
+  async ({ key, value }) => {
+    try {
+      const validKeys = new Set(["commit_notify", "merge_authority", "deploy_authority",
+        "mission_authority", "tmux_session", "project_name", "window_groups"]);
+      if (!validKeys.has(key)) {
+        return { content: [{ type: "text" as const, text: `Invalid config key '${key}'. Valid: ${[...validKeys].join(", ")}` }], isError: true };
+      }
+
+      withRegistryLocked((registry) => {
+        const config = registry._config as RegistryConfig;
+        // Authorization: only mission_authority or operator
+        if (!isMissionAuthority(WORKER_NAME, config) && WORKER_NAME !== "operator" && WORKER_NAME !== "user") {
+          throw new Error(`Only ${getMissionAuthorityLabel(config)} (mission_authority) or operator can update _config`);
+        }
+        (config as any)[key] = value;
+      });
+
+      return { content: [{ type: "text" as const, text: `Updated _config.${key} = ${JSON.stringify(value)}` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+    }
+  }
+);
 
 // ═══════════════════════════════════════════════════════════════════
 // MEMORY TOOL
@@ -1619,10 +1704,12 @@ rm -f "${recycleScript0}"
         : `[${WORKER_NAME}] Cycle complete (no summary provided)`;
 
       // Notify mission_authority via Fleet Mail (best-effort)
-      const operatorName = config?.mission_authority || null;
-      if (operatorName && operatorName !== WORKER_NAME) {
+      const maList = config?.mission_authority;
+      const operatorNames: string[] = !maList ? [] : Array.isArray(maList) ? maList : [maList];
+      const filteredOps = operatorNames.filter(n => n !== WORKER_NAME);
+      if (filteredOps.length > 0) {
         getFleetMailToken().then(async () => {
-          const toIds = await resolveFleetMailRecipients([operatorName]);
+          const toIds = await resolveFleetMailRecipients(filteredOps);
           await fleetMailRequest("POST", "/api/messages/send", {
             to: toIds, subject: `${WORKER_NAME} cycle done`,
             body: cycleReport, cc: [], thread_id: null, in_reply_to: null,
@@ -2218,10 +2305,12 @@ async function handleFleetCreate(params: Record<string, any>): Promise<McpResult
 
     // Determine report_to — default to chief-of-staff (mission_authority) unless explicit
     const config = readRegistry()._config as RegistryConfig | undefined;
-    const missionAuthority = config?.mission_authority || "chief-of-staff";
+    // For report_to, use first mission_authority name as default
+    const firstMa = config?.mission_authority;
+    const defaultReportTo = Array.isArray(firstMa) ? firstMa[0] : (firstMa || "chief-of-staff");
     const reportTo = direct_report
       ? WORKER_NAME
-      : (report_to || missionAuthority);
+      : (report_to || defaultReportTo);
 
     // Register in unified registry
     const { state, permissions, runtime: resolvedRuntime, taskIds, model: selectedModel, perpetual: isPerpetual } = result as Required<CreateWorkerResult>;
@@ -2484,8 +2573,8 @@ async function handleFleetMove(params: Record<string, any>): Promise<McpResult> 
   // Authorization: self or mission_authority
   const _mwRegistry = readRegistry();
   const _mwConfig = _mwRegistry._config as RegistryConfig | undefined;
-  const _mwAuth = _mwConfig?.mission_authority || "chief-of-staff";
-  if (targetName !== WORKER_NAME && WORKER_NAME !== _mwAuth) {
+  const _mwAuth = getMissionAuthorityLabel(_mwConfig);
+  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _mwConfig)) {
     return {
       content: [{
         type: "text" as const,
@@ -2567,8 +2656,8 @@ async function handleFleetStandby(params: Record<string, any>): Promise<McpResul
   // Authorization: self-only unless mission_authority
   const _sbRegistry = readRegistry();
   const _sbConfig = _sbRegistry._config as RegistryConfig | undefined;
-  const _sbAuth = _sbConfig?.mission_authority || "chief-of-staff";
-  if (targetName !== WORKER_NAME && WORKER_NAME !== _sbAuth) {
+  const _sbAuth = getMissionAuthorityLabel(_sbConfig);
+  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _sbConfig)) {
     return {
       content: [{
         type: "text" as const,
@@ -2703,7 +2792,8 @@ async function handleFleetRegister(params: Record<string, any>): Promise<McpResu
 
     const registry = readRegistry();
     const config = registry._config as RegistryConfig | undefined;
-    const defaultReportTo = config?.mission_authority || "chief-of-staff";
+    const maVal = config?.mission_authority;
+    const defaultReportTo = Array.isArray(maVal) ? maVal[0] : (maVal || "chief-of-staff");
 
     withRegistryLocked((reg) => {
       const entry = ensureWorkerInRegistry(reg, WORKER_NAME);
@@ -2720,14 +2810,19 @@ async function handleFleetRegister(params: Record<string, any>): Promise<McpResu
         entry.pane_id = ownPane.paneId;
         entry.pane_target = paneTarget;
         entry.tmux_session = tmuxSession;
+        // Session-based identity: capture session_id from pane-map (primary identity)
+        const sid = getSessionId(ownPane.paneId);
+        if (sid) entry.session_id = sid;
       }
     });
 
+    const sessionId = ownPane ? getSessionId(ownPane.paneId) : null;
     const paneInfo = ownPane ? `pane ${ownPane.paneId} (${paneTarget})` : "no pane detected";
+    const sessionInfo = sessionId ? `, session: ${sessionId.slice(0, 8)}…` : "";
     return {
       content: [{
         type: "text" as const,
-        text: `Registered '${WORKER_NAME}' in registry.json — ${paneInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}`,
+        text: `Registered '${WORKER_NAME}' in registry.json — ${paneInfo}${sessionInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}`,
       }],
     };
   } catch (e: any) {
@@ -2742,8 +2837,8 @@ async function handleFleetDeregister(params: Record<string, any>): Promise<McpRe
   // Authorization: only self-deregister, OR mission_authority can deregister anyone
   const _drRegistry = readRegistry();
   const _drConfig = _drRegistry._config as RegistryConfig | undefined;
-  const _drAuth = _drConfig?.mission_authority || "chief-of-staff";
-  if (targetName !== WORKER_NAME && WORKER_NAME !== _drAuth) {
+  const _drAuth = getMissionAuthorityLabel(_drConfig);
+  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _drConfig)) {
     return {
       content: [{
         type: "text" as const,
@@ -3229,10 +3324,27 @@ server.registerTool(
 // ═══════════════════════════════════════════════════════════════════
 // FLEET MAIL — Gmail-conformant inter-agent email
 // ═══════════════════════════════════════════════════════════════════
-// HTTP proxy to Fleet Mail server (Rust + Dolt, runs on kevinster via SSH tunnel).
+// HTTP proxy to Fleet Mail server (Rust + Dolt, centralized on Hetzner).
 // Each worker auto-provisions an account on first use. Tokens cached in registry.json.
+// Account names are namespaced by project: "{project}/{worker}" to avoid collisions
+// when multiple projects share the same mail server.
 
 const FLEET_MAIL_URL = process.env.FLEET_MAIL_URL ?? "http://127.0.0.1:8025";
+const FLEET_MAIL_PROJECT = resolveProjectName().toLowerCase();
+
+/** Namespace a local worker name for Fleet Mail: "merger" → "merger@wechat" */
+function mailAccountName(localName: string): string {
+  // Already namespaced (has @) or special — pass through
+  if (localName.includes("@") || localName.startsWith("list:")) return localName;
+  return `${localName}@${FLEET_MAIL_PROJECT}`;
+}
+
+/** Strip project namespace from a Fleet Mail account name: "merger@wechat" → "merger" */
+function stripMailNamespace(mailName: string): string {
+  const suffix = `@${FLEET_MAIL_PROJECT}`;
+  if (mailName.endsWith(suffix)) return mailName.slice(0, -suffix.length);
+  return mailName;
+}
 
 /** Cached Fleet Mail unread count — refreshed by mail_inbox calls and background poll */
 let _fleetMailUnreadCount = 0;
@@ -3264,18 +3376,19 @@ async function getFleetMailToken(): Promise<string> {
   const entry = registry[WORKER_NAME] as RegistryWorkerEntry | undefined;
   if (entry?.bms_token) return entry.bms_token;
 
-  // Auto-register with the mail server
+  // Auto-register with the mail server (namespaced: "project/worker")
+  const nsName = mailAccountName(WORKER_NAME);
   const resp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: WORKER_NAME, bio: `Fleet worker: ${WORKER_NAME}` }),
+    body: JSON.stringify({ name: nsName, bio: `Fleet worker: ${WORKER_NAME} (${FLEET_MAIL_PROJECT})` }),
   });
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
     // 409 = already registered but we lost the token
     if (resp.status === 409) {
-      throw new Error(`Fleet Mail account '${WORKER_NAME}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
+      throw new Error(`Fleet Mail account '${nsName}' exists but token is not in registry. Ask operator to add bms_token to registry.json.`);
     }
     throw new Error(`Fleet Mail register failed (${resp.status}): ${errText}`);
   }
@@ -3326,8 +3439,29 @@ async function fleetMailRequest(method: string, path: string, body?: any): Promi
   }
 }
 
+/** Strip project namespace from account names in Fleet Mail responses so workers see
+ *  clean names ("merger") instead of namespaced ones ("merger@wechat"). */
+function stripMailNamespaceFromResult(data: any): any {
+  if (!data || typeof data !== "object") return data;
+  if (Array.isArray(data)) return data.map(stripMailNamespaceFromResult);
+  const out: any = { ...data };
+  // Strip from "from" field (string name or {name, id} object)
+  if (typeof out.from === "string") out.from = stripMailNamespace(out.from);
+  if (out.from?.name) out.from = { ...out.from, name: stripMailNamespace(out.from.name) };
+  // Strip from "to" field (array of strings or objects)
+  if (Array.isArray(out.to)) out.to = out.to.map((t: any) =>
+    typeof t === "string" ? stripMailNamespace(t) : t?.name ? { ...t, name: stripMailNamespace(t.name) } : t);
+  // Strip from "cc" field
+  if (Array.isArray(out.cc)) out.cc = out.cc.map((t: any) =>
+    typeof t === "string" ? stripMailNamespace(t) : t?.name ? { ...t, name: stripMailNamespace(t.name) } : t);
+  // Recurse into "messages" array (inbox responses)
+  if (Array.isArray(out.messages)) out.messages = out.messages.map(stripMailNamespaceFromResult);
+  return out;
+}
+
 function fleetMailTextResult(data: any): { content: { type: "text"; text: string }[] } {
-  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  const cleaned = stripMailNamespaceFromResult(data);
+  const text = typeof cleaned === "string" ? cleaned : JSON.stringify(cleaned, null, 2);
   return { content: [{ type: "text" as const, text }] };
 }
 
@@ -3341,6 +3475,9 @@ async function resolveFleetMailAccountId(name: string): Promise<string> {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) return name;
   // If it's a list: prefix, pass through
   if (name.startsWith("list:")) return name;
+
+  // Namespace the name: "merger" → "merger@wechat"
+  const nsName = mailAccountName(name);
 
   const now = Date.now();
   if (!_fleetMailDirectoryCache || now - _fleetMailDirCacheTime > FLEET_MAIL_DIR_CACHE_TTL) {
@@ -3358,16 +3495,18 @@ async function resolveFleetMailAccountId(name: string): Promise<string> {
     }
   }
 
-  const id = _fleetMailDirectoryCache?.[name];
+  // Look up by namespaced name (e.g. "merger@wechat")
+  const id = _fleetMailDirectoryCache?.[nsName];
   if (id) return id;
 
   // Auto-provision "user" account if it doesn't exist
   if (name === "user") {
+    const nsUserName = mailAccountName("user");
     try {
       const provResp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "user", display_name: "operator", bio: "Human operator" }),
+        body: JSON.stringify({ name: nsUserName, display_name: "operator", bio: `Human operator (${FLEET_MAIL_PROJECT})` }),
       });
       if (provResp.ok) {
         const acct = await provResp.json() as any;
@@ -3381,7 +3520,7 @@ async function resolveFleetMailAccountId(name: string): Promise<string> {
           });
         } catch {}
         if (!_fleetMailDirectoryCache) _fleetMailDirectoryCache = {};
-        _fleetMailDirectoryCache["user"] = acct.id;
+        _fleetMailDirectoryCache[nsUserName] = acct.id;
         return acct.id;
       }
       // 409 = already exists but not in cache — refresh
@@ -3393,7 +3532,7 @@ async function resolveFleetMailAccountId(name: string): Promise<string> {
     } catch {}
   }
 
-  throw new Error(`Fleet Mail account '${name}' not found in directory`);
+  throw new Error(`Fleet Mail account '${nsName}' not found in directory`);
 }
 
 async function resolveFleetMailRecipients(names: string[]): Promise<string[]> {
@@ -3620,7 +3759,7 @@ server.registerTool(
     return fleetMailTextResult(`# Fleet Mail — Management CLI
 
 Server: ${FLEET_MAIL_URL}
-Your account: ${WORKER_NAME}
+Your account: ${mailAccountName(WORKER_NAME)}
 Your token: ${token}
 
 ## Search (replaces mail_search tool)

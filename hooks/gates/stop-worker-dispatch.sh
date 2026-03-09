@@ -20,21 +20,8 @@ INPUT=$(cat)
 
 # Parse session ID
 hook_parse_input "$INPUT"
-# Subagents: skip task/inbox/pane checks, but honor their own blocking hooks
+# Subagents: skip task/inbox/pane checks (blocking hooks handled by hook-engine.sh)
 if _is_subagent; then
-  _hf="/tmp/claude-hooks-${WORKER_NAME:-unknown}.json"
-  if [ -f "$_hf" ]; then
-    _pending=$(jq --arg aid "$_HOOK_AGENT_ID" \
-      '[.hooks[] | select(.event=="Stop" and .blocking==true and .completed==false and .agent_id==$aid)] | length' \
-      "$_hf" 2>/dev/null || echo "0")
-    if [ "$_pending" -gt 0 ]; then
-      _list=$(jq -r --arg aid "$_HOOK_AGENT_ID" \
-        '.hooks[] | select(.event=="Stop" and .blocking==true and .completed==false and .agent_id==$aid) | "  [\(.id)] \(.description)"' \
-        "$_hf" 2>/dev/null || echo "  (could not read hooks)")
-      hook_block "$(printf '## Subagent: %s pending blocking hook(s)\n\n%s\n\nComplete each with complete_hook(id) before stopping.' "$_pending" "$_list")"
-      exit 0
-    fi
-  fi
   hook_pass; exit 0
 fi
 SESSION_ID="$_HOOK_SESSION_ID"
