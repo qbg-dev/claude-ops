@@ -74,7 +74,7 @@ All external tools, packages, and runtimes referenced by `~/.claude-ops/dotfiles
 | Script | Path | Used by |
 |--------|------|---------|
 | tmux-harness-summary.sh | `~/.claude-ops/scripts/` | tmux.conf (status bar) |
-| copy-resume-cmd.sh | `~/.claude-ops/scripts/` | claude-ops.tmux.conf |
+| copy-resume-cmd.sh | `~/.claude/scripts/` | claude-ops.tmux.conf |
 | move-to-bg.sh | `~/.claude-ops/scripts/` | claude-ops.tmux.conf |
 | tmux-cycle-active-worker.sh | `~/.claude-ops/scripts/` | claude-ops.tmux.conf |
 | tmux-multilevel scripts | `~/.local/bin/tmux-multilevel/core/` | multilevel.tmux.conf |
@@ -88,6 +88,21 @@ All external tools, packages, and runtimes referenced by `~/.claude-ops/dotfiles
 | `~/.nexus-token` | NEXUS_TOKEN |
 | `~/.hetzner` | (sourced—HETZNER_IP, etc.) |
 
+## Other tools (referenced in aliases/functions)
+
+| Tool | Install | Used by |
+|------|---------|---------|
+| **stylua** | `brew install stylua` | editors/stylua.toml (Lua formatter config) |
+| **mysql** | `brew install mysql-client` | aliases.zsh (db-staging alias) |
+| **python3** | System or brew | aliases.zsh (claude-mux.py) |
+
+## Terminal setup
+
+| Item | Path | Used by |
+|------|------|---------|
+| Custom tmux-256color terminfo | `~/.terminfo/74/tmux-256color` | terminal.tmux.conf |
+| Zsh completions dir | `~/.zfunc/` | zshrc (fpath) |
+
 ## macOS-specific
 
 | Feature | Used by |
@@ -95,6 +110,13 @@ All external tools, packages, and runtimes referenced by `~/.claude-ops/dotfiles
 | **pbcopy/pbpaste** | tmux.conf (copy mode), aliases.zsh |
 | **open** command | aliases.zsh, functions.zsh |
 | **Amazon Q** (optional) | zshrc (pre/post blocks) |
+
+## Optional secrets (beyond secrets.zsh)
+
+| File | Used by |
+|------|---------|
+| `~/.config/discord-bot/.env` | functions.zsh (load-discord-token) |
+| `~/.config/fzs/config.toml` | aliases.zsh (fzs launcher) |
 
 ## Quick setup (essential packages only)
 
