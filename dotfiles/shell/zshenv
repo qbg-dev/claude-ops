@@ -1,0 +1,3 @@
+# Non-interactive PATH — ensures tmux, launchd, and SSH sessions get brew + local bins
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+. "$HOME/.cargo/env"
