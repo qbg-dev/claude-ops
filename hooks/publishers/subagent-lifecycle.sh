@@ -60,6 +60,19 @@ case "$EVENT" in
       rm -f "$_SESSION_DIR/agent-id"
     fi
 
+    # Auto-complete stop checks tied to this agent_id
+    _WORKER="${WORKER_NAME:-}"
+    _SC_FILE="/tmp/claude-stop-checks-${_WORKER}.json"
+    if [ -n "$_WORKER" ] && [ -n "$AGENT_ID" ] && [ -f "$_SC_FILE" ]; then
+      _NOW=$(date -Iseconds)
+      _UPDATED=$(jq --arg aid "$AGENT_ID" --arg now "$_NOW" \
+        '.checks = [.checks[] | if (.agent_id == $aid and .completed == false) then .completed = true | .completed_at = $now | .result = "auto-completed: subagent stopped" else . end]' \
+        "$_SC_FILE" 2>/dev/null)
+      if [ -n "$_UPDATED" ]; then
+        echo "$_UPDATED" > "$_SC_FILE" 2>/dev/null || true
+      fi
+    fi
+
     # Log subagent session
     TRANSCRIPT=$(echo "$INPUT" | jq -r '.agent_transcript_path // ""')
     LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // ""')

@@ -89,6 +89,7 @@ interface StopCheck {
   completed: boolean;
   completed_at?: string;
   result?: string;
+  agent_id?: string; // When set, auto-completed by subagent-lifecycle.sh on SubagentStop
 }
 const stopChecks: Map<string, StopCheck> = new Map();
 let _stopCheckCounter = 0;
@@ -1268,24 +1269,28 @@ function _replaceMemorySection(existing: string, section: string, content: strin
 server.registerTool(
   "add_stop_check",
   {
-    description: "Register a verification gate that must be completed before you can recycle. Creates a named check that blocks recycle() until explicitly marked done via complete_stop_check(). Use whenever you make a change that requires end-to-end verification — e.g. 'verify TypeScript compiles', 'test deploy to slot', 'confirm no console errors on page load'. This prevents accidental recycles before critical verification steps are done.",
+    description: "Register a verification gate that must be completed before you can recycle. Creates a named check that blocks recycle() until explicitly marked done via complete_stop_check(). Use whenever you make a change that requires end-to-end verification — e.g. 'verify TypeScript compiles', 'test deploy to slot', 'confirm no console errors on page load'. This prevents accidental recycles before critical verification steps are done. Optionally tie to a background subagent's agent_id for auto-completion when that subagent finishes.",
     inputSchema: {
       description: z.string().describe("Human-readable description of what must be verified (e.g. 'TypeScript compiles without errors', 'slot loads correctly in browser', 'all unit tests pass')"),
+      agent_id: z.string().optional().describe("Subagent ID to tie this check to. When set, the check is auto-completed by subagent-lifecycle.sh when that subagent stops. Use after spawning a background Agent: Agent(run_in_background=true) returns agent_id, pass it here"),
     },
   },
-  async ({ description }) => {
+  async ({ description, agent_id }) => {
     const id = `sc-${++_stopCheckCounter}`;
-    stopChecks.set(id, {
+    const check: StopCheck = {
       id,
       description,
       added_at: new Date().toISOString(),
       completed: false,
-    });
+    };
+    if (agent_id) check.agent_id = agent_id;
+    stopChecks.set(id, check);
     _persistStopChecks();
+    const agentNote = agent_id ? ` (auto-completes when subagent ${agent_id} stops)` : "";
     return {
       content: [{
         type: "text" as const,
-        text: `Stop check registered: [${id}] ${description}\n${stopChecks.size} total check(s), ${[...stopChecks.values()].filter(c => !c.completed).length} pending.`,
+        text: `Stop check registered: [${id}] ${description}${agentNote}\n${stopChecks.size} total check(s), ${[...stopChecks.values()].filter(c => !c.completed).length} pending.`,
       }],
     };
   }

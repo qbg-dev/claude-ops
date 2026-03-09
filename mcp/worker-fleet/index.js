@@ -18644,6 +18644,7 @@ class ExperimentalMcpServerTasks {
     return mcpServerInternal._createRegisteredTool(name, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 }
+
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 class McpServer {
   constructor(serverInfo, options) {
@@ -19365,7 +19366,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "process";
+import process2 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -19454,7 +19455,6 @@ class StdioServerTransport {
     });
   }
 }
-
 // index.ts
 import {
   readFileSync,
@@ -19516,7 +19516,7 @@ function loadSeedContext(branch, missionAuthority) {
   try {
     return readFileSync(tmplPath, "utf-8").replace(/\{\{WORKER_NAME\}\}/g, WORKER_NAME).replace(/\{\{BRANCH\}\}/g, branch).replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
   } catch {
-    return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`read_inbox()\` first. Report to ${missionAuthority}.`;
+    return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;
   }
 }
 var REGISTRY_PATH = join(PROJECT_ROOT, ".claude/workers/registry.json");
@@ -19982,17 +19982,20 @@ These values were saved by your previous instance via \`update_state()\`. Use th
       } catch {}
     }
   } catch {}
+  const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
+  const workerMemoryDir = join(HOME, ".claude", "projects", projectSlug, "memory", WORKER_NAME);
   let seed = `You are worker **${WORKER_NAME}**.
 Worktree: ${worktreeDir} (branch: ${branch})
 Worker config: ${workerDir}/
 
 Read these files NOW in this order:
 1. ${workerDir}/mission.md \u2014 your mission and goals (you own this file \u2014 update it as your mission evolves)
-2. Call \`read_inbox()\` \u2014 check for messages before anything else
+2. Call \`mail_inbox()\` \u2014 check for messages before anything else
 3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
 
-Your MEMORY.md is auto-loaded by Claude (see "persistent auto memory directory" in your context).
-Use Edit/Write to update it directly at that path. Then begin working immediately.
+**Your memory**: \`${workerMemoryDir}/MEMORY.md\`
+Use Edit/Write to update it directly. Create topic files in that same directory for detailed notes.
+This path is under the project-level auto-memory \u2014 it persists across recycles and is shared with other workers.
 
 If your inbox has a message from the user or ${_missionAuth} (mission_authority), prioritize it over your current work.${stateBlock}${proposalBlock}
 
@@ -20163,211 +20166,199 @@ var server = new McpServer({
   name: "worker-fleet",
   version: "2.0.0"
 });
-server.registerTool("create_task", { description: "Create a durable task to track a unit of work. Tasks persist across recycles, support dependency chains (blocked_by/blocks), and give the fleet visibility into your work queue. Create a task whenever you identify a bug, feature, investigation, or follow-up \u2014 even mid-cycle. Prefer externalizing work into tasks over holding it in conversation context, since context is lost on recycle.", inputSchema: {
-  subject: exports_external.string().describe("Task title in imperative form (e.g. 'Fix TypeScript errors in auth module', 'Add pagination to user list')"),
-  description: exports_external.string().optional().describe("Detailed description of what needs to be done, acceptance criteria, or relevant context"),
-  priority: exports_external.enum(["critical", "high", "medium", "low"]).optional().describe("Execution priority. 'critical' tasks should be addressed before any others. Default: 'medium'"),
-  active_form: exports_external.string().optional().describe("Present-continuous label shown in status displays while this task is in progress (e.g. 'Running tests', 'Deploying to slot')"),
-  blocks: exports_external.string().optional().describe("Comma-separated task IDs that cannot start until this task completes (e.g. 'T003,T004'). Creates forward dependencies"),
-  blocked_by: exports_external.string().optional().describe("Comma-separated task IDs that must complete before this task can start (e.g. 'T001,T002'). Task stays blocked until all are completed"),
-  recurring: exports_external.boolean().optional().describe("If true, task auto-resets to 'pending' after completion instead of staying 'completed'. Use for repeating work like monitoring sweeps or periodic audits")
-} }, async ({ subject, description, priority, active_form, blocks, blocked_by, recurring }) => {
+server.registerTool("task", { description: `Manage your task queue. Actions:
+- create: Add a new task (requires subject)
+- update: Change task status/fields (requires task_id)
+- list: View tasks (optional filter/worker)`, inputSchema: {
+  action: exports_external.enum(["create", "update", "list"]).describe("Operation to perform"),
+  subject: exports_external.string().optional().describe("[create] Task title in imperative form"),
+  description: exports_external.string().optional().describe("[create/update] Task description or notes"),
+  priority: exports_external.enum(["critical", "high", "medium", "low"]).optional().describe("[create/update] Execution priority (default: medium)"),
+  active_form: exports_external.string().optional().describe("[create/update] Present-continuous label for status displays"),
+  blocks: exports_external.string().optional().describe("[create] Comma-separated task IDs that cannot start until this completes"),
+  blocked_by: exports_external.string().optional().describe("[create] Comma-separated task IDs that must complete first"),
+  recurring: exports_external.boolean().optional().describe("[create] If true, auto-resets to pending after completion"),
+  task_id: exports_external.string().optional().describe("[update] Task identifier (e.g. 'T001')"),
+  status: exports_external.enum(["pending", "in_progress", "completed", "deleted"]).optional().describe("[update] Target status"),
+  owner: exports_external.string().optional().describe("[update] Reassign to a different worker"),
+  add_blocked_by: exports_external.string().optional().describe("[update] Comma-separated task IDs to add as blockers"),
+  add_blocks: exports_external.string().optional().describe("[update] Comma-separated task IDs to block with this task"),
+  filter: exports_external.enum(["all", "pending", "in_progress", "blocked"]).optional().describe("[list] Filter by status (default: all)"),
+  worker: exports_external.string().optional().describe("[list] Whose tasks (omit=self, 'all'=fleet-wide)")
+} }, async ({ action, subject, description, priority, active_form, blocks, blocked_by, recurring, task_id, status, owner, add_blocked_by, add_blocks, filter, worker }) => {
   try {
-    const tasks = readTasks(WORKER_NAME);
-    const taskId = nextTaskId(tasks);
-    const now = new Date().toISOString();
-    const blockedByList = blocked_by ? blocked_by.split(",").map((s) => s.trim()).filter(Boolean) : [];
-    const task = {
-      subject,
-      description: description || "",
-      activeForm: active_form || `Working on: ${subject}`,
-      status: "pending",
-      priority: priority || "medium",
-      recurring: recurring || false,
-      blocked_by: blockedByList,
-      metadata: {},
-      cycles_completed: 0,
-      owner: null,
-      created_at: now,
-      completed_at: null
-    };
-    tasks[taskId] = task;
-    if (blocks) {
-      const blocksList = blocks.split(",").map((s) => s.trim()).filter(Boolean);
-      for (const targetId of blocksList) {
-        if (tasks[targetId]) {
-          const existing = tasks[targetId].blocked_by || [];
-          if (!existing.includes(taskId)) {
-            tasks[targetId].blocked_by = [...existing, taskId];
+    if (action === "create") {
+      if (!subject)
+        return { content: [{ type: "text", text: "Error: 'subject' required for create" }], isError: true };
+      const tasks = readTasks(WORKER_NAME);
+      const id = nextTaskId(tasks);
+      const now = new Date().toISOString();
+      const blockedByList = blocked_by ? blocked_by.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      const task = {
+        subject,
+        description: description || "",
+        activeForm: active_form || `Working on: ${subject}`,
+        status: "pending",
+        priority: priority || "medium",
+        recurring: recurring || false,
+        blocked_by: blockedByList,
+        metadata: {},
+        cycles_completed: 0,
+        owner: null,
+        created_at: now,
+        completed_at: null
+      };
+      tasks[id] = task;
+      if (blocks) {
+        for (const targetId of blocks.split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (tasks[targetId]) {
+            const existing = tasks[targetId].blocked_by || [];
+            if (!existing.includes(id))
+              tasks[targetId].blocked_by = [...existing, id];
           }
         }
       }
+      writeTasks(WORKER_NAME, tasks);
+      let suffix = ` [${task.priority}]`;
+      if (recurring)
+        suffix += " (recurring)";
+      if (blockedByList.length > 0)
+        suffix += ` (after: ${blockedByList.join(",")})`;
+      if (blocks)
+        suffix += ` (blocks: ${blocks})`;
+      return withLint({ content: [{ type: "text", text: `Added ${id}: ${subject}${suffix}` }] });
     }
-    writeTasks(WORKER_NAME, tasks);
-    let suffix = ` [${task.priority}]`;
-    if (recurring)
-      suffix += " (recurring)";
-    if (blockedByList.length > 0)
-      suffix += ` (after: ${blockedByList.join(",")})`;
-    if (blocks)
-      suffix += ` (blocks: ${blocks})`;
-    return withLint({ content: [{ type: "text", text: `Added ${taskId}: ${subject}${suffix}` }] });
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-  }
-});
-server.registerTool("update_task", { description: "Advance a task through its lifecycle, update its metadata, or manage dependencies. Lifecycle: pending \u2192 in_progress \u2192 completed (or deleted at any point). Always claim a task with status='in_progress' before starting work \u2014 this sets you as owner and prevents other workers from duplicating the effort. Only mark 'completed' after the work is fully verified. Use 'deleted' to permanently discard tasks that are no longer relevant. Refuses to start a task that has unfinished blockers.", inputSchema: {
-  task_id: exports_external.string().describe("Task identifier (e.g. 'T001'). Use list_tasks to find available IDs"),
-  status: exports_external.enum(["pending", "in_progress", "completed", "deleted"]).optional().describe("Target status. 'in_progress' claims the task and sets you as owner. 'completed' marks it done (recurring tasks auto-reset to pending). 'deleted' permanently discards it"),
-  subject: exports_external.string().optional().describe("Updated task title"),
-  description: exports_external.string().optional().describe("Updated task description or notes"),
-  active_form: exports_external.string().optional().describe("Present-continuous label shown in status displays (e.g. 'Running tests')"),
-  priority: exports_external.enum(["critical", "high", "medium", "low"]).optional().describe("Updated priority level"),
-  owner: exports_external.string().optional().describe("Reassign to a different worker by name. Automatically set when claiming with status='in_progress'"),
-  add_blocked_by: exports_external.string().optional().describe("Comma-separated task IDs to add as blockers (e.g. 'T001,T002'). Task cannot start until all blockers are completed"),
-  add_blocks: exports_external.string().optional().describe("Comma-separated task IDs that should be blocked by this task (e.g. 'T005,T006'). Adds this task's ID to their blocked_by lists")
-} }, async ({ task_id, status, subject, description, active_form, priority, owner, add_blocked_by, add_blocks }) => {
-  try {
-    const tasks = readTasks(WORKER_NAME);
-    const task = tasks[task_id];
-    if (!task) {
-      return { content: [{ type: "text", text: `Error: Task ${task_id} not found` }], isError: true };
-    }
-    const changes = [];
-    const now = new Date().toISOString();
-    if (status) {
-      if (status === "in_progress") {
-        if (task.status === "completed") {
-          return { content: [{ type: "text", text: `Error: Task ${task_id} already completed` }], isError: true };
-        }
-        if (task.status === "deleted") {
-          return { content: [{ type: "text", text: `Error: Task ${task_id} has been deleted` }], isError: true };
-        }
-        if (isTaskBlocked(tasks, task_id)) {
-          const blockers = (task.blocked_by || []).filter((d) => tasks[d]?.status !== "completed");
-          return { content: [{ type: "text", text: `Error: Task ${task_id} blocked by: ${blockers.join(", ")}` }], isError: true };
-        }
-        task.status = "in_progress";
-        task.owner = owner || WORKER_NAME;
-        changes.push("claimed");
-      } else if (status === "completed") {
-        if (task.recurring) {
+    if (action === "update") {
+      if (!task_id)
+        return { content: [{ type: "text", text: "Error: 'task_id' required for update" }], isError: true };
+      const tasks = readTasks(WORKER_NAME);
+      const task = tasks[task_id];
+      if (!task)
+        return { content: [{ type: "text", text: `Error: Task ${task_id} not found` }], isError: true };
+      const changes = [];
+      const now = new Date().toISOString();
+      if (status) {
+        if (status === "in_progress") {
+          if (task.status === "completed")
+            return { content: [{ type: "text", text: `Error: Task ${task_id} already completed` }], isError: true };
+          if (task.status === "deleted")
+            return { content: [{ type: "text", text: `Error: Task ${task_id} has been deleted` }], isError: true };
+          if (isTaskBlocked(tasks, task_id)) {
+            const blockers = (task.blocked_by || []).filter((d) => tasks[d]?.status !== "completed");
+            return { content: [{ type: "text", text: `Error: Task ${task_id} blocked by: ${blockers.join(", ")}` }], isError: true };
+          }
+          task.status = "in_progress";
+          task.owner = owner || WORKER_NAME;
+          changes.push("claimed");
+        } else if (status === "completed") {
+          if (task.recurring) {
+            task.status = "pending";
+            task.owner = null;
+            task.completed_at = null;
+            task.last_completed_at = now;
+            task.cycles_completed = (task.cycles_completed || 0) + 1;
+            changes.push(`completed (recurring \u2014 reset to pending, cycle #${task.cycles_completed})`);
+          } else {
+            task.status = "completed";
+            task.completed_at = now;
+            changes.push("completed");
+          }
+        } else if (status === "deleted") {
+          task.status = "deleted";
+          task.deleted_at = now;
+          changes.push("deleted");
+        } else if (status === "pending") {
           task.status = "pending";
-          task.owner = null;
-          task.completed_at = null;
-          task.last_completed_at = now;
-          task.cycles_completed = (task.cycles_completed || 0) + 1;
-          changes.push(`completed (recurring \u2014 reset to pending, cycle #${task.cycles_completed})`);
-        } else {
-          task.status = "completed";
-          task.completed_at = now;
-          changes.push("completed");
+          changes.push("set to pending");
         }
-      } else if (status === "deleted") {
-        task.status = "deleted";
-        task.deleted_at = now;
-        changes.push("deleted");
-      } else if (status === "pending") {
-        task.status = "pending";
-        changes.push("set to pending");
       }
-    }
-    if (subject) {
-      task.subject = subject;
-      changes.push("subject updated");
-    }
-    if (description !== undefined) {
-      task.description = description;
-      changes.push("description updated");
-    }
-    if (active_form) {
-      task.activeForm = active_form;
-      changes.push("activeForm updated");
-    }
-    if (priority) {
-      task.priority = priority;
-      changes.push(`priority \u2192 ${priority}`);
-    }
-    if (owner && !status) {
-      task.owner = owner;
-      changes.push(`owner \u2192 ${owner}`);
-    }
-    if (add_blocked_by) {
-      const ids = add_blocked_by.split(",").map((s) => s.trim()).filter(Boolean);
-      task.blocked_by = [...new Set([...task.blocked_by || [], ...ids])];
-      changes.push(`blocked by: ${ids.join(",")}`);
-    }
-    if (add_blocks) {
-      const ids = add_blocks.split(",").map((s) => s.trim()).filter(Boolean);
-      for (const targetId of ids) {
-        if (tasks[targetId]) {
-          const existing = tasks[targetId].blocked_by || [];
-          if (!existing.includes(task_id)) {
-            tasks[targetId].blocked_by = [...existing, task_id];
+      if (subject) {
+        task.subject = subject;
+        changes.push("subject updated");
+      }
+      if (description !== undefined) {
+        task.description = description;
+        changes.push("description updated");
+      }
+      if (active_form) {
+        task.activeForm = active_form;
+        changes.push("activeForm updated");
+      }
+      if (priority) {
+        task.priority = priority;
+        changes.push(`priority \u2192 ${priority}`);
+      }
+      if (owner && !status) {
+        task.owner = owner;
+        changes.push(`owner \u2192 ${owner}`);
+      }
+      if (add_blocked_by) {
+        const ids = add_blocked_by.split(",").map((s) => s.trim()).filter(Boolean);
+        task.blocked_by = [...new Set([...task.blocked_by || [], ...ids])];
+        changes.push(`blocked by: ${ids.join(",")}`);
+      }
+      if (add_blocks) {
+        const ids = add_blocks.split(",").map((s) => s.trim()).filter(Boolean);
+        for (const targetId of ids) {
+          if (tasks[targetId]) {
+            const existing = tasks[targetId].blocked_by || [];
+            if (!existing.includes(task_id))
+              tasks[targetId].blocked_by = [...existing, task_id];
           }
         }
+        changes.push(`blocks: ${ids.join(",")}`);
       }
-      changes.push(`blocks: ${ids.join(",")}`);
+      if (changes.length === 0)
+        return { content: [{ type: "text", text: `No changes specified for ${task_id}` }] };
+      writeTasks(WORKER_NAME, tasks);
+      return withLint({ content: [{ type: "text", text: `Updated ${task_id}: ${changes.join(", ")}` }] });
     }
-    if (changes.length === 0) {
-      return { content: [{ type: "text", text: `No changes specified for ${task_id}` }] };
-    }
-    writeTasks(WORKER_NAME, tasks);
-    return withLint({ content: [{ type: "text", text: `Updated ${task_id}: ${changes.join(", ")}` }] });
-  } catch (e) {
-    return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-  }
-});
-server.registerTool("list_tasks", { description: "List tasks from your queue or across the fleet. Use at the start of each cycle to find work to claim. filter='pending' shows only unblocked tasks ready to start \u2014 the most common query. worker='all' provides a cross-fleet view to see what everyone is working on and avoid duplicate effort. Deleted tasks are always excluded from results.", inputSchema: {
-  filter: exports_external.enum(["all", "pending", "in_progress", "blocked"]).optional().describe("Filter tasks by status. 'pending': ready to claim (unblocked only). 'in_progress': actively being worked. 'blocked': waiting on dependencies. 'all': everything except deleted. Default: 'all'"),
-  worker: exports_external.string().optional().describe("Whose tasks to list. Omit for your own queue. Use a worker name for a specific peer, or 'all' for a fleet-wide view grouped by worker")
-} }, async ({ filter, worker }) => {
-  try {
-    const targetWorkers = [];
-    const workerName = worker || WORKER_NAME;
-    if (workerName === "all") {
-      const dirs = readdirSync(WORKERS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_")).map((d) => d.name);
-      targetWorkers.push(...dirs);
-    } else {
-      targetWorkers.push(workerName);
-    }
-    const results = [];
-    let totalCount = 0;
-    for (const w of targetWorkers) {
-      const tasks = readTasks(w);
-      if (Object.keys(tasks).length === 0)
-        continue;
-      const entries = Object.entries(tasks);
-      const filtered = entries.filter(([taskId, t]) => {
-        if (t.status === "deleted")
-          return false;
-        const blocked = isTaskBlocked(tasks, taskId);
-        if (filter === "pending")
-          return t.status === "pending" && !blocked;
-        if (filter === "in_progress")
-          return t.status === "in_progress";
-        if (filter === "blocked")
-          return blocked && t.status !== "completed";
-        return true;
-      });
-      if (filtered.length === 0)
-        continue;
-      results.push(`## ${w}`);
-      for (const [id, t] of filtered) {
-        const blocked = isTaskBlocked(tasks, id);
-        const status = blocked ? "blocked" : t.status;
-        const deps = (t.blocked_by || []).length > 0 ? ` [after:${t.blocked_by.join(",")}]` : "";
-        const rec = t.recurring ? " (recurring)" : "";
-        results.push(`  ${id} [${t.priority || "medium"}] ${status}: ${t.subject}${deps}${rec}`);
-        totalCount++;
+    if (action === "list") {
+      const targetWorkers = [];
+      const wn = worker || WORKER_NAME;
+      if (wn === "all") {
+        targetWorkers.push(...readdirSync(WORKERS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && !d.name.startsWith("_")).map((d) => d.name));
+      } else {
+        targetWorkers.push(wn);
       }
-    }
-    if (results.length === 0) {
-      return { content: [{ type: "text", text: "No tasks found" }] };
-    }
-    return withLint({ content: [{ type: "text", text: `${totalCount} tasks:
+      const results = [];
+      let total = 0;
+      for (const w of targetWorkers) {
+        const tasks = readTasks(w);
+        if (Object.keys(tasks).length === 0)
+          continue;
+        const entries = Object.entries(tasks);
+        const filtered = entries.filter(([tid, t]) => {
+          if (t.status === "deleted")
+            return false;
+          const blocked = isTaskBlocked(tasks, tid);
+          if (filter === "pending")
+            return t.status === "pending" && !blocked;
+          if (filter === "in_progress")
+            return t.status === "in_progress";
+          if (filter === "blocked")
+            return blocked && t.status !== "completed";
+          return true;
+        });
+        if (filtered.length === 0)
+          continue;
+        results.push(`## ${w}`);
+        for (const [id, t] of filtered) {
+          const blocked = isTaskBlocked(tasks, id);
+          const st = blocked ? "blocked" : t.status;
+          const deps = (t.blocked_by || []).length > 0 ? ` [after:${t.blocked_by.join(",")}]` : "";
+          const rec = t.recurring ? " (recurring)" : "";
+          results.push(`  ${id} [${t.priority || "medium"}] ${st}: ${t.subject}${deps}${rec}`);
+          total++;
+        }
+      }
+      if (!results.length)
+        return { content: [{ type: "text", text: "No tasks found" }] };
+      return withLint({ content: [{ type: "text", text: `${total} tasks:
 ${results.join(`
 `)}` }] });
+    }
+    return { content: [{ type: "text", text: `Unknown action: ${action}` }], isError: true };
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
@@ -20556,23 +20547,28 @@ function _replaceMemorySection(existing, section, content) {
 ` + after : "");
 }
 server.registerTool("add_stop_check", {
-  description: "Register a verification gate that must be completed before you can recycle. Creates a named check that blocks recycle() until explicitly marked done via complete_stop_check(). Use whenever you make a change that requires end-to-end verification \u2014 e.g. 'verify TypeScript compiles', 'test deploy to slot', 'confirm no console errors on page load'. This prevents accidental recycles before critical verification steps are done.",
+  description: "Register a verification gate that must be completed before you can recycle. Creates a named check that blocks recycle() until explicitly marked done via complete_stop_check(). Use whenever you make a change that requires end-to-end verification \u2014 e.g. 'verify TypeScript compiles', 'test deploy to slot', 'confirm no console errors on page load'. This prevents accidental recycles before critical verification steps are done. Optionally tie to a background subagent's agent_id for auto-completion when that subagent finishes.",
   inputSchema: {
-    description: exports_external.string().describe("Human-readable description of what must be verified (e.g. 'TypeScript compiles without errors', 'slot loads correctly in browser', 'all unit tests pass')")
+    description: exports_external.string().describe("Human-readable description of what must be verified (e.g. 'TypeScript compiles without errors', 'slot loads correctly in browser', 'all unit tests pass')"),
+    agent_id: exports_external.string().optional().describe("Subagent ID to tie this check to. When set, the check is auto-completed by subagent-lifecycle.sh when that subagent stops. Use after spawning a background Agent: Agent(run_in_background=true) returns agent_id, pass it here")
   }
-}, async ({ description }) => {
+}, async ({ description, agent_id }) => {
   const id = `sc-${++_stopCheckCounter}`;
-  stopChecks.set(id, {
+  const check2 = {
     id,
     description,
     added_at: new Date().toISOString(),
     completed: false
-  });
+  };
+  if (agent_id)
+    check2.agent_id = agent_id;
+  stopChecks.set(id, check2);
   _persistStopChecks();
+  const agentNote = agent_id ? ` (auto-completes when subagent ${agent_id} stops)` : "";
   return {
     content: [{
       type: "text",
-      text: `Stop check registered: [${id}] ${description}
+      text: `Stop check registered: [${id}] ${description}${agentNote}
 ${stopChecks.size} total check(s), ${[...stopChecks.values()].filter((c) => !c.completed).length} pending.`
     }]
   };
@@ -20621,30 +20617,24 @@ ${pending.length} check(s) remaining.` + (pending.length === 0 ? " All clear \u2
     }]
   };
 });
-server.registerTool("list_stop_checks", {
-  description: "List all stop checks registered this session with their current status (pending or completed). Shows check IDs, descriptions, and completion timestamps. Use before recycling to see what verification gates remain, or to find check IDs for complete_stop_check(). Returns a ready/not-ready summary at the end.",
-  inputSchema: {}
-}, async () => {
-  if (stopChecks.size === 0) {
-    return { content: [{ type: "text", text: "No stop checks registered this session." }] };
-  }
-  const lines = [];
-  for (const check2 of stopChecks.values()) {
-    const status = check2.completed ? "\u2713 DONE" : "\u25CB PENDING";
-    const time3 = check2.completed_at ? ` (completed ${check2.completed_at})` : "";
-    lines.push(`  [${check2.id}] ${status} \u2014 ${check2.description}${time3}`);
-  }
-  const pending = [...stopChecks.values()].filter((c) => !c.completed).length;
-  lines.push("");
-  lines.push(pending === 0 ? "All checks completed \u2014 ready to recycle." : `${pending} pending check(s) \u2014 complete before recycling.`);
-  return { content: [{ type: "text", text: lines.join(`
-`) }] };
-});
-server.registerTool("recycle", { description: "Restart yourself in the same tmux pane to get a fresh context window. Two modes: (1) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session. Use at the end of each work cycle. (2) resume=true (hot restart): exits and immediately resumes the same session ID \u2014 preserves full conversation history but reloads MCP config, model changes, and tool definitions. Blocked by pending stop checks unless force=true. Also warns about unreplied messages that will carry over.", inputSchema: {
+server.registerTool("recycle", { description: "Restart yourself in the same tmux pane to get a fresh context window. Three modes: (1) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session. (2) resume=true (hot restart): resume same session ID \u2014 preserves full conversation history but reloads MCP config. (3) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds (no immediate relaunch). Use sleep_seconds to override sleep_duration for this cycle. Blocked by pending stop checks unless force=true.", inputSchema: {
   message: exports_external.string().optional().describe("Handoff context for the next instance. Include: what was accomplished, what remains, any blockers or decisions needed. Written to handoff.md and injected into the next session's seed"),
   resume: exports_external.boolean().optional().describe("If true, hot-restart: resume the same session (keeps conversation history, reloads MCP/model config). If false (default), cold-restart with a fresh seed"),
-  force: exports_external.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle")
-} }, async ({ message, resume, force }) => {
+  force: exports_external.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle"),
+  sleep_seconds: exports_external.number().optional().describe("Override sleep_duration for this recycle only. The watchdog will respawn after this many seconds. 0 = immediate restart (no sleep). Only applies to perpetual workers"),
+  cancel: exports_external.boolean().optional().describe("If true, cancel a pending sleep timer (clears status=sleeping). Use when you realize you have more work and don't need to restart yet")
+} }, async ({ message, resume, force, sleep_seconds, cancel }) => {
+  if (cancel) {
+    withRegistryLocked((registry2) => {
+      const w = registry2[WORKER_NAME];
+      if (w && w.status === "sleeping") {
+        w.status = "active";
+        if (w.custom)
+          w.custom.sleep_until = null;
+      }
+    });
+    return { content: [{ type: "text", text: "Sleep timer cancelled. Status restored to active." }] };
+  }
   const pendingChecks = [...stopChecks.values()].filter((c) => !c.completed);
   if (pendingChecks.length > 0 && !force) {
     const checkList = pendingChecks.map((c) => `  [${c.id}] ${c.description}`).join(`
@@ -20780,6 +20770,65 @@ Do NOT send any more tool calls \u2014 /exit is imminent.` + pendingWarning
   const model = getWorkerModel();
   const workerDir = join(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
   const rt = getWorkerRuntime();
+  const entry = getWorkerEntry(WORKER_NAME);
+  const isPerpetual = entry?.perpetual === true;
+  const registrySleepDur = entry?.sleep_duration ?? 1800;
+  const effectiveSleep = sleep_seconds !== undefined ? sleep_seconds : registrySleepDur;
+  const shouldDeferToWatchdog = isPerpetual && effectiveSleep > 0;
+  if (shouldDeferToWatchdog) {
+    const sleepUntil = new Date(Date.now() + effectiveSleep * 1000).toISOString();
+    withRegistryLocked((registry2) => {
+      const w = registry2[WORKER_NAME];
+      if (w) {
+        w.status = "sleeping";
+        w.custom = w.custom || {};
+        w.custom.sleep_until = sleepUntil;
+        w.custom.last_recycle_at = new Date().toISOString();
+      }
+    });
+    const recycleScript2 = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
+    writeFileSync(recycleScript2, `#!/bin/bash
+# Auto-generated SLEEP recycle for ${WORKER_NAME} \u2014 watchdog will respawn after ${effectiveSleep}s
+set -uo pipefail
+PANE_ID="${ownPane.paneId}"
+sleep 5
+tmux send-keys -t "$PANE_ID" "${rt.exitCommand}"
+tmux send-keys -t "$PANE_ID" -H 0d
+WAIT=0
+while [ "$WAIT" -lt 30 ]; do
+  sleep 2; WAIT=$((WAIT+2))
+  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
+  [ -z "$PANE_PID" ] && break
+  AGENT_RUNNING=false
+  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+    [[ "$cmd" == *${rt.binary}* ]] && AGENT_RUNNING=true && break
+  done
+  [ "$AGENT_RUNNING" = "false" ] && break
+done
+rm -f "${recycleScript2}"
+`);
+    try {
+      execSync(`nohup bash "${recycleScript2}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
+        shell: "/bin/bash",
+        timeout: 5000
+      });
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error spawning recycle: ${e.message}` }], isError: true };
+    }
+    const wakeTime = new Date(Date.now() + effectiveSleep * 1000);
+    const wakeStr = `${wakeTime.getHours().toString().padStart(2, "0")}:${wakeTime.getMinutes().toString().padStart(2, "0")}`;
+    return {
+      content: [{
+        type: "text",
+        text: `Recycling initiated. Watchdog will respawn in ${effectiveSleep}s (~${wakeStr}).
+` + `Handoff: ${message ? "written to handoff.md" : "none"}
+` + `Transcript: ${transcriptPath || "unknown"}
+` + `Status: sleeping (until ${sleepUntil})
+` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.` + pendingWarning
+      }]
+    };
+  }
   const seedHandoff = message || "";
   const seedTranscript = transcriptPath ? `
 
@@ -20788,7 +20837,6 @@ If you need specific details from before compaction (like exact code snippets, e
   const seedFile = `/tmp/worker-${WORKER_NAME}-seed.txt`;
   writeFileSync(seedFile, seedContent);
   const recycleScript = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
-  const entry = getWorkerEntry(WORKER_NAME);
   const permMode = entry?.permission_mode || "bypassPermissions";
   const disallowed = Array.isArray(entry?.disallowed_tools) ? entry.disallowed_tools.join(",") : "";
   const effort = entry?.custom?.reasoning_effort;
@@ -20992,9 +21040,8 @@ function createWorkerFiles(input) {
   }
   const tpl = type ? loadTypeTemplate(type) : {};
   mkdirSync2(workerDir, { recursive: true });
-  const worktreePath = `${PROJECT_ROOT}-w-${name}`;
-  const slug = worktreePath.replace(/\//g, "-");
-  const autoMemoryDir = join(HOME, ".claude", "projects", slug, "memory");
+  const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
+  const autoMemoryDir = join(HOME, ".claude", "projects", projectSlug, "memory", name);
   mkdirSync2(autoMemoryDir, { recursive: true });
   const autoMemoryPath = join(autoMemoryDir, "MEMORY.md");
   try {
@@ -21064,26 +21111,34 @@ function createWorkerFiles(input) {
 `);
   return { ok: true, workerDir, model: selectedModel, runtime: resolvedRuntime, perpetual: isPerpetual, taskIds, tasks: tasksObj, state, permissions };
 }
-server.registerTool("create_worker", { description: "Create a new autonomous worker with its own mission, git worktree, task queue, and inbox. Each worker runs as an independent Claude (or Codex) session in a dedicated tmux pane. Use when a domain of work warrants a dedicated agent \u2014 feature implementation, ongoing monitoring, specialized repair, or continuous optimization. The worker gets: a .claude/workers/<name>/ directory (mission.md, tasks.json, inbox.jsonl), a git worktree branched from HEAD, and a registry entry. Set launch=true to start immediately, or launch manually later. Worker names must be unique across the fleet.", inputSchema: {
-  name: exports_external.string().describe("Unique worker name in kebab-case (e.g. 'chatbot-fix', 'deploy-monitor'). Used as directory name, git branch suffix, and tmux identifier"),
-  mission: exports_external.string().describe("Full mission.md content in markdown. Defines the worker's objectives, scope, constraints, and acceptance criteria. This is the worker's primary instruction document"),
-  type: exports_external.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("Worker archetype that sets model, permissions, perpetual/sleep defaults from a template. You still write the mission. Use get_worker_template() to preview what each type provides before choosing"),
-  runtime: exports_external.enum(["claude", "codex"]).optional().describe("Execution engine. 'claude' (default): Claude Code CLI \u2014 best for open-ended exploration, complex reasoning, creative problem-solving. 'codex': OpenAI Codex CLI \u2014 best for well-specified tasks, logical/structured work, verification, strict instruction-following"),
-  model: exports_external.string().optional().describe("LLM model, overriding type/runtime defaults. Claude models: sonnet, opus, haiku. Codex models: gpt-5.4, o3, o4-mini"),
-  reasoning_effort: exports_external.enum(["low", "medium", "high", "extra_high"]).optional().describe("Controls depth of reasoning. Higher = more thorough but slower/costlier. Both Claude (--effort) and Codex (-c model_reasoning_effort) support this. Default: 'high'"),
-  perpetual: exports_external.boolean().optional().describe("If true, worker runs in an infinite recycle loop (work \u2192 sleep \u2192 recycle \u2192 repeat). If false (default), worker runs a single session. Overrides type default when set"),
-  sleep_duration: exports_external.number().optional().describe("Seconds to sleep between perpetual cycles (only meaningful when perpetual=true). Default: 1800 (30 min). Overrides type default when set"),
-  disallowed_tools: exports_external.string().optional().describe(`JSON array of tool deny-list patterns. Default includes safe git/rm guards. Example: '["Bash(git push*)","Edit","Bash(*deploy*)"]'`),
-  window: exports_external.string().optional().describe("tmux window group name (e.g. 'optimizers', 'monitors'). Workers assigned to the same group share a tiled layout within that window"),
-  window_index: exports_external.number().optional().describe("Explicit tmux window index (e.g. 10, 11). Only used when creating a NEW window \u2014 ignored if the window group already exists. Avoids 'index N in use' errors when all default indices are taken"),
-  report_to: exports_external.string().optional().describe("Worker or role this worker reports to. Default: mission_authority (usually 'chief-of-staff'). Set direct_report=true as a shortcut to report to the calling worker"),
-  permission_mode: exports_external.string().optional().describe("Claude permission mode for the worker's session. Default: 'bypassPermissions'. Use 'default' for stricter tool approval"),
-  launch: exports_external.boolean().optional().describe("If true, immediately launch the worker in a tmux pane after creation. If false (default), worker is created but not started \u2014 launch manually with launch-flat-worker.sh"),
-  tasks: exports_external.string().optional().describe("JSON array of initial tasks to seed the worker's queue. Each element: {subject: string, description?: string, priority?: 'critical'|'high'|'medium'|'low'}"),
-  proposal_required: exports_external.boolean().optional().describe("If true, worker must produce a self-contained HTML proposal document (architecture diagrams, UI mockups, data flow, file impact, risks) and get mission authority approval before writing any implementation code. Default: false"),
-  fork_from_session: exports_external.boolean().optional().describe("If true, fork the caller's current Claude session so the new worker inherits full conversation context. Requires launch=true. Use when the new worker needs everything you currently know"),
-  direct_report: exports_external.boolean().optional().describe("If true, set report_to to the calling worker's name instead of mission_authority. Convenience shortcut for creating subordinate workers")
-} }, async ({ name, mission, type, runtime, model, reasoning_effort, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, window_index: windowIndex, report_to, permission_mode, launch, tasks: tasksJson, proposal_required, fork_from_session, direct_report }) => {
+function moveWorkerPane(paneId, tmuxSession, targetWindow) {
+  try {
+    if (targetWindow === "stand-by")
+      targetWindow = "standby";
+    spawnSync("tmux", ["rename-window", "-t", `${tmuxSession}:stand-by`, "standby"], { encoding: "utf-8" });
+    const windowCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
+    const windows = (windowCheck.stdout || "").split(`
+`).map((w) => w.trim());
+    if (!windows.includes(targetWindow)) {
+      spawnSync("tmux", ["new-window", "-t", tmuxSession, "-n", targetWindow, "-d"], { encoding: "utf-8" });
+    }
+    const moveRes = spawnSync("tmux", ["move-pane", "-s", paneId, "-t", `${tmuxSession}:${targetWindow}`], { encoding: "utf-8" });
+    if (moveRes.status === 0) {
+      spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:${targetWindow}`, "tiled"], { encoding: "utf-8" });
+      return `Pane ${paneId}: moved to ${tmuxSession}:${targetWindow}`;
+    } else {
+      return `Pane ${paneId}: move failed \u2014 ${(moveRes.stderr || "").trim()}`;
+    }
+  } catch (e) {
+    return `Pane move error: ${e.message}`;
+  }
+}
+async function handleFleetCreate(params) {
+  const { name, mission, type, runtime, model, reasoning_effort, perpetual, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, window_index: windowIndex, report_to, permission_mode, launch, tasks: tasksJson, proposal_required, fork_from_session, direct_report } = params;
+  if (!name)
+    return { content: [{ type: "text", text: `Error: 'name' is required for create` }], isError: true };
+  if (!mission)
+    return { content: [{ type: "text", text: `Error: 'mission' is required for create` }], isError: true };
   try {
     let createPane = function(_pl, cwd) {
       const ownPane = findOwnPane();
@@ -21304,13 +21359,11 @@ server.registerTool("create_worker", { description: "Create a new autonomous wor
   } catch (e) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
-});
-server.registerTool("get_worker_template", {
-  description: "Preview the defaults and mission structure for a worker archetype before creating one. Returns the template mission.md (showing expected sections and {{PLACEHOLDERS}}), permissions defaults (model, permission_mode, deny-list), and state config (perpetual, sleep_duration). Call this before create_worker(type=...) to understand what the archetype provides and what you need to customize in your mission.",
-  inputSchema: {
-    type: exports_external.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).describe("Worker archetype to preview. Each has different defaults for model, permissions, perpetual mode, and sleep duration")
-  }
-}, async ({ type }) => {
+}
+async function handleFleetTemplate(params) {
+  const { type } = params;
+  if (!type)
+    return { content: [{ type: "text", text: `Error: 'type' is required for template` }], isError: true };
   const typeDir = join(TEMPLATE_TYPES_DIR, type);
   if (!existsSync(typeDir)) {
     return { content: [{ type: "text", text: `Error: template type '${type}' not found at ${typeDir}` }], isError: true };
@@ -21347,40 +21400,14 @@ _Not found_
 _Not found_
 `);
   }
-  sections.push('## Usage\n`create_worker(name="...", type="' + type + '", mission="# Your mission here\\n...")`\nThe `type` sets model/permissions/perpetual/sleep defaults. You always write your own mission. Explicit params override type defaults.');
+  sections.push('## Usage\n`fleet(action="create", name="...", type="' + type + '", mission="# Your mission here\\n...")`\nThe `type` sets model/permissions/perpetual/sleep defaults. You always write your own mission. Explicit params override type defaults.');
   return { content: [{ type: "text", text: sections.join(`
 `) }] };
-});
-function moveWorkerPane(paneId, tmuxSession, targetWindow) {
-  try {
-    if (targetWindow === "stand-by")
-      targetWindow = "standby";
-    spawnSync("tmux", ["rename-window", "-t", `${tmuxSession}:stand-by`, "standby"], { encoding: "utf-8" });
-    const windowCheck = spawnSync("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
-    const windows = (windowCheck.stdout || "").split(`
-`).map((w) => w.trim());
-    if (!windows.includes(targetWindow)) {
-      spawnSync("tmux", ["new-window", "-t", tmuxSession, "-n", targetWindow, "-d"], { encoding: "utf-8" });
-    }
-    const moveRes = spawnSync("tmux", ["move-pane", "-s", paneId, "-t", `${tmuxSession}:${targetWindow}`], { encoding: "utf-8" });
-    if (moveRes.status === 0) {
-      spawnSync("tmux", ["select-layout", "-t", `${tmuxSession}:${targetWindow}`, "tiled"], { encoding: "utf-8" });
-      return `Pane ${paneId}: moved to ${tmuxSession}:${targetWindow}`;
-    } else {
-      return `Pane ${paneId}: move failed \u2014 ${(moveRes.stderr || "").trim()}`;
-    }
-  } catch (e) {
-    return `Pane move error: ${e.message}`;
-  }
 }
-server.registerTool("move_window", {
-  description: "Move a worker's tmux pane to a different named window without interrupting its session. The worker process stays alive \u2014 only its visual placement changes. Moving to the 'standby' window automatically sets status=standby in the registry (watchdog will stop monitoring it). Moving out of standby restores status=active. Authorization: you can move yourself freely; moving other workers requires being the mission_authority.",
-  inputSchema: {
-    name: exports_external.string().optional().describe("Worker to move. Omit to move yourself. Only the mission_authority can move other workers"),
-    window: exports_external.string().describe("Target tmux window name. Workers in the same window share a tiled layout. Special: 'standby' sets the worker's status to standby"),
-    reason: exports_external.string().optional().describe("Reason for the move. If moving to standby, this is written to handoff.md for context when the worker is later woken")
-  }
-}, async ({ name, window: targetWindow, reason }) => {
+async function handleFleetMove(params) {
+  const { name, window: targetWindow, reason } = params;
+  if (!targetWindow)
+    return { content: [{ type: "text", text: `Error: 'window' is required for move` }], isError: true };
   const targetName = name || WORKER_NAME;
   const _mwRegistry = readRegistry();
   const _mwConfig = _mwRegistry._config;
@@ -21433,7 +21460,7 @@ server.registerTool("move_window", {
 **At:** ${timestamp}
 **Reason:** ${reason}
 
-Worker is in standby \u2014 registered but not running. Call move_window(name="${targetName}", window="${previousWindow || targetName}") to wake.
+Worker is in standby \u2014 registered but not running. Call fleet(action="move", name="${targetName}", window="${previousWindow || targetName}") to wake.
 `);
     } catch {}
   }
@@ -21449,14 +21476,9 @@ Worker is in standby \u2014 registered but not running. Call move_window(name="$
 `)
     }]
   };
-});
-server.registerTool("standby", {
-  description: "Toggle a worker between active and standby states. If currently active: moves pane to the standby window, sets status=standby (watchdog stops monitoring), and writes a handoff note. If currently in standby: moves pane back to its original window and restores status=active. USER-ONLY \u2014 this tool is invoked by the human operator via the /standby command. Workers must NEVER call this proactively on themselves or others. Authorization: self or mission_authority only.",
-  inputSchema: {
-    name: exports_external.string().optional().describe("Worker to toggle. Omit to toggle yourself. Only the mission_authority can standby/wake other workers"),
-    reason: exports_external.string().optional().describe("Why the worker is being put on standby or woken up. Written to handoff.md for context")
-  }
-}, async ({ name, reason }) => {
+}
+async function handleFleetStandby(params) {
+  const { name, reason } = params;
   const targetName = name || WORKER_NAME;
   const _sbRegistry = readRegistry();
   const _sbConfig = _sbRegistry._config;
@@ -21518,7 +21540,7 @@ server.registerTool("standby", {
 **At:** ${timestamp}
 **Reason:** ${reason}
 
-Worker is in standby \u2014 registered but not running. Call standby(name="${targetName}") again to wake.
+Worker is in standby \u2014 registered but not running. Call fleet(action="standby", name="${targetName}") again to wake.
 `);
     } catch {}
   }
@@ -21565,21 +21587,14 @@ Worker is in standby \u2014 registered but not running. Call standby(name="${tar
         ``,
         standbyPendingWarning || null,
         ``,
-        `To resume: call standby(name="${targetName}") again, or: bash ~/.claude-ops/scripts/launch-flat-worker.sh ${targetName}`
+        `To resume: call fleet(action="standby", name="${targetName}") again, or: bash ~/.claude-ops/scripts/launch-flat-worker.sh ${targetName}`
       ].filter(Boolean).join(`
 `)
     }]
   };
-});
-server.registerTool("register", {
-  description: "Register yourself in the fleet registry. Auto-detects your tmux pane ID, session, and runtime from the process environment. Call this when the lint system warns that you are not in registry.json \u2014 typically happens for manually launched workers or after registry corruption. Only registers the calling worker; cannot register other workers.",
-  inputSchema: {
-    model: exports_external.string().optional().describe("LLM model to record in registry. Default: existing registry value or 'opus'"),
-    perpetual: exports_external.boolean().optional().describe("Whether to run in perpetual recycle loop. Default: existing value or false"),
-    sleep_duration: exports_external.number().optional().describe("Seconds between perpetual cycles. Default: existing value or 1800"),
-    report_to: exports_external.string().optional().describe("Who this worker reports to. Default: existing value or mission_authority from _config")
-  }
-}, async ({ model, perpetual, sleep_duration, report_to }) => {
+}
+async function handleFleetRegister(params) {
+  const { model, perpetual, sleep_duration, report_to } = params;
   try {
     const ownPane = findOwnPane();
     let paneTarget = "";
@@ -21620,14 +21635,9 @@ server.registerTool("register", {
   } catch (e) {
     return { content: [{ type: "text", text: `Register failed: ${e.message}` }], isError: true };
   }
-});
-server.registerTool("deregister", {
-  description: "Remove a worker's entry from the fleet registry. The worker's files (.claude/workers/<name>/), git worktree, and branch are preserved \u2014 only the registry entry is deleted. Requires a HANDOFF.md (>50 chars) in the worker's directory before proceeding, to ensure knowledge is captured before the worker is retired. Authorization: self or mission_authority only. The reason is appended to HANDOFF.md with a timestamp for the audit trail.",
-  inputSchema: {
-    name: exports_external.string().optional().describe("Worker to deregister. Omit to deregister yourself. Only the mission_authority can deregister other workers"),
-    reason: exports_external.string().optional().describe("Reason for deregistration. Appended to HANDOFF.md with a timestamp for the audit trail")
-  }
-}, async ({ name, reason }) => {
+}
+async function handleFleetDeregister(params) {
+  const { name, reason } = params;
   const targetName = name || WORKER_NAME;
   const _drRegistry = readRegistry();
   const _drConfig = _drRegistry._config;
@@ -21658,7 +21668,7 @@ server.registerTool("deregister", {
       content: [{
         type: "text",
         text: [
-          `\u26A0\uFE0F HANDOFF.md required before deregistering '${targetName}'.`,
+          `HANDOFF.md required before deregistering '${targetName}'.`,
           ``,
           `Before unregistering, write a HANDOFF.md at:`,
           `  .claude/workers/${targetName}/HANDOFF.md`,
@@ -21670,7 +21680,7 @@ server.registerTool("deregister", {
           `  - Any unfinished work or known issues`,
           `  - Recommendations for whoever picks this up next`,
           ``,
-          `Then call deregister again.`
+          `Then call fleet(action="deregister") again.`
         ].join(`
 `)
       }],
@@ -21713,6 +21723,102 @@ server.registerTool("deregister", {
 `)
     }]
   };
+}
+function handleFleetHelp() {
+  return {
+    content: [{
+      type: "text",
+      text: [
+        `# fleet \u2014 Fleet Management Tool`,
+        ``,
+        `## Actions`,
+        ``,
+        `### create \u2014 Create a new autonomous worker`,
+        `Required: name (string), mission (string)`,
+        `Optional: type (implementer|monitor|coordinator|optimizer|verifier), runtime (claude|codex),`,
+        `  model (string), reasoning_effort (low|medium|high|extra_high), perpetual (bool),`,
+        `  sleep_duration (number), disallowed_tools (JSON string array), window (string),`,
+        `  window_index (number), report_to (string), permission_mode (string), launch (bool),`,
+        `  tasks (JSON array string), proposal_required (bool), fork_from_session (bool),`,
+        `  direct_report (bool)`,
+        ``,
+        `### register \u2014 Register yourself in the fleet registry`,
+        `Optional: model (string), perpetual (bool), sleep_duration (number), report_to (string)`,
+        `Auto-detects tmux pane, session, runtime. Call when lint warns you're not in registry.`,
+        ``,
+        `### deregister \u2014 Remove a worker from the registry`,
+        `Optional: name (string, default=self), reason (string)`,
+        `Requires HANDOFF.md (>50 chars) in worker directory. Files/worktree preserved.`,
+        `Authorization: self or mission_authority.`,
+        ``,
+        `### move \u2014 Move a worker's tmux pane to a different window`,
+        `Required: window (string)`,
+        `Optional: name (string, default=self), reason (string)`,
+        `Moving to 'standby' sets status=standby. Moving out restores active.`,
+        `Authorization: self or mission_authority.`,
+        ``,
+        `### standby \u2014 Toggle worker between active and standby`,
+        `Optional: name (string, default=self), reason (string)`,
+        `If active \u2192 standby (moves pane, stops watchdog). If standby \u2192 active (restores).`,
+        `USER-ONLY \u2014 workers must never call this proactively.`,
+        `Authorization: self or mission_authority.`,
+        ``,
+        `### template \u2014 Preview worker archetype defaults`,
+        `Required: type (implementer|monitor|coordinator|optimizer|verifier)`,
+        `Returns template mission.md, permissions, and state config.`,
+        ``,
+        `### help \u2014 Show this help text`
+      ].join(`
+`)
+    }]
+  };
+}
+server.registerTool("fleet", {
+  description: `Fleet management operations. Call fleet(action='help') for full parameter docs.
+
+Actions: create, register, deregister, move, standby, template, help`,
+  inputSchema: {
+    action: exports_external.enum(["create", "register", "deregister", "move", "standby", "template", "help"]).describe("Which fleet operation to perform"),
+    name: exports_external.string().optional().describe("Worker name (required for create; optional for deregister/move/standby \u2014 defaults to self)"),
+    reason: exports_external.string().optional().describe("[deregister/move/standby] Reason for the operation"),
+    window: exports_external.string().optional().describe("[move/create] Target tmux window name"),
+    mission: exports_external.string().optional().describe("[create] Mission markdown (required for create)"),
+    type: exports_external.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("[create/template] Worker archetype"),
+    runtime: exports_external.enum(["claude", "codex"]).optional().describe("[create] Execution engine (default: claude)"),
+    model: exports_external.string().optional().describe("[create/register] LLM model override"),
+    reasoning_effort: exports_external.enum(["low", "medium", "high", "extra_high"]).optional().describe("[create] Depth of reasoning (default: high)"),
+    perpetual: exports_external.boolean().optional().describe("[create/register] Run in infinite recycle loop"),
+    sleep_duration: exports_external.number().optional().describe("[create/register] Seconds between perpetual cycles (default: 1800)"),
+    disallowed_tools: exports_external.string().optional().describe("[create] JSON array of tool deny-list patterns"),
+    window_index: exports_external.number().optional().describe("[create] Explicit tmux window index for new windows"),
+    report_to: exports_external.string().optional().describe("[create/register] Who this worker reports to"),
+    permission_mode: exports_external.string().optional().describe("[create] Claude permission mode (default: bypassPermissions)"),
+    launch: exports_external.boolean().optional().describe("[create] Launch immediately after creation"),
+    tasks: exports_external.string().optional().describe("[create] JSON array of initial tasks"),
+    proposal_required: exports_external.boolean().optional().describe("[create] Require HTML proposal before coding"),
+    fork_from_session: exports_external.boolean().optional().describe("[create] Fork caller's session (requires launch=true)"),
+    direct_report: exports_external.boolean().optional().describe("[create] Set report_to to calling worker")
+  }
+}, async (params) => {
+  const { action } = params;
+  switch (action) {
+    case "create":
+      return handleFleetCreate(params);
+    case "template":
+      return handleFleetTemplate(params);
+    case "move":
+      return handleFleetMove(params);
+    case "standby":
+      return handleFleetStandby(params);
+    case "register":
+      return handleFleetRegister(params);
+    case "deregister":
+      return handleFleetDeregister(params);
+    case "help":
+      return handleFleetHelp();
+    default:
+      return { content: [{ type: "text", text: `Unknown action '${action}'. Use fleet(action='help') for available actions.` }], isError: true };
+  }
 });
 server.registerTool("deep_review", {
   description: "Launch a multi-pass deep code review pipeline. Total workers = passes \xD7 focus areas (default: 2\xD78=16). Each focus area gets `passes` independent workers seeing different randomized diff orderings. Voting within focus groups (\u22652/passes). Creates DEDICATED tmux session: coordinator window + worker windows (4 panes each). 8 default focus areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness). Configurable via `focus` param. Finds bugs, security issues, performance problems, design concerns, UX gaps, completeness issues, and improvements. Sentinel-file completion + optional notify callback. Auto-fallback for empty diffs.",
@@ -21926,9 +22032,39 @@ async function resolveBmsAccountId(name) {
     }
   }
   const id = _bmsDirectoryCache?.[name];
-  if (!id)
-    throw new Error(`BMS account '${name}' not found in directory`);
-  return id;
+  if (id)
+    return id;
+  if (name === "user") {
+    try {
+      const provResp = await fetch(`${BMS_URL}/api/accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "user", display_name: "operator", bio: "Human operator" })
+      });
+      if (provResp.ok) {
+        const acct = await provResp.json();
+        try {
+          withRegistryLocked((reg) => {
+            if (!reg.user)
+              reg.user = {};
+            reg.user.bms_token = acct.bearerToken;
+            reg.user.bms_id = acct.id;
+            reg.user.status = "active";
+          });
+        } catch {}
+        if (!_bmsDirectoryCache)
+          _bmsDirectoryCache = {};
+        _bmsDirectoryCache["user"] = acct.id;
+        return acct.id;
+      }
+      if (provResp.status === 409) {
+        _bmsDirectoryCache = null;
+        _bmsDirectoryCacheTime = 0;
+        return resolveBmsAccountId(name);
+      }
+    } catch {}
+  }
+  throw new Error(`BMS account '${name}' not found in directory`);
 }
 async function resolveBmsRecipients(names) {
   return Promise.all(names.map(resolveBmsAccountId));
@@ -21957,14 +22093,29 @@ Escalate to user when: (1) design/architecture decisions need human judgment, (2
   }
 }, async ({ to, subject, body, cc, thread_id, in_reply_to, reply_by, labels }) => {
   if (to === "user") {
-    const result = writeToTriageQueue(body, subject, WORKER_NAME, { urgency: labels?.includes("URGENT") ? "high" : undefined });
-    if (!result.ok) {
-      return { content: [{ type: "text", text: `Error writing to triage queue: ${result.error}` }], isError: true };
+    let msgId = "";
+    try {
+      const toIds = await resolveBmsRecipients(["user"]);
+      const ccIds = cc ? await resolveBmsRecipients(cc) : [];
+      const result = await bmsRequest("POST", "/api/messages/send", {
+        to: toIds,
+        subject,
+        body,
+        cc: ccIds,
+        thread_id: thread_id || null,
+        in_reply_to: in_reply_to || null,
+        reply_by: reply_by || null,
+        labels: [...labels || [], "ESCALATION"],
+        attachments: []
+      });
+      msgId = result?.id || "";
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error sending to user via BMS: ${e.message}` }], isError: true };
     }
     try {
-      execSync(`"${join(CLAUDE_OPS, "bin/notify")}" --no-triage ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} "Worker Escalation"`, { cwd: PROJECT_ROOT, timeout: 5000, shell: "/bin/bash" });
+      execSync(`terminal-notifier -title "Worker Escalation" -message ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} -sound default 2>/dev/null || osascript -e 'display notification ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} with title "Worker Escalation" sound name "default"'`, { timeout: 5000, shell: "/bin/bash" });
     } catch {}
-    return withLint({ content: [{ type: "text", text: `Escalated to user [${result.id}] \u2014 triage queue + notification` }] });
+    return withLint({ content: [{ type: "text", text: `Sent to user via BMS [${msgId}] + desktop notification` }] });
   }
   if (to.startsWith("%")) {
     if (!isPaneAlive(to)) {
@@ -22097,35 +22248,8 @@ server.registerTool("mail_read", {
     return { content: [{ type: "text", text: e.message }], isError: true };
   }
 });
-server.registerTool("mail_search", {
-  description: "Full-text search emails with Gmail query syntax. Supports from:, to:, subject:, has:attachment, label:, date ranges.",
-  inputSchema: {
-    q: exports_external.string().describe("Search query using Gmail syntax"),
-    maxResults: exports_external.number().optional().describe("Max results (default: 20)")
-  }
-}, async ({ q, maxResults }) => {
-  try {
-    const result = await bmsRequest("GET", `/api/search?q=${encodeURIComponent(q)}&maxResults=${maxResults || 20}`);
-    return bmsTextResult(result);
-  } catch (e) {
-    return { content: [{ type: "text", text: e.message }], isError: true };
-  }
-});
-server.registerTool("mail_thread", {
-  description: "Get a full email thread with all its messages.",
-  inputSchema: {
-    id: exports_external.string().describe("Thread ID")
-  }
-}, async ({ id }) => {
-  try {
-    const result = await bmsRequest("GET", `/api/threads/${encodeURIComponent(id)}`);
-    return bmsTextResult(result);
-  } catch (e) {
-    return { content: [{ type: "text", text: e.message }], isError: true };
-  }
-});
 server.registerTool("mail_help", {
-  description: "Get boring-mail-server CLI documentation for management operations: token reset, label management, trash, threads, directory, profile, mailing lists, and raw curl examples. Call this when you need to do something beyond send/read/search.",
+  description: "Get BMS CLI docs for search, threads, labels, trash, directory, mailing lists, and raw curl. Call this for any mail operation beyond send/inbox/read.",
   inputSchema: {}
 }, async () => {
   const token = await getBmsToken().catch(() => "<your-bms-token>");
@@ -22134,6 +22258,22 @@ server.registerTool("mail_help", {
 Server: ${BMS_URL}
 Your account: ${WORKER_NAME}
 Your token: ${token}
+
+## Search (replaces mail_search tool)
+
+  # Gmail-style query syntax: from:, to:, subject:, has:attachment, label:, date ranges
+  curl -sf "${BMS_URL}/api/search?q=from:merger&maxResults=20" \\
+    -H "Authorization: Bearer $TOKEN"
+
+## Threads (replaces mail_thread tool)
+
+  # Get full conversation thread
+  curl -sf "${BMS_URL}/api/threads/<thread-id>" \\
+    -H "Authorization: Bearer $TOKEN"
+
+  # List threads by label
+  curl -sf "${BMS_URL}/api/threads?label=INBOX&maxResults=20" \\
+    -H "Authorization: Bearer $TOKEN"
 
 ## Token Management
 
@@ -22233,7 +22373,7 @@ async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
 }
-if (import.meta.main) {
+if (__require.main == __require.module) {
   main().catch((e) => {
     console.error("worker-fleet MCP server fatal:", e);
     process.exit(1);
