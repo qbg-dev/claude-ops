@@ -93,7 +93,7 @@ function renderMarkdownLines(text: string): React.ReactNode[] {
 
 export function MessageDetail({ message }: { message: any }) {
   const { state } = useAppState();
-  const { directory } = state;
+  const { directory, replyMode, replyInput } = state;
 
   const from = senderName(message, directory);
   const to = recipientNames(message, directory);
@@ -150,17 +150,36 @@ export function MessageDetail({ message }: { message: any }) {
         {renderMarkdownLines(message.body || "")}
       </Box>
 
-      {/* Action hints */}
-      <Box marginTop={0}>
-        <Text color={colors.gray} dim>
-          {"  "}
-          <Text bold>r</Text> reply{"  "}
-          <Text bold>a</Text> archive{"  "}
-          <Text bold>s</Text> star{"  "}
-          <Text bold>d</Text> trash{"  "}
-          <Text bold>Esc</Text> close
-        </Text>
-      </Box>
+      {/* Inline reply input */}
+      {replyMode ? (
+        <Box flexDirection="column" marginTop={0}>
+          <Box>
+            <Text color={colors.gray}>{"\u2500".repeat(70)}</Text>
+          </Box>
+          <Box>
+            <Text color={colors.blue} bold>{"Reply \u25b8 "}</Text>
+            <Text color={colors.white}>{replyInput}</Text>
+            <Text color={colors.muted}>{"\u2588"}</Text>
+          </Box>
+          <Box>
+            <Text color={colors.gray} dim>
+              {"  "}Enter send{"  "}Esc cancel
+            </Text>
+          </Box>
+        </Box>
+      ) : (
+        <Box marginTop={0}>
+          <Text color={colors.gray} dim>
+            {"  "}
+            <Text bold>r</Text> reply{"  "}
+            <Text bold>e</Text> archive{"  "}
+            <Text bold>s</Text> star{"  "}
+            <Text bold>d</Text> trash{"  "}
+            <Text bold>u</Text> back{"  "}
+            <Text bold>I</Text> read/unread
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

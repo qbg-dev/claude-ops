@@ -31,7 +31,8 @@ export async function bmsRequest(
   token: string,
   method: string,
   path: string,
-  body?: any
+  body?: any,
+  _retries = 0
 ): Promise<any> {
   const r = await fetch(`${BMS_URL}${path}`, {
     method,
@@ -40,10 +41,15 @@ export async function bmsRequest(
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(8000),
   });
   if (r.status === 401)
     throw new Error(`401 Unauthorized — token may be expired`);
+  if (r.status === 429 && _retries < 2) {
+    // Rate limited — backoff and retry (max 2 retries)
+    await new Promise((resolve) => setTimeout(resolve, 2000 * (_retries + 1)));
+    return bmsRequest(token, method, path, body, _retries + 1);
+  }
   if (!r.ok)
     throw new Error(
       `BMS ${r.status}: ${(await r.text().catch(() => "")).slice(0, 80)}`

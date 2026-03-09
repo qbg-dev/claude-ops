@@ -30,12 +30,12 @@ export function TabBar({
           {t.key === active ? (
             <Text bold inverse color={colors.blue}>
               {" "}
-              {t.label}{" "}
+              {t.num}:{t.label}{" "}
             </Text>
           ) : (
             <Text color={colors.muted}>
               {" "}
-              {t.label}{" "}
+              <Text dim>{t.num}:</Text>{t.label}{" "}
             </Text>
           )}
         </React.Fragment>

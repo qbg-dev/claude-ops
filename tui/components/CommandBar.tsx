@@ -47,19 +47,24 @@ export function CommandBar() {
     );
   }
 
+  // Show the current pane's tab for context
+  const pane = state.panes[state.activePaneIndex];
+  const tabHint = pane ? `[${pane.tab}]` : "";
+
   return (
     <Box height={1} paddingX={1}>
       <Text color={colors.muted}>
-        <Text dim>h</Text>/<Text dim>l</Text> panel{"  "}
         <Text dim>j</Text>/<Text dim>k</Text> move{"  "}
         <Text dim>Enter</Text> open{"  "}
+        <Text dim>1-4</Text> tab{"  "}
+        <Text dim>e</Text> archive{"  "}
+        <Text dim>r</Text> reply{"  "}
         <Text dim>:</Text> cmd{"  "}
-        <Text dim>/</Text> search{"  "}
-        <Text dim>?</Text> help{"  "}
-        <Text dim>q</Text> quit
+        <Text dim>?</Text> help
         {state.panes.length > 1 && (
           <Text color={colors.cyan}>{`  [${state.panes.length} panes]`}</Text>
         )}
+        <Text color={colors.gray}>{`  ${tabHint}`}</Text>
       </Text>
     </Box>
   );

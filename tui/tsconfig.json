@@ -7,7 +7,7 @@
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["bun-types", "node"],
+    "types": ["node"],
     "baseUrl": "..",
     "paths": {
       "ink": ["node_modules/ink"],

@@ -30,7 +30,8 @@ import { CommandBar } from "./components/CommandBar.js";
 import { HelpOverlay } from "./components/HelpOverlay.js";
 
 const SIDEBAR_WIDTH = 18;
-const POLL_INTERVAL = 5000;
+const POLL_INTERVAL = 15000; // 15s to avoid rate limits
+const MAX_CONCURRENT_UNREAD = 3; // batch unread fetches
 
 export function App({
   initialTokenMap,
@@ -119,17 +120,20 @@ export function App({
         sleepUntil: w.custom?.sleep_until,
       }));
 
-    // Fetch unread counts in parallel
-    const unreadPromises = workers
-      .filter((w) => w.hasBms)
-      .map(async (w) => {
-        const token = tMap.get(w.name) || "";
-        if (!token) return;
-        try {
-          w.unread = await fetchUnreadCount(token);
-        } catch {}
-      });
-    await Promise.all(unreadPromises);
+    // Fetch unread counts in batches to avoid rate limits
+    const withBms = workers.filter((w) => w.hasBms);
+    for (let i = 0; i < withBms.length; i += MAX_CONCURRENT_UNREAD) {
+      const batch = withBms.slice(i, i + MAX_CONCURRENT_UNREAD);
+      await Promise.all(
+        batch.map(async (w) => {
+          const token = tMap.get(w.name) || "";
+          if (!token) return;
+          try {
+            w.unread = await fetchUnreadCount(token);
+          } catch {}
+        })
+      );
+    }
     dispatch({ type: "SET_WORKER_LIST", workers });
 
     // Refresh directory
@@ -358,7 +362,7 @@ export function App({
 
   // ── Message actions ──
   const handleMessageAction = useCallback(
-    async (action: "archive" | "star" | "trash" | "reply") => {
+    async (action: "archive" | "star" | "trash" | "reply" | "markread") => {
       const s = stateRef.current;
       const pane = s.panes[s.activePaneIndex];
       const msg = pane.openMessage || pane.messages[pane.selectedIndex];
@@ -386,8 +390,29 @@ export function App({
           dispatch({ type: "SET_STATUS", message: "Trashed" });
           refreshPane(s.activePaneIndex);
         } else if (action === "reply") {
-          dispatch({ type: "ENTER_COMMAND" });
-          dispatch({ type: "SET_COMMAND_INPUT", input: "reply " });
+          // Open detail if not already open, then enter reply mode
+          if (!pane.openMessage) {
+            try {
+              const full = await fetchMessage(token, msg.id);
+              dispatch({ type: "OPEN_MESSAGE", message: full || msg });
+            } catch {
+              dispatch({ type: "OPEN_MESSAGE", message: msg });
+            }
+          }
+          dispatch({ type: "ENTER_REPLY" });
+        } else if (action === "markread") {
+          const isUnread = (msg.labelIds || []).includes("UNREAD");
+          // Toggle read/unread using label modify
+          const { bmsRequest } = await import("./bms.js");
+          await bmsRequest(token, "POST", `/api/messages/${msg.id}/modify`, {
+            addLabelIds: isUnread ? [] : ["UNREAD"],
+            removeLabelIds: isUnread ? ["UNREAD"] : [],
+          });
+          dispatch({
+            type: "SET_STATUS",
+            message: isUnread ? "Marked read" : "Marked unread",
+          });
+          refreshPane(s.activePaneIndex);
         }
       } catch (e: any) {
         dispatch({
@@ -398,6 +423,33 @@ export function App({
     },
     [getToken, refreshPane]
   );
+
+  // ── Send reply ──
+  const sendReply = useCallback(async () => {
+    const s = stateRef.current;
+    const pane = s.panes[s.activePaneIndex];
+    const msg = pane.openMessage || pane.messages[pane.selectedIndex];
+    if (!msg || !s.replyInput.trim()) return;
+
+    const token = getToken(pane.worker);
+    const fromId =
+      typeof msg.from === "string" ? msg.from : msg.from?.id || msg.fromId;
+
+    try {
+      await sendMessage(token, [fromId], `Re: ${msg.subject || ""}`, s.replyInput.trim(), {
+        threadId: msg.threadId,
+        inReplyTo: msg.id,
+      });
+      dispatch({ type: "EXIT_REPLY" });
+      dispatch({ type: "SET_STATUS", message: "Reply sent" });
+      refreshPane(s.activePaneIndex);
+    } catch (e: any) {
+      dispatch({
+        type: "SET_STATUS",
+        message: `Send error: ${e.message?.slice(0, 60)}`,
+      });
+    }
+  }, [getToken, refreshPane]);
 
   // ── Open selected item ──
   const openSelected = useCallback(async () => {
@@ -459,6 +511,26 @@ export function App({
     if (s.showHelp) {
       if (key.escape || input === "?" || input === "q") {
         dispatch({ type: "TOGGLE_HELP" });
+      }
+      return;
+    }
+
+    // Reply mode — inline text input below message
+    if (s.replyMode) {
+      if (key.return) {
+        sendReply();
+        return;
+      }
+      if (key.escape) {
+        dispatch({ type: "EXIT_REPLY" });
+        return;
+      }
+      if (key.backspace || key.delete) {
+        dispatch({ type: "SET_REPLY_INPUT", input: s.replyInput.slice(0, -1) });
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        dispatch({ type: "SET_REPLY_INPUT", input: s.replyInput + input });
       }
       return;
     }
@@ -711,7 +783,8 @@ export function App({
 
     // Message actions (only when in pane focus)
     if (s.focusedPanel === "pane") {
-      if (input === "a") {
+      // Gmail-style: e or a for archive
+      if (input === "e" || input === "a") {
         handleMessageAction("archive");
         return;
       }
@@ -719,12 +792,24 @@ export function App({
         handleMessageAction("star");
         return;
       }
-      if (input === "d") {
+      // Gmail-style: # or d for trash
+      if (input === "d" || input === "#") {
         handleMessageAction("trash");
         return;
       }
       if (input === "r") {
         handleMessageAction("reply");
+        return;
+      }
+      // u — go back to list (Gmail: return to inbox view)
+      if (input === "u") {
+        dispatch({ type: "CLOSE_DETAIL" });
+        dispatch({ type: "EXIT_REPLY" });
+        return;
+      }
+      // I — mark read/unread toggle
+      if (input === "I") {
+        handleMessageAction("markread");
         return;
       }
 

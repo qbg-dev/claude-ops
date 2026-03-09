@@ -56,6 +56,9 @@ export interface AppState {
   pendingG: boolean; // for gg detection
   tabCompletionIndex: number; // cycle through tab completions
   tabCompletionBase: string; // original input before tab cycling
+
+  replyMode: boolean; // inline reply below message
+  replyInput: string;
 }
 
 // ── Actions ──
@@ -97,7 +100,10 @@ export type Action =
   | { type: "SET_SEARCH"; query: string }
   | { type: "SET_PENDING_G"; pending: boolean }
   | { type: "UPDATE_UNREAD"; worker: string; count: number }
-  | { type: "TAB_COMPLETE"; completions: string[] };
+  | { type: "TAB_COMPLETE"; completions: string[] }
+  | { type: "ENTER_REPLY" }
+  | { type: "EXIT_REPLY" }
+  | { type: "SET_REPLY_INPUT"; input: string };
 
 // ── Helpers ──
 
@@ -401,6 +407,15 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, workerList: workers };
     }
 
+    case "ENTER_REPLY":
+      return { ...state, replyMode: true, replyInput: "" };
+
+    case "EXIT_REPLY":
+      return { ...state, replyMode: false, replyInput: "" };
+
+    case "SET_REPLY_INPUT":
+      return { ...state, replyInput: action.input };
+
     default:
       return state;
   }
@@ -445,6 +460,8 @@ export function createInitialState(
     pendingG: false,
     tabCompletionIndex: -1,
     tabCompletionBase: "",
+    replyMode: false,
+    replyInput: "",
   };
 }
 

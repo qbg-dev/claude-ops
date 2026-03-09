@@ -28,12 +28,14 @@ const SECTIONS = [
     ],
   },
   {
-    title: "Actions",
+    title: "Actions (Gmail-style)",
     keys: [
-      ["r", "Reply to message"],
-      ["a", "Archive message"],
+      ["r", "Reply inline (below message)"],
+      ["e / a", "Archive message"],
       ["s", "Star/unstar"],
-      ["d", "Trash message"],
+      ["d / #", "Trash message"],
+      ["u", "Back to list (close detail)"],
+      ["I (shift-i)", "Toggle read/unread"],
       ["R", "Force refresh"],
     ],
   },
