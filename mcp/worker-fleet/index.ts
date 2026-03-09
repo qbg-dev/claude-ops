@@ -2915,7 +2915,7 @@ server.registerTool(
 // reload removed — merged into recycle(resume=true)
 
 // ═══════════════════════════════════════════════════════════════════
-// DEEP REVIEW — Bugbot-style multi-pass code review
+// DEEP REVIEW — Multi-pass review (code diffs OR content/plans/docs)
 // ═══════════════════════════════════════════════════════════════════
 
 // @ts-ignore — MCP SDK deep type instantiation with Zod
@@ -2923,7 +2923,7 @@ server.registerTool(
   "deep_review",
   {
     description:
-      "Launch a multi-pass deep code review pipeline. Total workers = passes × focus areas (default: 2×8=16). Each focus area gets `passes` independent workers seeing different randomized diff orderings. Voting within focus groups (≥2/passes). Creates DEDICATED tmux session: coordinator window + worker windows (4 panes each). 8 default focus areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness). Configurable via `focus` param. Finds bugs, security issues, performance problems, design concerns, UX gaps, completeness issues, and improvements. Sentinel-file completion + optional notify callback. Auto-fallback for empty diffs.",
+      "Launch a multi-pass deep review pipeline. Two modes: DIFF MODE (default) reviews git diffs — code changes, commits, PRs. CONTENT MODE reviews any files — plans, docs, designs, proposals. Total workers = passes × focus areas. Diff default: 2×8=16 workers (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness). Content default: 2×4=8 workers (correctness, completeness, feasibility, risks). Creates DEDICATED tmux session with coordinator + worker panes. Voting within focus groups (≥2/passes). Use `content` param for plans/docs, `spec` to guide the review focus.",
     inputSchema: {
       commit: z
         .string()
@@ -2941,6 +2941,14 @@ server.registerTool(
         .string()
         .optional()
         .describe("Review a pull request by number (uses gh pr diff). Overrides other modes."),
+      content: z
+        .union([z.string(), z.array(z.string())])
+        .optional()
+        .describe("File path(s) to review instead of a diff. For plans, docs, or any text. Comma-separated string or array. Overrides all diff params."),
+      spec: z
+        .string()
+        .optional()
+        .describe("What to review for — guides worker focus. E.g., 'check this plan for logical gaps and missing edge cases'. Used with content mode or as additional context for diff mode."),
       passes: z
         .number()
         .optional()
@@ -2956,7 +2964,7 @@ server.registerTool(
       focus: z
         .array(z.string())
         .optional()
-        .describe("Custom focus areas. Each focus gets `passes` independent workers. Examples: ['security', 'performance', 'ux-impact']. Tailor to review goals — e.g. ['security', 'auth', 'scope-bypass'] for auth review. Default: 8 areas (security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness)"),
+        .describe("Custom focus areas. Each focus gets `passes` independent workers. Diff default: 8 areas. Content default: 4 areas (correctness, completeness, feasibility, risks). Override with e.g. ['security', 'auth', 'scope-bypass']."),
     },
   },
   async ({
@@ -2964,6 +2972,8 @@ server.registerTool(
     base_branch,
     uncommitted,
     pr_number,
+    content,
+    spec,
     passes,
     session_name,
     notify,
@@ -2973,6 +2983,8 @@ server.registerTool(
     base_branch?: string;
     uncommitted?: boolean;
     pr_number?: string;
+    content?: string | string[];
+    spec?: string;
     passes?: number;
     session_name?: string;
     notify?: string;
@@ -2984,9 +2996,12 @@ server.registerTool(
         throw new Error(`deep-review.sh not found at ${scriptPath}`);
       }
 
-      // Build args — default to --commit HEAD
+      // Build args — content mode takes priority over diff modes
       const args: string[] = [];
-      if (pr_number) {
+      if (content) {
+        const contentPaths = Array.isArray(content) ? content.join(",") : content;
+        args.push("--content", contentPaths);
+      } else if (pr_number) {
         args.push("--pr", pr_number);
       } else if (uncommitted) {
         args.push("--uncommitted");
@@ -3002,6 +3017,9 @@ server.registerTool(
         args.push("--commit", headSha);
       }
 
+      if (spec) {
+        args.push("--spec", spec);
+      }
       if (passes) {
         args.push("--passes", String(passes));
       }
@@ -3034,7 +3052,8 @@ server.registerTool(
       const reviewSessionMatch = stdout.match(/tmux switch-client -t (\S+)/);
       const reviewSession = reviewSessionMatch ? reviewSessionMatch[1] : session_name || "dr-unknown";
       const passesPerFocus = passes || 2;
-      const numFocus = focus?.length || 8;
+      const isContentMode = !!content;
+      const numFocus = focus?.length || (isContentMode ? 4 : 8);
       const totalWorkers = passesPerFocus * numFocus;
       const numWorkerWindows = Math.ceil(totalWorkers / 4);
 
