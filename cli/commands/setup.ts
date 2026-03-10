@@ -4,6 +4,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { FLEET_DIR, FLEET_DATA, FLEET_MAIL_URL, FLEET_MAIL_TOKEN } from "../lib/paths";
 import { ok, info, warn, fail } from "../lib/fmt";
+import { startLocalServer } from "./mail-server";
 
 export function register(parent: Command): void {
   parent
@@ -91,7 +92,63 @@ export function register(parent: Command): void {
         ok("defaults.json exists");
       }
 
-      // 6. Register MCP server
+      // 6. Install dependencies
+      const pkgJson = join(FLEET_DIR, "package.json");
+      if (existsSync(pkgJson)) {
+        info("Installing dependencies...");
+        const install = Bun.spawnSync(["bun", "install"], { cwd: FLEET_DIR, stderr: "pipe" });
+        if (install.exitCode === 0) {
+          ok("Dependencies installed");
+        } else {
+          warn("bun install failed (non-fatal)");
+        }
+      }
+
+      // 7. Fleet Mail (required — auto-start if not configured)
+      info("Fleet Mail...");
+      let resolvedMailUrl: string | null = FLEET_MAIL_URL;
+
+      if (FLEET_MAIL_URL) {
+        // Already configured — verify reachable
+        let mailOk = false;
+        try {
+          const resp = await fetch(`${FLEET_MAIL_URL}/health`, { signal: AbortSignal.timeout(3000) });
+          if (resp.ok) {
+            ok(`Fleet Mail: ${FLEET_MAIL_URL} ${chalk.green("(reachable)")}`);
+            mailOk = true;
+          } else {
+            console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (returned ${resp.status})`);
+          }
+        } catch {
+          console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (unreachable)`);
+        }
+        if (!mailOk) {
+          fail("Fleet Mail is configured but unreachable. Check the server and re-run: fleet setup");
+        }
+        if (FLEET_MAIL_TOKEN) {
+          ok(`Admin token: ${FLEET_MAIL_TOKEN.slice(0, 8)}...`);
+        }
+      } else {
+        // Not configured — auto-start local server
+        info("No Fleet Mail configured — starting local server...");
+        try {
+          const result = await startLocalServer({ quiet: true });
+          resolvedMailUrl = result.url;
+          ok(`Fleet Mail auto-started: ${result.url}`);
+          ok(`Admin token: ${result.token.slice(0, 8)}...`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.log(`  ${chalk.red("✗")} ${msg}`);
+          console.log("");
+          console.log(`  Fleet Mail is required for worker coordination.`);
+          console.log(`  ${chalk.cyan("Install boring-mail:")}  cargo install --git https://github.com/qbg-dev/boring-mail-server boring-mail`);
+          console.log(`  ${chalk.cyan("Or connect remote:")}    fleet mail-server connect http://your-server:8025`);
+          console.log("");
+          fail("Install boring-mail or connect to a remote server, then re-run: fleet setup");
+        }
+      }
+
+      // 8. Register MCP server (after Fleet Mail so FLEET_MAIL_URL is available)
       info("Registering MCP server...");
       const settingsFile = join(HOME, ".claude/settings.json");
       const mcpScript = join(FLEET_DIR, "mcp/worker-fleet/index.ts");
@@ -106,7 +163,7 @@ export function register(parent: Command): void {
         }
         if (!settings.mcpServers) settings.mcpServers = {};
         const mcpEnv: Record<string, string> = {};
-        if (FLEET_MAIL_URL) mcpEnv.FLEET_MAIL_URL = FLEET_MAIL_URL;
+        if (resolvedMailUrl) mcpEnv.FLEET_MAIL_URL = resolvedMailUrl;
         settings.mcpServers["worker-fleet"] = {
           command: bunPath,
           args: ["run", mcpScript],
@@ -114,49 +171,6 @@ export function register(parent: Command): void {
         };
         writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
         ok("MCP server registered in settings.json");
-      }
-
-      // 7. Install dependencies
-      const pkgJson = join(FLEET_DIR, "package.json");
-      if (existsSync(pkgJson)) {
-        info("Installing dependencies...");
-        const install = Bun.spawnSync(["bun", "install"], { cwd: FLEET_DIR, stderr: "pipe" });
-        if (install.exitCode === 0) {
-          ok("Dependencies installed");
-        } else {
-          warn("bun install failed (non-fatal)");
-        }
-      }
-
-      // 8. Fleet Mail (required)
-      info("Fleet Mail...");
-      if (FLEET_MAIL_URL) {
-        let mailOk = false;
-        try {
-          const resp = await fetch(`${FLEET_MAIL_URL}/health`, { signal: AbortSignal.timeout(3000) });
-          if (resp.ok) {
-            ok(`Fleet Mail: ${FLEET_MAIL_URL} ${chalk.green("(reachable)")}`);
-            mailOk = true;
-          } else {
-            console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (returned ${resp.status})`);
-          }
-        } catch {
-          console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (unreachable)`);
-        }
-        if (!mailOk) {
-          fail("Fleet Mail is required but unreachable. Check the server and re-run: fleet setup");
-        }
-        if (FLEET_MAIL_TOKEN) {
-          ok(`Admin token: ${FLEET_MAIL_TOKEN.slice(0, 8)}...`);
-        }
-      } else {
-        console.log(`  ${chalk.red("✗")} Fleet Mail not configured`);
-        console.log("");
-        console.log(`  Fleet Mail is required for worker coordination.`);
-        console.log(`  ${chalk.cyan("fleet mail-server start")}       — start a local server`);
-        console.log(`  ${chalk.cyan("fleet mail-server connect <url>")} — connect to a remote server`);
-        console.log("");
-        fail("Configure Fleet Mail, then re-run: fleet setup");
       }
 
       // 9. Plugins
