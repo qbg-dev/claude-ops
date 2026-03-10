@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { FLEET_DIR, FLEET_DATA, FLEET_MAIL_URL, FLEET_MAIL_TOKEN } from "../lib/paths";
@@ -70,8 +70,24 @@ export function register(parent: Command): void {
       ok("Symlinked ~/.local/bin/fleet");
 
       if (!process.env.PATH?.includes(`${HOME}/.local/bin`)) {
-        warn(`${HOME}/.local/bin is not in PATH`);
-        console.log(`    Add to your shell rc: export PATH="$HOME/.local/bin:$PATH"`);
+        const shell = process.env.SHELL || "";
+        let rcFile: string | null = null;
+        if (shell.endsWith("/zsh")) rcFile = join(HOME, ".zshrc");
+        else if (shell.endsWith("/bash")) rcFile = join(HOME, ".bashrc");
+
+        if (rcFile) {
+          const rcContent = existsSync(rcFile) ? readFileSync(rcFile, "utf-8") : "";
+          if (rcContent.includes(".local/bin") && rcContent.includes("PATH")) {
+            ok(`PATH entry already in ${rcFile} (restart shell to pick up)`);
+          } else {
+            appendFileSync(rcFile, '\n# Added by fleet setup\nexport PATH="$HOME/.local/bin:$PATH"\n');
+            ok(`Added ~/.local/bin to PATH in ${rcFile}`);
+            console.log(`    Restart shell or: source ${rcFile}`);
+          }
+        } else {
+          warn(`${HOME}/.local/bin is not in PATH (${shell || "unknown"} shell — add manually)`);
+          console.log(`    Add to your shell rc: export PATH="$HOME/.local/bin:$PATH"`);
+        }
       }
 
       // 4. Data directory
@@ -171,6 +187,30 @@ export function register(parent: Command): void {
         };
         writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
         ok("MCP server registered in settings.json");
+
+        // Verify MCP server can start (catch missing deps / syntax errors)
+        info("Verifying MCP server...");
+        const mcpEnvForVerify: Record<string, string> = {
+          ...process.env as Record<string, string>,
+        };
+        if (resolvedMailUrl) mcpEnvForVerify.FLEET_MAIL_URL = resolvedMailUrl;
+        const mcpProc = Bun.spawn([bunPath, "run", mcpScript], {
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+          env: mcpEnvForVerify,
+        });
+        await Bun.sleep(2000);
+        if (mcpProc.exitCode !== null && mcpProc.exitCode !== 0) {
+          const stderrText = await new Response(mcpProc.stderr).text();
+          const firstLine = stderrText.split("\n").filter(l => l.trim())[0] || "unknown error";
+          warn(`MCP server exited with code ${mcpProc.exitCode}: ${firstLine}`);
+          console.log(`    Try: cd ${join(FLEET_DIR, "mcp/worker-fleet")} && bun install`);
+        } else {
+          mcpProc.kill();
+          ok("MCP server verified (starts cleanly)");
+        }
+        console.log(`    ${chalk.dim("Restart Claude Code to pick up MCP server changes")}`);
       }
 
       // 9. Plugins
