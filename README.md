@@ -1,8 +1,8 @@
 # claude-fleet
 
-Lightweight, tmux-based orchestration for Claude Code. Run persistent AI workers that survive crashes, coordinate via mail, and accumulate knowledge across cycles.
+Lightweight, tmux-based orchestration for Claude Code. Use as much compute as possible, as effectively as possible.
 
-**The pitch:** Claude Code is powerful but ephemeral — sessions end, context is lost, and you manage one agent at a time. claude-fleet makes workers *persistent* and *parallel*. Each worker gets its own git worktree, tmux pane, and durable memory. A watchdog respawns them on crash. An MCP server gives them 20 tools for messaging, state, hooks, and fleet coordination. You use more compute, more effectively.
+**The pitch:** Claude Code is powerful but ephemeral — sessions end, context is lost, and you manage one agent at a time. claude-fleet makes workers *persistent* and *parallel*. Each worker gets its own git worktree, tmux pane, and durable memory. A watchdog respawns them on crash. An MCP server gives them 20 tools for messaging, state, hooks, and fleet coordination.
 
 ## What You Get
 
@@ -32,8 +32,7 @@ That's it. The worker launches in a tmux pane, reads its mission, and starts wor
 
 | Tool | Install | Why |
 |------|---------|-----|
-| bun | `curl -fsSL https://bun.sh/install \| bash` | Runs MCP server |
-| jq | `brew install jq` | JSON processing |
+| bun | `curl -fsSL https://bun.sh/install \| bash` | Runs CLI + MCP server |
 | tmux | `brew install tmux` | Pane management |
 | git | `brew install git` | Worktree isolation |
 
@@ -110,7 +109,11 @@ Workers never push or merge. A designated merger handles main.
 │   └── missions/                 # Symlinks to worker missions
 
 ~/.claude-fleet/                  # Infrastructure (this repo)
-├── bin/fleet                     # CLI
+├── bin/fleet                     # CLI shim (delegates to TypeScript)
+├── cli/                          # TypeScript CLI (citty + Bun)
+│   ├── index.ts                  # Entry point
+│   ├── commands/                 # Subcommands (create, start, stop, ls, ...)
+│   └── lib/                      # Shared modules (config, tmux, paths, fmt)
 ├── mcp/worker-fleet/             # MCP server (TypeScript)
 ├── hooks/                        # Claude Code hooks (gates, publishers, interceptors)
 ├── engine/                       # Hook engine + session logger
