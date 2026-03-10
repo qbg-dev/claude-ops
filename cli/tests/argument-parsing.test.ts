@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 
-const CLI = `${process.env.HOME}/.claude-fleet/cli/index.ts`;
+const CLI = new URL("../index.ts", import.meta.url).pathname;
 
 function fleet(...args: string[]) {
   const result = Bun.spawnSync(["bun", "run", CLI, ...args], {
