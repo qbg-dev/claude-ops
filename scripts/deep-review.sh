@@ -288,6 +288,19 @@ fi
 SESSION_ID=$(date -u '+%Y%m%d-%H%M%S')
 SESSION_DIR="$PROJECT_ROOT/.claude/state/deep-review/session-$SESSION_ID"
 mkdir -p "$SESSION_DIR"
+
+# Clean up orphaned session dir on early failure (#20)
+cleanup_on_err() {
+  local exit_code=$?
+  if [ $exit_code -ne 0 ] && [ -d "$SESSION_DIR" ]; then
+    # Only clean up if we haven't launched workers yet (no report.md = pre-launch failure)
+    if [ ! -f "$SESSION_DIR/report.md" ] && ! tmux has-session -t "$REVIEW_SESSION" 2>/dev/null; then
+      echo "WARN: cleaning up orphaned session dir: $SESSION_DIR" >&2
+      rm -rf "$SESSION_DIR"
+    fi
+  fi
+}
+trap cleanup_on_err EXIT
 HISTORY_FILE="$PROJECT_ROOT/.claude/state/deep-review/history.jsonl"
 
 echo "Session: $SESSION_DIR"

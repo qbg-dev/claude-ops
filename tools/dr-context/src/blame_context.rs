@@ -31,7 +31,8 @@ pub fn run(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(material_file)?;
     // Capture b/ path (new name) to handle renames correctly (#5)
-    let diff_re = Regex::new(r"^diff --git a/\S+ b/(\S+)")?;
+    // Use .+ instead of \S+ to handle filenames with spaces (#21)
+    let diff_re = Regex::new(r"^diff --git a/.+ b/(.+)")?;
 
     // Parse diff to find changed file names (use HashSet for O(1) dedup — #16)
     let mut seen = HashSet::new();
@@ -111,6 +112,27 @@ fn get_new_shas(project_root: &str, base_ref: Option<&str>) -> HashSet<String> {
     shas
 }
 
+/// Banker's rounding (round half to even) to match Python's `round()` (#17).
+fn round_half_even(value: f64, decimals: u32) -> f64 {
+    let factor = 10f64.powi(decimals as i32);
+    let scaled = value * factor;
+    let floored = scaled.floor();
+    let frac = scaled - floored;
+
+    let rounded = if (frac - 0.5).abs() < 1e-9 {
+        // Exactly halfway — round to even
+        if floored as i64 % 2 == 0 {
+            floored
+        } else {
+            floored + 1.0
+        }
+    } else {
+        scaled.round()
+    };
+
+    rounded / factor
+}
+
 fn blame_file(
     project_root: &str,
     filepath: &str,
@@ -156,7 +178,7 @@ fn blame_file(
     Some(BlameEntry {
         new_in_diff: new_lines,
         pre_existing: old_lines,
-        ratio_new: ((new_lines as f64 / total as f64) * 100.0).round() / 100.0,
+        ratio_new: round_half_even(new_lines as f64 / total as f64, 2),
     })
 }
 
