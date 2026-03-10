@@ -1,109 +1,92 @@
 # Architecture
 
-Four components. All shell scripts + JSON + one TypeScript MCP server.
+Four components: CLI, MCP server, watchdog, hooks. All TypeScript/shell + JSON.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                           claude-fleet                                 │
-│                                                                      │
-│  ┌──────────────────┐    ┌──────────────────┐   ┌────────────────┐  │
-│  │  MCP Server       │    │    Watchdog       │   │     Hooks      │  │
-│  │                   │    │                   │   │                │  │
-│  │  15 tools:        │    │  launchd daemon   │   │  PreToolUse    │  │
-│  │  messaging        │    │  respawn on stop  │   │  PostToolUse   │  │
-│  │  tasks            │    │  crash detection  │   │  Stop          │  │
-│  │  state            │    │  stuck detection  │   │  PromptSubmit  │  │
-│  │  fleet visibility │    │  crash-loop guard │   │                │  │
-│  └────────┬─────────┘    └────────┬─────────┘   └───────┬────────┘  │
-│           │                       │                      │           │
-│  ┌────────▼───────────────────────▼──────────────────────▼────────┐  │
-│  │                     Worker Fleet                               │  │
-│  │                                                                │  │
-│  │  tmux pane ←→ git worktree ←→ Claude session ←→ auto-memory   │  │
-│  │  tmux pane ←→ git worktree ←→ Claude session ←→ auto-memory   │  │
-│  │  tmux pane ←→ git worktree ←→ Claude session ←→ auto-memory   │  │
-│  │                                                                │  │
-│  │  Config: {project}/.claude/workers/registry.json               │  │
-│  │  State:  ~/.claude-fleet/state/                                  │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────┘
+fleet CLI (commander + Bun)
+    │
+    ├── MCP Server (20 tools) ─── loaded into every Claude session via .mcp.json
+    │
+    ├── Watchdog (launchd, 30s) ── respawns dead/stuck workers
+    │
+    └── Hooks (settings.json) ──── PreToolUse, PostToolUse, Stop, PromptSubmit
 ```
 
-## MCP Server (`mcp/worker-fleet/index.ts`)
+Each worker = Claude Code session + git worktree + tmux pane + persistent config.
 
-The brain. Loaded into every Claude session via `.mcp.json`. Gives workers fleet awareness.
+## MCP Server
 
-**Key insight**: workers are otherwise isolated Claude sessions. The MCP server is the only way they know about each other. Without it, a worker is just Claude in a worktree.
+`mcp/worker-fleet/index.ts` + extracted modules (`config.ts`, `state.ts`, `hooks.ts`, `mail-client.ts`, `seed.ts`, `tmux.ts`, `helpers.ts`, `diagnostics.ts`).
 
-15 tools in 5 categories — see source for full docs. Identity auto-detected from `WORKER_NAME` env or git branch.
+20 tools in 6 categories: mail (4), state (2), hooks (4), lifecycle (2), fleet (7), review (1).
 
-**Messaging is durable**: writes to `inbox.jsonl` (survives crashes) then delivers via tmux (instant). This two-phase approach means messages are never lost even if the recipient is dead.
+Identity auto-detected from `WORKER_NAME` env or git branch (`worker/*` → name).
 
-## Watchdog (`scripts/worker-watchdog.sh`)
+Workers are isolated Claude sessions. The MCP server is the only way they see each other.
 
-A launchd daemon that makes workers immortal. Checks every 30s.
+## Watchdog
 
-**Three-layer stuck detection** (the hard problem):
-1. **`(running)` guard** — if statusline shows `(running)`, worker is executing a bash command → skip. Prevents false positives on long deploys.
-2. **Scrollback hash diff** — md5 of last 30 lines, compared to previous check. Same hash = idle.
-3. **Time threshold** — idle >20min → kill + respawn with fresh seed.
+`scripts/harness-watchdog.sh` — launchd daemon (`com.claude-fleet.harness-watchdog`), checks every 30s.
 
-**Crash-loop protection**: >3 crashes/hour → stop retrying, alert human. Prevents burning API credits.
+**Stuck detection** (three layers):
+1. `(running)` guard — if statusline shows running, skip (long bash command)
+2. Scrollback hash — MD5 of last 30 lines, compared to previous
+3. Time threshold — idle >10min → kill + respawn
 
-**Perpetual workers** sleep between cycles. The watchdog reads `sleep_duration` from the registry and waits before respawning. One-shot workers (`perpetual: false`) are not respawned.
+**Crash-loop protection**: >3 crashes/hour → stop, alert human.
 
-## Hooks (`hooks/`)
+**Perpetual workers**: read `sleep_duration` from config, wait, then respawn.
 
-Four Claude Code hooks registered in `~/.claude/settings.json`:
+## Hooks
 
-| Hook | What it does | Why it matters |
-|------|-------------|----------------|
-| **PreToolUse** | Injects inbox messages + policy context before each tool call | Workers see messages without polling |
-| **PostToolUse** | Publishes tool-call events to event bus | Audit trail, side-effects |
-| **Stop** | Writes `graceful-stop` sentinel for watchdog | Clean respawn vs crash recovery |
-| **PromptSubmit** | Publishes prompt events, triggers inbox sync | Context freshness |
+Registered in `~/.claude/settings.json` by `fleet setup` (via `scripts/setup-hooks.sh`).
 
-The Stop hook is the lifecycle controller. For bounded work, it blocks until tasks are done. For perpetual workers, it writes the sentinel and lets the watchdog handle respawn timing.
+| Hook | Script | Purpose |
+|------|--------|---------|
+| PreToolUse | `hooks/interceptors/pre-tool-context-injector.sh` | Inject inbox, policy context, dynamic hooks |
+| PostToolUse | `hooks/publishers/post-tool-publisher.sh` | Publish events, liveness heartbeat |
+| Stop | `hooks/gates/stop-worker-dispatch.sh` | Gate exit until checks pass, write graceful-stop |
+| PromptSubmit | `hooks/publishers/prompt-publisher.sh` | Publish prompt events, liveness heartbeat |
 
-## Registry (`{project}/.claude/workers/registry.json`)
+**Safety gates** (`hooks/gates/tool-policy-gate.sh`): 12 system hooks block rm -rf, force push, reset --hard, kill-session, checkout main, merge, config edits.
 
-Single source of truth. Everything about a worker is here: model, permissions, status, pane ID, branch, sleep cadence. The MCP server reads it, the launch script writes it, the watchdog checks it.
+**Dynamic hooks**: workers register their own at runtime via `add_hook()`. Three tiers: system (irremovable) > creator (worker can't remove) > self (worker manages).
 
-**`_config`** block stores fleet-wide settings: who merges, who gets commit notifications, tmux session name.
+## Storage
 
-**Atomic writes**: all registry mutations use `mkdir`-based file locks to prevent corruption from concurrent workers.
+```
+~/.claude/fleet/
+├── defaults.json              # global defaults
+└── {project}/
+    ├── fleet.json             # fleet-wide config (authorities, tmux session)
+    └── {worker}/
+        ├── config.json        # model, hooks, permissions
+        ├── state.json         # status, pane, cycles
+        ├── mission.md         # purpose
+        ├── launch.sh          # auto-generated
+        └── token              # Fleet Mail auth
+
+~/.claude-fleet/               # infrastructure (this repo)
+├── cli/                       # TypeScript CLI
+├── mcp/worker-fleet/          # MCP server
+├── hooks/                     # gates, interceptors, publishers
+├── scripts/                   # watchdog, launch, deep-review
+├── templates/                 # worker archetypes, seed templates
+├── tools/dr-context/          # Rust binary (deep review analysis)
+├── shared/                    # canonical types (WorkerConfig, WorkerState, etc.)
+└── lib/                       # shared bash libraries
+```
 
 ## Data Flow
 
 ```
-launch-flat-worker.sh
-  → creates worktree on worker/{name}
-  → installs post-commit hook
-  → starts Claude with seed prompt
-  → registers pane in registry.json
-
+fleet create → worktree + config + pane + seed prompt
+    ↓
 Worker runs autonomously:
-  → PreToolUse hook injects inbox on each tool call
-  → Worker commits → post-commit hook notifies merger
-  → Worker calls recycle() → Stop hook writes graceful-stop
-
+    PreToolUse → inject inbox/context on each tool call
+    Worker commits → post-commit hook notifies merger
+    Worker calls recycle() → Stop hook writes graceful-stop
+    ↓
 Watchdog sees graceful-stop:
-  → waits sleep_duration
-  → generates fresh seed (reads mission + memory + inbox)
-  → respawns Claude in same pane
-  → cycle repeats
+    Wait sleep_duration → fresh seed → respawn in same pane → cycle repeats
 ```
-
-## File Ownership
-
-| Location | What | Lifetime |
-|----------|------|----------|
-| `~/.claude-fleet/` | Infrastructure (this repo) | All projects |
-| `{project}/.claude/workers/` | Worker config + state | Project lifetime |
-| `{project}/.claude/workers/{name}/inbox.jsonl` | Durable messages | Append-only |
-| `~/.claude-fleet/state/sessions/` | Per-session runtime | ~24h TTL |
-| `~/.claude/projects/{path}/memory/` | Claude auto-memory per worktree | Permanent |
-
-## Legacy: Harness System
-
-The older harness system (task graphs, event bus, side-effects, coordinator/worker pattern) still exists at `.claude/harness/` and `lib/event-bus.sh`. It's functional but not the primary model. Flat workers with MCP messaging replaced it for day-to-day use. The event bus is still available for side-effect-driven workflows if needed.

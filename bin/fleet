@@ -1,28 +1,12 @@
 #!/usr/bin/env bash
-# fleet — Worker fleet management CLI (shim)
-#
-# Delegates to the TypeScript CLI at cli/fleet.ts via bun.
-# Falls back to the bash implementation if bun is not available.
+# fleet — Worker fleet management CLI
+# Delegates to TypeScript CLI via bun.
 
 FLEET_DIR="${CLAUDE_FLEET_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-fleet}}"
-TS_CLI="$FLEET_DIR/cli/fleet.ts"
 
-# Fast path: bun available → use TypeScript CLI
-if command -v bun >/dev/null 2>&1; then
-  if [ -f "$TS_CLI" ]; then
-    exec bun run "$TS_CLI" "$@"
-  fi
-  echo "WARNING: bun found but $TS_CLI missing. Falling back to legacy CLI." >&2
+if ! command -v bun >/dev/null 2>&1; then
+  echo "ERROR: bun is required. Install: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
 fi
 
-# Fallback: run legacy bash implementation
-LEGACY="$FLEET_DIR/bin/fleet-legacy.sh"
-if [ -f "$LEGACY" ]; then
-  echo "WARNING: Using legacy bash CLI. Install bun for the full experience." >&2
-  exec bash "$LEGACY" "$@"
-fi
-
-echo "ERROR: Neither bun nor fleet-legacy.sh found." >&2
-echo "  Install bun: curl -fsSL https://bun.sh/install | bash" >&2
-echo "  Or restore fleet-legacy.sh in $FLEET_DIR/bin/" >&2
-exit 1
+exec bun run "$FLEET_DIR/cli/index.ts" "$@"
