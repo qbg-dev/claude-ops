@@ -32,6 +32,7 @@ source "$CLAUDE_OPS_DIR/lib/resolve-deps.sh"
 CHECK_INTERVAL="${WATCHDOG_CHECK_INTERVAL:-30}"
 STUCK_THRESHOLD_SEC="${WATCHDOG_STUCK_THRESHOLD:-600}"  # 10 min no activity = stuck
 MAX_CRASHES_PER_HR="${WATCHDOG_MAX_CRASHES:-3}"
+MAX_CYCLE_SEC="${WATCHDOG_MAX_CYCLE:-7200}"  # 2hr max — Claude Code leaks memory in long sessions (github.com/anthropics/claude-code/issues/18859)
 LOG_FILE="${WATCHDOG_LOG:-${HOME}/.claude-ops/state/watchdog.log}"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || { echo "ERROR: PROJECT_ROOT not set and not in a git repo" >&2; exit 1; })}"
@@ -607,6 +608,10 @@ check_worker() {
   local pane_id perpetual status sleep_dur window session worktree
   IFS=$'\t' read -r pane_id perpetual status sleep_dur window session worktree <<< "$_fields"
   [ "$sleep_dur" = "null" ] && sleep_dur=0
+  # Cap sleep_duration to MAX_CYCLE_SEC — Claude Code leaks memory in long sessions
+  if [ "$sleep_dur" -gt "$MAX_CYCLE_SEC" ] 2>/dev/null; then
+    sleep_dur="$MAX_CYCLE_SEC"
+  fi
 
   # Skip workers in standby mode — they're intentionally dormant
   if [ "$status" = "standby" ]; then
@@ -642,7 +647,16 @@ check_worker() {
         _registry_jq_update '.[$n].status = "active" | .[$n].custom.sleep_until = null' --arg n "$worker"
       fi
     else
-      # No sleep_until set but status is sleeping — clear it
+      # No sleep_until set but status is sleeping — auto-calculate from sleep_duration
+      if [ "$sleep_dur" -gt 0 ] 2>/dev/null; then
+        local calc_wake; calc_wake=$(date -u -v+${sleep_dur}S +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+        if [ -n "$calc_wake" ]; then
+          _log "SLEEP-CALC: $worker — no sleep_until, calculated from sleep_duration=${sleep_dur}s → $calc_wake"
+          _registry_jq_update '.[$n].custom.sleep_until = $t' --arg n "$worker" --arg t "$calc_wake"
+          return  # Come back next tick to check the timer
+        fi
+      fi
+      # No sleep_duration either — just wake up
       _registry_jq_update '.[$n].status = "active"' --arg n "$worker"
     fi
     # Fall through to normal pane checks — the worker needs relaunching
@@ -692,6 +706,16 @@ check_worker() {
       if [ "$_since_relaunch" -lt 120 ]; then
         return  # within relaunch cooldown
       fi
+
+      # Forced memory-leak recycle: if session has been alive > MAX_CYCLE_SEC, recycle it
+      # Claude Code leaks memory in long sessions (github.com/anthropics/claude-code/issues/18859)
+      if [ "$perpetual" = "true" ] && [ "$_since_relaunch" -gt "$MAX_CYCLE_SEC" ]; then
+        _log "MEM-RECYCLE: $worker — alive ${_since_relaunch}s (max ${MAX_CYCLE_SEC}s), forcing recycle to prevent memory leak"
+        _resume_in_pane "$worker" "$pane_id" "memory-leak-recycle (${_since_relaunch}s)"
+        local runtime_r; runtime_r=$(_worker_runtime "$worker")
+        rm -f "$runtime_r/stuck-candidate" 2>/dev/null || true
+        return 1
+      fi
     fi
 
     if [ -f "$liveness_file" ]; then
@@ -704,6 +728,13 @@ check_worker() {
         return
       fi
       local since_active=$(( now_ts - last_active ))
+      # Non-perpetual workers idle 3+ hours: kill to reclaim memory (Claude Code memory leak)
+      if [ "$perpetual" != "true" ] && [ "$since_active" -ge 10800 ]; then
+        _log "IDLE-KILL: $worker (pane $pane_id) — non-perpetual idle ${since_active}s, killing to reclaim memory"
+        _kill_claude_in_pane "$pane_id"
+        _move_to_inactive "$worker" "$pane_id"
+        return
+      fi
       if [ "$since_active" -lt 300 ]; then
         # Active within last 300s — not stuck. Opus models can think for 2-4 min
         # without firing PostToolUse hooks, so 60s was too aggressive.
