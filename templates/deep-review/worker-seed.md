@@ -86,9 +86,39 @@ f. For documents/plans: read any referenced files (code, configs) to verify clai
 
 {{ATTACK_VECTORS}}
 
-### Step 4: Write findings with chain-of-thought evidence
+### Step 4: Enumerate code paths through your focus area
 
-For EACH finding, your `evidence` field MUST include:
+For every changed file relevant to your specialization, enumerate ALL code paths:
+
+**For UI changes:**
+- Every page × tab × button × role combination that touches the changed code
+- Every modal, dropdown, toggle, form input, and their valid/invalid/empty states
+- Every mobile viewport interaction (keyboard overlap, bottom bar, touch targets)
+
+**For API/route changes:**
+- Every endpoint × HTTP method × auth role × error branch
+- Every request body shape (valid, invalid, empty, oversized)
+- Every response code path (success, validation error, auth error, server error)
+
+**For logic/data changes:**
+- Every branch × input class × boundary condition (null, empty, zero, max, negative)
+- Every caller that depends on the changed function's contract
+- Every race condition or concurrency path
+
+**For config/schema changes:**
+- Every consumer of the changed config value
+- Every migration path (old→new format)
+
+**For each enumerated path, note:**
+- A short ID (e.g., `P1`, `P2`) for cross-referencing
+- The verification method: `chrome` (Chrome MCP click-through), `curl` (API call), `script` (write a test script), `test` (unit/integration test), `code-review` (read-only verification), `query` (database query)
+- The expected behavior
+
+Write these in a `## Enumerated Paths` section AFTER your findings.
+
+### Step 5: Write findings with chain-of-thought evidence
+
+For EACH finding, your `evidence` field MUST include (renumbered from Step 4):
 - The specific code you read (file:line) or document section you checked
 - The reasoning chain: "X calls Y, Y assumes Z, but the change makes Z false because..."
 - Why this is reachable / not dead code (for code findings)
@@ -120,6 +150,15 @@ Write a JSON file with this exact structure:
       "suggestion": "Concrete recommendation for how to fix or address it",
       "effort": "trivial|small|medium|large",
       "pre_existing": false
+    }
+  ],
+  "enumerated_paths": [
+    {
+      "id": "P1",
+      "path": "Login as admin → /app/settings → click 'Save' with empty name",
+      "verify_method": "chrome|curl|script|test|code-review|query",
+      "expected": "Shows validation error, no save occurs",
+      "related_findings": ["finding index if applicable"]
     }
   ]
 }

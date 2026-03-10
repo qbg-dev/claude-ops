@@ -295,7 +295,7 @@ function registryEntryToConfigState(
     model: entry.model || "opus",
     reasoning_effort: (entry.custom?.reasoning_effort as string) || "high",
     permission_mode: entry.permission_mode || "bypassPermissions",
-    sleep_duration: entry.perpetual ? (entry.sleep_duration ?? 900) : (entry.sleep_duration || null),
+    sleep_duration: entry.perpetual ? (entry.sleep_duration ?? 900) : null,
     window: entry.window || null,
     worktree: entry.worktree || null,
     branch: entry.branch || `worker/${name}`,
@@ -3830,6 +3830,14 @@ server.registerTool(
         .boolean()
         .optional()
         .describe("Force review even if auto-skip would trigger (lockfile-only changes, <5 substantive lines). Default: false."),
+      verify: z
+        .boolean()
+        .optional()
+        .describe("Enable verification phase after review. Spawns a verifier worker that deploys to a test slot, walks the verification checklist, writes scripts/tests, and tests all enumerated paths. Default: false."),
+      verify_roles: z
+        .array(z.string())
+        .optional()
+        .describe("User roles to test as during verification (e.g. ['admin', 'shenlan-pm']). Only used when verify=true."),
     },
   },
   async ({
@@ -3843,6 +3851,8 @@ server.registerTool(
     no_judge,
     no_context,
     force,
+    verify,
+    verify_roles,
   }: {
     scope?: string;
     content?: string | string[];
@@ -3854,6 +3864,8 @@ server.registerTool(
     no_judge?: boolean;
     no_context?: boolean;
     force?: boolean;
+    verify?: boolean;
+    verify_roles?: string[];
   }) => {
     try {
       const scriptPath = join(CLAUDE_OPS, "scripts", "deep-review.sh");
@@ -3896,6 +3908,12 @@ server.registerTool(
       }
       if (force) {
         args.push("--force");
+      }
+      if (verify) {
+        args.push("--verify");
+      }
+      if (verify_roles?.length) {
+        args.push("--verify-roles", verify_roles.join(","));
       }
 
       // Validate content files exist before spawning (fast fail with clear message)
@@ -3969,7 +3987,9 @@ server.registerTool(
             `        tmux a -t ${reviewSession}`,
             ``,
             `Pipeline: ${totalWorkers} workers -> bucket -> majority vote (>=2/${passesPerFocus} per focus group) -> validate -> dedup -> autofix -> report + notify`,
+            verify ? `Verify: enabled (verifier spawns after coordinator, tests all enumerated paths)` : `Verify: disabled`,
             `Report: ${sessionDir}/report.md`,
+            verify ? `Verification: ${sessionDir}/verification-results.md` : "",
           ].join("\n"),
         }],
       };

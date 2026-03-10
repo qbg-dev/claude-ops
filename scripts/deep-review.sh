@@ -46,6 +46,8 @@ SCOPE=""
 NO_JUDGE=false
 NO_CONTEXT=false
 FORCE=false
+VERIFY=false
+VERIFY_ROLES=""
 
 # ── Attack vectors per specialization ──────────────────────
 get_attack_vectors() {
@@ -110,6 +112,8 @@ while [[ $# -gt 0 ]]; do
     --no-judge)  NO_JUDGE=true; shift ;;
     --no-context) NO_CONTEXT=true; shift ;;
     --force)     FORCE=true; shift ;;
+    --verify)    VERIFY=true; shift ;;
+    --verify-roles) VERIFY_ROLES="$2"; shift 2 ;;
     # Legacy aliases
     --base)        SCOPE="$2"; shift 2 ;;
     --commit)      SCOPE="$2"; shift 2 ;;
@@ -136,6 +140,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --no-judge           Skip adversarial judge validation"
       echo "  --no-context         Skip context pre-pass (static analysis, deps)"
       echo "  --force              Force review even if auto-skip would trigger"
+      echo "  --verify             Enable verification phase after review completes"
+      echo "  --verify-roles LIST  Comma-separated user roles to test as (e.g. admin,shenlan-pm)"
       echo "                       Diff: security,logic,error-handling,data-integrity,architecture,performance,ux-impact,completeness"
       echo "                       Content: correctness,completeness,feasibility,risks"
       echo "                       Mixed: security,logic,correctness,completeness,feasibility,risks"
@@ -949,4 +955,165 @@ if [ -f "$SESSION_DIR/dep-graph.json" ]; then
 echo "  Context: pre-gathered (static analysis, deps, tests)"
 fi
 echo "  Report: $SESSION_DIR/report.md"
+if $VERIFY; then
+echo "  Verify: enabled (verifier spawns after coordinator)"
+fi
 echo "════════════════════════════════════════════════════════════"
+
+# ── Verification phase (spawns after coordinator completes) ───
+if $VERIFY; then
+  VERIFIER_ROLES_ARG=""
+  [ -n "$VERIFY_ROLES" ] && VERIFIER_ROLES_ARG="Test as these user roles: $VERIFY_ROLES"
+
+  cat > "$SESSION_DIR/verifier-seed.md" << VEOF
+# Deep Review Verifier
+
+You are the verification worker for a deep review session. Your job: walk through the verification checklist and confirm every enumerated path works correctly.
+
+## Session
+
+- Session dir: $SESSION_DIR
+- Project root: $PROJECT_ROOT
+- Report: $SESSION_DIR/report.md
+- Checklist: $SESSION_DIR/verification-checklist.md
+
+## Setup
+
+1. Wait for the coordinator to finish: poll for \`$SESSION_DIR/review.done\` every 15 seconds.
+2. Once it exists, read \`$SESSION_DIR/verification-checklist.md\`.
+3. Deploy to a test slot:
+   \`\`\`bash
+   cd $PROJECT_ROOT
+   bash .claude/scripts/worker/deploy-to-slot.sh --service static
+   \`\`\`
+4. Note the slot URL from the deploy output.
+
+## Verification Protocol
+
+For each checklist item, use the appropriate method:
+
+### Chrome MCP (UI paths)
+- Open the slot URL in Chrome MCP
+- Login as each relevant user role
+- Walk through each UI path, verify expected behavior
+- Check browser console for errors (zero errors acceptable, warnings OK)
+- Test both desktop and mobile viewports
+
+### curl (API endpoints)
+- Get auth tokens: \`bash .claude/scripts/autologin.sh staff --env test\`
+- Execute each curl command against the test slot
+- Verify response status codes and body structure
+
+### Script (write & run)
+- Write verification scripts to \`.claude/scripts/verify/\` directory
+- Run them and capture output
+- Scripts should test specific scenarios that are hard to verify manually
+
+### Tests (unit/integration)
+- Write test cases in \`src/tests/unit/\` or \`src/tests/isolated/\`
+- Run with \`bun test <file>\` and verify they pass
+- Focus on boundary conditions and error paths
+
+### Code Review (read-only)
+- Read the source files, trace callers
+- Verify contracts are preserved
+- Note any concerns
+
+### Query (database)
+- Run queries against the test database
+- Verify data shape and content
+
+$VERIFIER_ROLES_ARG
+
+## Output
+
+Write results to \`$SESSION_DIR/verification-results.md\`:
+
+\`\`\`markdown
+# Verification Results
+
+**Session**: $(basename "$SESSION_DIR")
+**Date**: <date>
+**Slot**: <slot URL>
+
+## Summary
+- **Total paths**: <N>
+- **Passed**: <N>
+- **Failed**: <N>
+- **Skipped**: <N> (with reason)
+
+## Results by Method
+
+### Chrome MCP
+- [x] P1: <description> — PASS
+- [ ] P2: <description> — FAIL: <what went wrong>
+
+### curl
+- [x] P10: <description> — PASS (200, response matched)
+- [ ] P11: <description> — FAIL: got 500, expected 400
+
+### Scripts Written
+- \`verify-auth-roles.sh\`: Tests all auth role combinations — PASS
+- \`verify-data-isolation.sh\`: Tests cross-project data leak — PASS
+
+### Tests Written
+- \`src/tests/unit/new-feature.test.ts\`: 5 tests — ALL PASS
+
+### Code Review
+- [x] P40: <description> — confirmed correct
+
+### Query
+- [x] P50: <description> — results match expected shape
+
+## Failed Items (Detail)
+
+### P2: <description>
+**Expected**: ...
+**Actual**: ...
+**Evidence**: screenshot/console output/response body
+**Suggested fix**: ...
+\`\`\`
+
+After writing results, create the completion marker:
+\`\`\`bash
+echo "done" > $SESSION_DIR/verify.done
+\`\`\`
+
+Then send a desktop notification:
+\`\`\`bash
+notify "Verification complete: <N> passed, <N> failed. Results: $SESSION_DIR/verification-results.md" "Deep Review Verify" "file://$SESSION_DIR/verification-results.md"
+\`\`\`
+
+## Rules
+
+- **Test everything on the checklist** — don't skip items without a documented reason.
+- **Write scripts and tests** — don't just eyeball things. Automate what you can.
+- **Be specific in failure reports** — include exact error messages, response bodies, screenshots.
+- **Zero console errors** — any console error is a failure.
+- **Test data isolation** — verify users only see their own project's data.
+- When finished, say "VERIFICATION COMPLETE" and stop.
+VEOF
+
+  cat > "$SESSION_DIR/run-verifier.sh" << RVEOF
+#!/usr/bin/env bash
+cd "$PROJECT_ROOT"
+
+# Wait for coordinator to finish
+echo "Verifier waiting for coordinator to complete..."
+while [ ! -f "$SESSION_DIR/review.done" ]; do
+  sleep 15
+  echo "  ... still waiting ($(date +%H:%M:%S))"
+done
+echo "Coordinator done. Starting verification."
+
+exec claude --model $WORKER_MODEL --dangerously-skip-permissions "\$(cat '$SESSION_DIR/verifier-seed.md')"
+RVEOF
+  chmod +x "$SESSION_DIR/run-verifier.sh"
+
+  # Create verifier window in the review tmux session
+  tmux new-window -d -t "$REVIEW_SESSION" -n "verifier" -c "$PROJECT_ROOT"
+  sleep 0.5
+  VERIFIER_PANE=$(tmux list-panes -t "$REVIEW_SESSION:verifier" -F '#{pane_id}' | head -1)
+  echo "Launching verifier (will start after coordinator completes)..."
+  tmux send-keys -t "$VERIFIER_PANE" "bash '$SESSION_DIR/run-verifier.sh'" Enter
+fi

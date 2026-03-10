@@ -75,6 +75,61 @@ Apply these adjustments after initial tiering:
 - **Reject threshold tightened**: workers at 0.5 confidence are too speculative — treat 0.5 as the floor for weak signals, reject below 0.55
 - **Pre-existing findings** (tagged `pre_existing: true` by workers): separate into their own section, do not count against the change author
 
+### Phase 4.7: Aggregate enumerated paths
+
+Workers now include `enumerated_paths` in their findings JSON. Collect all paths from all workers:
+
+1. Read each worker's `enumerated_paths` array
+2. Deduplicate: paths with same file/endpoint AND same verification method → merge into one entry, note which workers enumerated it
+3. Group by verification method:
+   - **chrome**: UI click-through paths (test with Chrome MCP)
+   - **curl**: API endpoint tests (verify with curl commands)
+   - **script**: Write and run a test script (bash, bun, python)
+   - **test**: Unit/integration tests (write bun:test cases)
+   - **code-review**: Read-only verification (trace code paths)
+   - **query**: Database queries (run against test DB)
+4. Write the unified checklist to `{{SESSION_DIR}}/verification-checklist.md`:
+
+```markdown
+# Verification Checklist
+
+**Session**: {{SESSION_ID}}
+**Generated from**: {{NUM_PASSES}} workers across {{NUM_FOCUS}} focus areas
+**Total paths**: <N>
+
+## Chrome MCP (UI Paths)
+
+- [ ] P1: <path description> — Expected: <expected>
+- [ ] P2: ...
+
+## curl (API Endpoints)
+
+- [ ] P10: `curl -X POST /api/v1/endpoint -d '...'` — Expected: 200 + <body>
+- [ ] P11: ...
+
+## Script (Write & Run)
+
+- [ ] P20: Write script to test <scenario> — Expected: <result>
+- [ ] P21: ...
+
+## Tests (Unit/Integration)
+
+- [ ] P30: Write test for <function> with <input> — Expected: <assertion>
+- [ ] P31: ...
+
+## Code Review (Read-Only)
+
+- [ ] P40: Trace <function> callers verify contract preserved — Expected: no breakage
+- [ ] P41: ...
+
+## Query (Database)
+
+- [ ] P50: `SELECT ... FROM ... WHERE ...` — Expected: <result shape>
+- [ ] P51: ...
+```
+
+Continue to Phase 5 after writing the checklist.
+
 ### Phase 5: Merge descriptions
 
 For each surviving bucket, synthesize the clearest description from all contributing passes. Pick the best title, most precise location, and most actionable suggestion. Determine the consensus `kind` and `severity`.
@@ -264,6 +319,10 @@ Format:
 
 (Findings from a single specialized worker in their focus area — not enough votes to auto-confirm, but potentially real.)
 
+## Verification Checklist
+
+See `verification-checklist.md` in the session directory for <N> enumerated paths grouped by verification method (chrome, curl, script, test, code-review, query).
+
 ## Summary
 - **Fixed**: <N> bugs/security issues auto-fixed
 - **Content**: <N> content findings (gaps, risks, errors) — advisory
@@ -272,6 +331,7 @@ Format:
 - **Pre-existing**: <N> inherited issues (🟣 — for awareness only)
 - **Filtered**: <N> findings removed by voting
 - **Specialist-only**: <N> flagged for manual review
+- **Verification paths**: <N> enumerated (see verification-checklist.md)
 ```
 
 Display the report summary in your output.
