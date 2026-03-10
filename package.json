@@ -2,6 +2,9 @@
   "name": "claude-fleet",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "mcp/worker-fleet"
+  ],
   "bin": {
     "fleet": "./bin/fleet"
   },
