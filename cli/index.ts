@@ -21,6 +21,8 @@ const main = defineCommand({
     stop:     () => import("./commands/stop").then(m => m.default),
     ls:       () => import("./commands/ls").then(m => m.default),
     list:     () => import("./commands/ls").then(m => m.default),
+    status:   () => import("./commands/status").then(m => m.default),
+    attach:   () => import("./commands/attach").then(m => m.default),
     config:   () => import("./commands/config").then(m => m.default),
     cfg:      () => import("./commands/config").then(m => m.default),
     defaults: () => import("./commands/defaults").then(m => m.default),

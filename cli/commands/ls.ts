@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import { FLEET_DATA } from "../lib/paths";
 import { getConfig, getState } from "../lib/config";
 import { listPaneIds } from "../lib/tmux";
+import chalk from "chalk";
 import { table, statusColor } from "../lib/fmt";
 
 export default defineCommand({
@@ -69,15 +70,27 @@ export default defineCommand({
     }
 
     if (results.length === 0) {
-      console.log("  (no workers found)");
+      console.log("No workers found." + (args.project ? ` (project: ${args.project})` : ""));
+      console.log(`  Run ${chalk.cyan("fleet create <name> <mission>")} to create one.`);
       return;
     }
 
-    table(
-      ["NAME", "STATUS", "MODEL", "PANE", "WINDOW", "BRANCH"],
-      results.map((r) => [
-        r.name, statusColor(r.status), r.model, r.pane, r.window, r.branch,
-      ]),
-    );
+    // Show PROJECT column when workers span multiple projects
+    const uniqueProjects = new Set(results.map(r => r.project));
+    if (uniqueProjects.size > 1) {
+      table(
+        ["NAME", "PROJECT", "STATUS", "MODEL", "PANE", "WINDOW", "BRANCH"],
+        results.map((r) => [
+          r.name, r.project, statusColor(r.status), r.model, r.pane, r.window, r.branch,
+        ]),
+      );
+    } else {
+      table(
+        ["NAME", "STATUS", "MODEL", "PANE", "WINDOW", "BRANCH"],
+        results.map((r) => [
+          r.name, statusColor(r.status), r.model, r.pane, r.window, r.branch,
+        ]),
+      );
+    }
   },
 });

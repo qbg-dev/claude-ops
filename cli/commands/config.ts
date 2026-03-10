@@ -7,9 +7,10 @@ export default defineCommand({
   meta: { name: "config", description: "Get/set worker config" },
   args: {
     name: { type: "positional", description: "Worker name", required: true },
-    key: { type: "positional", description: "Config key", required: false },
+    key: { type: "positional", description: "Config key (model, effort, permission_mode, sleep_duration, window, branch)", required: false },
     value: { type: "positional", description: "New value", required: false },
     project: { type: "string", description: "Override project detection" },
+    full: { type: "boolean", description: "Show full config including hooks", default: false },
   },
   run({ args }) {
     const project = args.project || resolveProject();
@@ -17,8 +18,14 @@ export default defineCommand({
     if (!config) fail(`Config not found for '${args.name}' in '${project}'`);
 
     if (!args.key) {
-      // Show full config
-      console.log(JSON.stringify(config, null, 2));
+      if (args.full) {
+        console.log(JSON.stringify(config, null, 2));
+      } else {
+        // Summary view: hide hooks and mcp (noisy)
+        const { hooks, mcp, ...summary } = config as unknown as Record<string, unknown>;
+        const hookCount = Array.isArray(hooks) ? hooks.length : 0;
+        console.log(JSON.stringify({ ...summary, hooks: `[${hookCount} hooks — use --full to show]` }, null, 2));
+      }
       return;
     }
 

@@ -85,7 +85,7 @@ export default defineCommand({
       }
 
       default:
-        console.log("Usage: fleet mcp [register|unregister|status|build]");
+        fail(`Unknown action '${action}'. Usage: fleet mcp [register|unregister|status|build]`);
     }
   },
 });
