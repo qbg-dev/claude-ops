@@ -93,6 +93,9 @@ fleet defaults [key] [value]             # Global defaults
 fleet fork   <parent> <child> "<mission>" # Fork from existing session
 fleet log    <name>                      # Tail worker's tmux pane
 fleet mail   <name>                      # Check worker's inbox
+fleet mail-server connect <url>          # Connect to Fleet Mail server
+fleet mail-server start                  # Start local Fleet Mail server
+fleet mail-server status                 # Fleet Mail connection info
 fleet mcp    [register|status|build]     # Manage MCP server
 ```
 
@@ -245,12 +248,31 @@ Workers don't `sleep` — they exit cleanly, and the watchdog owns the timer.
 
 ## Fleet Mail
 
-Workers coordinate via a durable mail server (self-hosted, Rust + Dolt):
+Workers coordinate via a durable mail server ([boring-mail](https://github.com/qbg-dev/boring-mail-server) — Rust + SQLite):
 
 - **Messaging**: Direct, broadcast, mailing lists
 - **Tasks**: LKML model — tasks are mail threads with labels (`[TASK]`, `P1`, `IN_PROGRESS`)
 - **Merge requests**: Workers send structured merge requests to the merger
 - **Escalation**: `mail_send(to="user")` reaches the human operator
+
+### Setup
+
+```bash
+# Option A: Connect to an existing server
+fleet mail-server connect http://your-server:8025 --token <admin-token>
+
+# Option B: Start a local server (requires boring-mail binary)
+fleet mail-server start
+
+# Check connection
+fleet mail-server status
+```
+
+Config is stored in `~/.claude/fleet/defaults.json` (`fleet_mail_url`, `fleet_mail_token`). Resolution: `$FLEET_MAIL_URL` env > `defaults.json` > not configured.
+
+Workers auto-provision mail accounts on `fleet create`. Each worker gets a per-account bearer token stored at `~/.claude/fleet/{project}/{name}/token`.
+
+If Fleet Mail isn't configured, workers still function — they just won't have durable messaging.
 
 ---
 
