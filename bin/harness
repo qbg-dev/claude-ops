@@ -1,2 +1,0 @@
-#!/bin/bash
-exec bun run "${HOME}/.claude-ops/tui/index.tsx" "$@"

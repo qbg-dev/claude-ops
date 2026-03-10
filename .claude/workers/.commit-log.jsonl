@@ -1,0 +1,148 @@
+{"worker":"main","sha":"ebef499","msg":"feat(fleet): add to="user" target in send_message for worker escalations","branch":"main","ts":"2026-03-07T20:32:05Z"}
+{"worker":"main","sha":"e32fe16","msg":"fix(fleet): replace "Warren" with generic "user" references","branch":"main","ts":"2026-03-07T20:42:22Z"}
+{"worker":"main","sha":"ee32c5f","msg":"refactor(fleet): extract writeToTriageQueue + add tests + genericize names","branch":"main","ts":"2026-03-07T20:46:26Z"}
+{"worker":"main","sha":"094ba07","msg":"perf(watchdog): batch jq reads + extract registry lock helper","branch":"main","ts":"2026-03-07T20:51:02Z"}
+{"worker":"main","sha":"bab18b5","msg":"perf(launch): batch registry jq reads (4 calls → 1)","branch":"main","ts":"2026-03-07T20:51:53Z"}
+{"worker":"main","sha":"a0cf65c","msg":"fix(fleet-health): read worker state from registry.json instead of deprecated state.json","branch":"main","ts":"2026-03-07T20:54:54Z"}
+{"worker":"main","sha":"1eca489","msg":"fix(scripts): remove deprecated state.json reads + batch jq calls","branch":"main","ts":"2026-03-07T20:56:59Z"}
+{"worker":"main","sha":"4ced77a","msg":"perf(worker-status): batch 6 jq calls per worker into 1","branch":"main","ts":"2026-03-07T20:58:14Z"}
+{"worker":"main","sha":"98a77c9","msg":"fix(scripts): use report_to/direct_reports instead of deprecated parent/children","branch":"main","ts":"2026-03-07T21:01:32Z"}
+{"worker":"main","sha":"bb1c838","msg":"feat(notify): append to triage queue on every notification","branch":"main","ts":"2026-03-07T21:32:43Z"}
+{"worker":"main","sha":"b4b1d00","msg":"feat(fleet): escalation guidance in send_message + runtime field + rebuild","branch":"main","ts":"2026-03-07T21:32:51Z"}
+{"worker":"main","sha":"939df15","msg":"feat(fleet): structured messages — options, context, urgency in send_message","branch":"main","ts":"2026-03-07T21:59:52Z"}
+{"worker":"main","sha":"efe5e56","msg":"fix(fleet): update test for runtime field + rebuild bundle","branch":"main","ts":"2026-03-07T22:05:17Z"}
+{"worker":"main","sha":"7043e1b","msg":"feat(triage): vim-style TUI with raw terminal navigation","branch":"main","ts":"2026-03-07T23:13:29Z"}
+{"worker":"main","sha":"1f08b22","msg":"fix(triage): raw mode input broken in Bun — remove setEncoding, drop readline","branch":"main","ts":"2026-03-08T00:00:33Z"}
+{"worker":"main","sha":"9084661","msg":"refactor(templates): move invariant sections from mission.md to seed template","branch":"main","ts":"2026-03-08T00:23:23Z"}
+{"worker":"main","sha":"35e232b","msg":"rename: compaction-context.md → seed-context.md + update references","branch":"main","ts":"2026-03-08T00:26:37Z"}
+{"worker":"main","sha":"e636439","msg":"fix: update all stale compaction-context references + add seed context tests","branch":"main","ts":"2026-03-08T00:31:51Z"}
+{"worker":"main","sha":"620f833","msg":"test: add edge cases for buildMessageBody, writeToTriageQueue, writeToInbox","branch":"main","ts":"2026-03-08T00:41:53Z"}
+{"worker":"main","sha":"4d83b4b","msg":"feat: unified runtime (Claude/Codex) + verifier type + lean mission.md","branch":"main","ts":"2026-03-08T00:47:03Z"}
+{"worker":"main","sha":"e81aa47","msg":"refactor(harness): remove dead systems, fix harmful bugs, simplify abstractions","branch":"main","ts":"2026-03-08T01:00:55Z"}
+{"worker":"main","sha":"15868e7","msg":"fix: codex runtime refinements — model default, reasoning effort, IFS bug, resume/fork","branch":"main","ts":"2026-03-08T01:08:50Z"}
+{"worker":"main","sha":"b82cfb9","msg":"feat(fleet): RuntimeConfig, move_window, durable messaging, monitor write access","branch":"main","ts":"2026-03-08T01:34:19Z"}
+{"worker":"main","sha":"ce62633","msg":"refactor(harness): cleanup round 2 — stale refs, dead code, shared lock","branch":"main","ts":"2026-03-08T02:16:17Z"}
+{"worker":"main","sha":"680e340","msg":"feat(fleet): worker proposal HTML system — mandatory design doc before coding","branch":"main","ts":"2026-03-08T03:07:44Z"}
+{"worker":"main","sha":"41384d5","msg":"feat(deep-review): Bugbot-style multi-pass code review pipeline","branch":"main","ts":"2026-03-08T03:09:11Z"}
+{"worker":"main","sha":"bd84c3d","msg":"feat(deep-review): add deep_review MCP tool to check-your-work server","branch":"main","ts":"2026-03-08T03:55:13Z"}
+{"worker":"main","sha":"a1f3453","msg":"refactor: move deep_review to worker-fleet, remove check-your-work MCP","branch":"main","ts":"2026-03-08T04:02:58Z"}
+{"worker":"main","sha":"fca8a6f","msg":"refactor(worker-fleet): rewrite all MCP tool descriptions for precision and completeness","branch":"main","ts":"2026-03-08T04:04:09Z"}
+{"worker":"main","sha":"f2244c4","msg":"fix(messaging): use paste-buffer instead of send-keys for tmux message delivery","branch":"main","ts":"2026-03-08T04:41:39Z"}
+{"worker":"main","sha":"7ef2294","msg":"feat(worker-fleet): add window_index param to create_worker and launch script","branch":"main","ts":"2026-03-08T06:20:50Z"}
+{"worker":"main","sha":"1d1a461","msg":"fix(recycle): shell quoting bug breaks every recycle with disallowed_tools","branch":"main","ts":"2026-03-08T06:44:30Z"}
+{"worker":"main","sha":"27dcf5e","msg":"test: comprehensive harness test suite — 621 tests, 37 suites, 0 failures","branch":"main","ts":"2026-03-08T12:25:06Z"}
+{"worker":"main","sha":"567b4d6","msg":"fix(recycle): honor sleep_duration — perpetual workers defer to watchdog","branch":"main","ts":"2026-03-08T21:53:50Z"}
+{"worker":"main","sha":"c763d2c","msg":"feat(recycle): add cancel param + verification ethics in seed template","branch":"main","ts":"2026-03-08T21:57:20Z"}
+{"worker":"main","sha":"38bc95e","msg":"docs: tool consolidation proposal (22 → 12 tools)","branch":"main","ts":"2026-03-08T22:06:00Z"}
+{"worker":"main","sha":"10f09fc","msg":"feat(tui): harness-tui + route user escalations through BMS","branch":"main","ts":"2026-03-08T22:06:36Z"}
+{"worker":"main","sha":"eb7949f","msg":"docs: verification patterns research — adversarial review, JiT testing, PBT, mutation testing","branch":"main","ts":"2026-03-08T22:07:47Z"}
+{"worker":"main","sha":"3dcc19b","msg":"refactor(memory): worker memory → project-level auto-memory subdirectories","branch":"main","ts":"2026-03-08T22:13:08Z"}
+{"worker":"main","sha":"15b788c","msg":"fix(harness): one-shot read/reply/archive auto-fetch inbox, fix PROJECT_ROOT resolution","branch":"main","ts":"2026-03-08T22:29:05Z"}
+{"worker":"main","sha":"a353854","msg":"refactor(fleet): consolidate 6 fleet tools into single `fleet` dispatcher","branch":"main","ts":"2026-03-08T22:31:58Z"}
+{"worker":"main","sha":"41a3a73","msg":"style(harness): Claude Code-inspired redesign — clean, minimal, blue accents","branch":"main","ts":"2026-03-08T22:34:23Z"}
+{"worker":"main","sha":"956e9ca","msg":"feat(fleet): ephemeral feature workers + parallel work patterns","branch":"main","ts":"2026-03-08T22:52:56Z"}
+{"worker":"main","sha":"0038e62","msg":"docs(seed): parallel work patterns — Agent tool primary, evidence storage","branch":"main","ts":"2026-03-08T22:53:42Z"}
+{"worker":"main","sha":"1466bca","msg":"feat(harness): v1.0 — cross-worker inbox, threads, markdown, 22 commands","branch":"main","ts":"2026-03-08T22:56:17Z"}
+{"worker":"main","sha":"ee47193","msg":"refactor(fleet): remove spawn_feature — subagents are the pattern","branch":"main","ts":"2026-03-08T22:57:18Z"}
+{"worker":"main","sha":"b9d5f99","msg":"revert(fleet): remove ephemeral deregister + stop hook notification","branch":"main","ts":"2026-03-08T23:01:49Z"}
+{"worker":"main","sha":"013e676","msg":"feat(hooks): track agent_id and agent_type across all hooks","branch":"main","ts":"2026-03-08T23:09:57Z"}
+{"worker":"main","sha":"138ccff","msg":"feat(hooks): subagent-first — early exit + pane cache","branch":"main","ts":"2026-03-08T23:26:17Z"}
+{"worker":"main","sha":"9f3bcb0","msg":"feat(stop-checks): auto-complete on subagent stop","branch":"main","ts":"2026-03-09T00:26:58Z"}
+{"worker":"main","sha":"bb3b7f6","msg":"feat(tui): aerc-inspired multi-pane terminal dashboard","branch":"main","ts":"2026-03-09T00:47:16Z"}
+{"worker":"main","sha":"8a491c6","msg":"feat(stop-checks): per-subagent scoping","branch":"main","ts":"2026-03-09T01:00:04Z"}
+{"worker":"main","sha":"db94971","msg":"feat(tui): Gmail-style UX — j/k with detail, 2-line messages, tab completion","branch":"main","ts":"2026-03-09T01:01:28Z"}
+{"worker":"main","sha":"a5b53e9","msg":"fix(tui): handle BMS 409 with fallback token, add recovery instructions","branch":"main","ts":"2026-03-09T01:22:31Z"}
+{"worker":"main","sha":"a73f591","msg":"fix(fleet): centralize registry.json — symlink worktrees to canonical","branch":"main","ts":"2026-03-09T01:29:14Z"}
+{"worker":"main","sha":"2ba17cb","msg":"feat(tui): Gmail-style UX — inline reply, archive(e), rate limiting","branch":"main","ts":"2026-03-09T01:38:39Z"}
+{"worker":"main","sha":"d85426e","msg":"style(tui): compact layout — remove excess whitespace and borders","branch":"main","ts":"2026-03-09T01:43:20Z"}
+{"worker":"main","sha":"9cb0857","msg":"feat(tui): thread reply + same-inbox split","branch":"main","ts":"2026-03-09T01:47:52Z"}
+{"worker":"main","sha":"ad7e387","msg":"feat(hooks): unified dynamic hooks — agents add their own rules","branch":"main","ts":"2026-03-09T01:50:18Z"}
+{"worker":"main","sha":"87a534c","msg":"docs(seed): document unified dynamic hooks system for workers","branch":"main","ts":"2026-03-09T03:16:51Z"}
+{"worker":"main","sha":"d012a95","msg":"fix(hooks): post-refactor cleanup — stale refs, dead dist, remove standby cmd","branch":"main","ts":"2026-03-09T03:21:58Z"}
+{"worker":"main","sha":"41287b3","msg":"feat(tui): command history, tmux jump, better timestamps","branch":"main","ts":"2026-03-09T04:10:12Z"}
+{"worker":"main","sha":"a53f54f","msg":"feat(hooks): universal coverage — all 18 events, dynamic dispatcher, logger","branch":"main","ts":"2026-03-09T04:17:47Z"}
+{"worker":"main","sha":"0c379c5","msg":"fix(worker-fleet): log bms_token registry write failures instead of silently swallowing","branch":"main","ts":"2026-03-09T04:23:57Z"}
+{"worker":"main","sha":"d5729c5","msg":"refactor(worker-fleet): split dispatchers into fine-grained tools","branch":"main","ts":"2026-03-09T04:40:31Z"}
+{"worker":"main","sha":"2827eba","msg":"feat(deep-review): add content mode — review plans, docs, and information without a diff","branch":"main","ts":"2026-03-09T04:43:03Z"}
+{"worker":"main","sha":"757b629","msg":"test: update tests for fine-grained tool refactor","branch":"main","ts":"2026-03-09T04:46:03Z"}
+{"worker":"main","sha":"f86b6db","msg":"feat: Phase 1 — git safety gate, auto-install hooks, extended deny lists","branch":"main","ts":"2026-03-09T05:09:43Z"}
+{"worker":"main","sha":"02eae09","msg":"feat: Phase 2 — unified checkpoint/handoff system","branch":"main","ts":"2026-03-09T05:10:54Z"}
+{"worker":"main","sha":"1a23e21","msg":"feat(deep-review): unify diff and content modes into single additive pipeline","branch":"main","ts":"2026-03-09T05:17:14Z"}
+{"worker":"main","sha":"216a6a0","msg":"feat: Phase 3 — seed template updates for git safety + checkpoints","branch":"main","ts":"2026-03-09T05:20:20Z"}
+{"worker":"main","sha":"9653ef8","msg":"docs: add save_checkpoint to seed-context tool table","branch":"main","ts":"2026-03-09T05:20:44Z"}
+{"worker":"main","sha":"db6f513","msg":"feat(worker-fleet): add list_hooks tool + standardize hook descriptions","branch":"main","ts":"2026-03-09T05:22:09Z"}
+{"worker":"main","sha":"86483e3","msg":"refactor(worker-fleet): unify checkpoint logic, fix silent errors, validate task deps","branch":"main","ts":"2026-03-09T05:31:54Z"}
+{"worker":"main","sha":"e61713c","msg":"feat(deep-review): v2 SOTA upgrades — investigation protocol, confidence, context, judge","branch":"main","ts":"2026-03-09T05:52:56Z"}
+{"worker":"main","sha":"fa8d637","msg":"feat(worker-fleet): implement Worker Fleet Infrastructure Evolution plan","branch":"main","ts":"2026-03-09T06:39:06Z"}
+{"worker":"main","sha":"098a202","msg":"fix(deep-review): prevent timeout crashes and improve error handling","branch":"main","ts":"2026-03-09T06:58:15Z"}
+{"worker":"main","sha":"1e1d20f","msg":"dotfiles: move all configs into claude-ops for git tracking + symlink management","branch":"main","ts":"2026-03-09T15:46:51Z"}
+{"worker":"main","sha":"2a6310c","msg":"Remove hardcoded /opt/homebrew paths, add DEPENDENCIES.md","branch":"main","ts":"2026-03-09T15:57:58Z"}
+{"worker":"main","sha":"1512c7e","msg":"DEPENDENCIES.md: fix copy-resume-cmd path, add missing deps","branch":"main","ts":"2026-03-09T16:01:30Z"}
+{"worker":"main","sha":"5a21940","msg":"Add Brewfile for declarative package management","branch":"main","ts":"2026-03-09T16:03:04Z"}
+{"worker":"main","sha":"d64068c","msg":"Restructure dotfiles for GNU Stow","branch":"main","ts":"2026-03-09T16:06:18Z"}
+{"worker":"main","sha":"7acdc58","msg":"Switch to GNU Stow for dotfile symlinks","branch":"main","ts":"2026-03-09T16:07:30Z"}
+{"worker":"main","sha":"8f401ca","msg":"refactor: two-script hook architecture (engine + logger)","branch":"main","ts":"2026-03-09T20:38:39Z"}
+{"worker":"main","sha":"4dda2b7","msg":"fix(engine): use jq compact output for block/inject responses","branch":"main","ts":"2026-03-09T20:47:29Z"}
+{"worker":"main","sha":"6c46644","msg":"refactor: "user" → "operator" in docs + gate bus dir behind EVENT_BUS_ENABLED","branch":"main","ts":"2026-03-09T20:58:01Z"}
+{"worker":"main","sha":"b2b074d","msg":"feat(fleet): add fleet-relay daemon — WS push + registry liveness + session snapshots","branch":"main","ts":"2026-03-09T20:58:51Z"}
+{"worker":"main","sha":"2e7cda0","msg":"feat(deep-review): v3 — REVIEW.md, auto-skip, blame context, smart focus, emoji severity","branch":"main","ts":"2026-03-09T21:35:18Z"}
+{"worker":"main","sha":"6c7a01b","msg":"feat(fleet-relay): auto-provision BMS tokens via periodic health-check","branch":"main","ts":"2026-03-09T21:48:21Z"}
+{"worker":"main","sha":"5dcfdc6","msg":"feat(fleet-relay): auto-provision BMS tokens + rebuild compiled MCP","branch":"main","ts":"2026-03-09T22:01:46Z"}
+{"worker":"main","sha":"6d09db1","msg":"docs(recycle): add decision guide to tool description","branch":"main","ts":"2026-03-09T22:14:31Z"}
+{"worker":"main","sha":"9d1a0fe","msg":"refactor(fleet): centralize mission files to ~/.claude/fleet/{project}/missions/","branch":"main","ts":"2026-03-09T22:23:10Z"}
+{"worker":"main","sha":"cd8c606","msg":"fix(create_worker): auto-symlink .mcp.json in new worktrees","branch":"main","ts":"2026-03-09T22:52:11Z"}
+{"worker":"main","sha":"1930fdb","msg":"fix(launch): symlink .mcp.json + fix git hooks in worktrees","branch":"main","ts":"2026-03-09T22:56:33Z"}
+{"worker":"main","sha":"8fbf6ca","msg":"fix(deep-review): resolve REVIEW.md from worktrees and sibling clones","branch":"main","ts":"2026-03-10T00:37:41Z"}
+{"worker":"main","sha":"cdef185","msg":"fix(fleet): broaden idle detection + add overlay for mail delivery","branch":"main","ts":"2026-03-10T00:52:40Z"}
+{"worker":"main","sha":"62d876f","msg":"fix(deep-review): handle range syntax in scope (e.g. v1.1.3..v1.1.4)","branch":"main","ts":"2026-03-10T06:22:27Z"}
+{"worker":"main","sha":"9272193","msg":"fix(deep-review): default coordinator to opus (all roles now opus)","branch":"main","ts":"2026-03-10T06:38:41Z"}
+{"worker":"main","sha":"0694428","msg":"refactor: migrate worker-fleet from registry.json to per-worker directories","branch":"main","ts":"2026-03-10T07:20:42Z"}
+{"worker":"main","sha":"465b1a0","msg":"feat: merge complex verification into deep review pipeline","branch":"main","ts":"2026-03-10T08:04:01Z"}
+{"worker":"main","sha":"9148a8e","msg":"chore: emphasize active verification methods in worker seed","branch":"main","ts":"2026-03-10T08:04:29Z"}
+{"worker":"main","sha":"0b38a41","msg":"feat: fleet CLI + claude-ops → claude-fleet rename","branch":"main","ts":"2026-03-10T08:11:52Z"}
+{"worker":"main","sha":"c1e544a","msg":"docs: update all references from claude-ops to claude-fleet","branch":"main","ts":"2026-03-10T08:14:07Z"}
+{"worker":"main","sha":"def3b4d","msg":"fix: harden git-safety-gate shell unwrapping and md5 idempotency check","branch":"main","ts":"2026-03-10T08:14:56Z"}
+{"worker":"main","sha":"abd930f","msg":"feat(watchdog): memory-leak recycling and idle worker cleanup","branch":"main","ts":"2026-03-10T08:15:00Z"}
+{"worker":"main","sha":"4ef084e","msg":"fix(pre-compact): atomic checkpoint writes and worktree detection","branch":"main","ts":"2026-03-10T08:15:03Z"}
+{"worker":"main","sha":"a426925","msg":"refactor: use resolve-registry.sh for fleet/legacy registry path resolution","branch":"main","ts":"2026-03-10T08:15:12Z"}
+{"worker":"main","sha":"ec247a8","msg":"refactor(templates): replace coordinator with merger/chief-of-staff archetypes","branch":"main","ts":"2026-03-10T08:15:16Z"}
+{"worker":"main","sha":"0535ab9","msg":"feat(tui): adaptive polling, search, compose, undo, and optimistic updates","branch":"main","ts":"2026-03-10T08:15:21Z"}
+{"worker":"main","sha":"d86bd9d","msg":"feat: rewrite deep review context analysis in Rust, add tmux kill gates","branch":"main","ts":"2026-03-10T08:23:46Z"}
+{"worker":"main","sha":"5bba3b5","msg":"feat: rewrite fleet CLI in TypeScript (citty + Bun)","branch":"main","ts":"2026-03-10T08:26:36Z"}
+{"worker":"main","sha":"c53c378","msg":"fix: fleet CLI shim + cleanup unused imports","branch":"main","ts":"2026-03-10T08:29:29Z"}
+{"worker":"main","sha":"f7256f7","msg":"fix: address deep review findings — null safety, missing state fields","branch":"main","ts":"2026-03-10T08:32:40Z"}
+{"worker":"main","sha":"03fa1dc","msg":"fix: address deep review findings (code quality pass)","branch":"main","ts":"2026-03-10T08:32:56Z"}
+{"worker":"main","sha":"9d94e02","msg":"fix: ad-hoc codesign dr-context binary on macOS (prevents SIGKILL)","branch":"main","ts":"2026-03-10T08:34:32Z"}
+{"worker":"main","sha":"e91281d","msg":"feat: UX improvements from deep review (status, attach, config summary)","branch":"main","ts":"2026-03-10T08:35:11Z"}
+{"worker":"main","sha":"0599321","msg":"fix: UX polish — actionable empty state, louder shim warnings, NO_COLOR docs","branch":"main","ts":"2026-03-10T08:35:44Z"}
+{"worker":"main","sha":"9f571e6","msg":"docs: restructure README with deep review pipeline, Rust tooling, safety gates","branch":"main","ts":"2026-03-10T16:08:35Z"}
+{"worker":"main","sha":"edbdcba","msg":"refactor: extract shared types + add file locking to CLI writes","branch":"main","ts":"2026-03-10T16:20:10Z"}
+{"worker":"main","sha":"8d83995","msg":"fix: address 20 deep review findings in dr-context CLI","branch":"main","ts":"2026-03-10T16:24:20Z"}
+{"worker":"main","sha":"7e982a4","msg":"feat: fleet mail-server command — easy Fleet Mail setup","branch":"main","ts":"2026-03-10T16:26:37Z"}
+{"worker":"main","sha":"a2ce5e2","msg":"docs: add Fleet Mail setup instructions to README","branch":"main","ts":"2026-03-10T16:46:55Z"}
+{"worker":"main","sha":"cf30e45","msg":"fix: Fleet Mail Dolt→SQLite refs + make Fleet Mail a hard dependency","branch":"main","ts":"2026-03-10T16:55:56Z"}
+{"worker":"main","sha":"f6bd90b","msg":"refactor: rename boring-mail → fleet-server across codebase","branch":"main","ts":"2026-03-10T17:01:07Z"}
+{"worker":"main","sha":"8d6f1ce","msg":"security: scrub PII, credentials, and infrastructure IPs for open-source readiness","branch":"main","ts":"2026-03-10T17:05:17Z"}
+{"worker":"main","sha":"9b4fcf6","msg":"chore: remove task CRUD remnants (LKML model)","branch":"main","ts":"2026-03-10T17:11:14Z"}
+{"worker":"main","sha":"1704f96","msg":"refactor: swap citty → commander for Claude Code–identical CLI UX","branch":"main","ts":"2026-03-10T17:22:25Z"}
+{"worker":"main","sha":"4a1d138","msg":"refactor: extract config, helpers, hooks leaf modules from worker-fleet monolith","branch":"main","ts":"2026-03-10T17:23:18Z"}
+{"worker":"main","sha":"f67f8d6","msg":"fix: dr-context banker's rounding, space-in-filename regex, deep-review ERR trap","branch":"main","ts":"2026-03-10T17:25:57Z"}
+{"worker":"main","sha":"c7796f2","msg":"chore: rebuild dr-context binary with rounding + regex fixes","branch":"main","ts":"2026-03-10T17:26:07Z"}
+{"worker":"main","sha":"b54b9ff","msg":"feat: add `fleet run` and `fleet setup-agent` commands","branch":"main","ts":"2026-03-10T17:26:45Z"}
+{"worker":"main","sha":"c45a4e7","msg":"fix: rewrite CLAUDE.md, add claude dep check, fix stale refs","branch":"main","ts":"2026-03-10T17:39:54Z"}
+{"worker":"main","sha":"4193d21","msg":"docs: rewrite README motivation — why claude-fleet exists","branch":"main","ts":"2026-03-10T17:48:42Z"}
+{"worker":"main","sha":"b8ec5d5","msg":"refactor: split worker-fleet monolith into 15 composable modules","branch":"main","ts":"2026-03-10T17:49:21Z"}
+{"worker":"main","sha":"e80e3ae","msg":"docs: simplify README (425 → 120 lines)","branch":"main","ts":"2026-03-10T17:53:26Z"}
+{"worker":"main","sha":"5adf71b","msg":"docs: add worker spawning encouragement to seed template","branch":"main","ts":"2026-03-10T17:54:15Z"}
+{"worker":"main","sha":"b8deb3e","msg":"feat(deep-review): v2 — dynamic roles, worktree isolation, output validation, multi-verifier","branch":"main","ts":"2026-03-10T17:55:54Z"}
+{"worker":"main","sha":"66c49f4","msg":"refactor: resolve deep_review tool via DEEP_REVIEW_DIR","branch":"main","ts":"2026-03-10T17:56:40Z"}
+{"worker":"main","sha":"87b624f","msg":"refactor: support TMUX_AGENTS_DIR env var (Phase 5 rename prep)","branch":"main","ts":"2026-03-10T17:59:57Z"}
+{"worker":"main","sha":"12e2a33","msg":"refactor: watchdog as fleet extension, detect packages in setup","branch":"main","ts":"2026-03-10T18:02:05Z"}
+{"worker":"main","sha":"ad9082d","msg":"docs: clean up all docs, simplify install, add AGENTS.md symlink","branch":"main","ts":"2026-03-10T18:02:12Z"}
+{"worker":"main","sha":"8cc80f4","msg":"docs: collapse to 4 files, delete docs/ directory","branch":"main","ts":"2026-03-10T18:10:08Z"}
+{"worker":"main","sha":"eebc1f4","msg":"test: comprehensive fleet CLI tests (72 tests across 5 files)","branch":"main","ts":"2026-03-10T18:11:36Z"}
+{"worker":"main","sha":"f3b03fb","msg":"docs: strip bold/emphasis, match Warren's writing style","branch":"main","ts":"2026-03-10T18:12:27Z"}
+{"worker":"main","sha":"357a861","msg":"chore: rebuild MCP bundle after unbundling refactor","branch":"main","ts":"2026-03-10T18:14:39Z"}
+{"worker":"main","sha":"7cbf948","msg":"fix: watchdog paths use $CLAUDE_OPS_DIR, install.sh uses extensions/","branch":"main","ts":"2026-03-10T18:15:43Z"}
+{"worker":"main","sha":"3e8b3a7","msg":"docs: rewrite README as system hub with package links","branch":"main","ts":"2026-03-10T18:21:49Z"}
+{"worker":"main","sha":"9640938","msg":"fix: auto-start Fleet Mail during setup, fix boring-mail binary/env names","branch":"main","ts":"2026-03-10T18:24:52Z"}

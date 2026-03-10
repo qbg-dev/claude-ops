@@ -1,0 +1,6 @@
+{
+  "model": "gpt-5.4",
+  "permission_mode": "read-only",
+  "runtime": "codex",
+  "report_to": "chief-of-staff"
+}

@@ -396,9 +396,15 @@ CAUTION: You touched sensitive path(s): ${SENSITIVE_MATCHES}. What exactly chang
 
 ${DEPLOY_LINES}"
     else
-      MSG="${MSG}
+      if [ -n "$DEPLOY_DOMAIN" ]; then
+        MSG="${MSG}
 
 You deployed to ${DEPLOY_TARGET} (service: ${DEPLOY_SERVICE}). Health check: curl -sf https://${DEPLOY_DOMAIN}/health"
+      else
+        MSG="${MSG}
+
+You deployed to ${DEPLOY_TARGET} (service: ${DEPLOY_SERVICE}). Set FLEET_PROD_DOMAIN/FLEET_TEST_DOMAIN to enable health check verification."
+      fi
     fi
   fi
 

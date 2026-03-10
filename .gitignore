@@ -46,3 +46,8 @@ plugins/
 node_modules/
 bun.lock
 relay-secret
+
+# Removed junk (prevent re-tracking)
+.annotations/
+claude_files/
+*.annotations.*

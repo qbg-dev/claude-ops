@@ -1,9 +1,0 @@
-{
-  "tasks": {
-    "w1-a": { "status": "completed", "description": "Wave 1 task A", "blockedBy": [], "owner": null, "steps": [], "completed_steps": [], "metadata": {} },
-    "w1-b": { "status": "completed", "description": "Wave 1 task B", "blockedBy": [], "owner": null, "steps": [], "completed_steps": [], "metadata": {} },
-    "w2-a": { "status": "in_progress", "description": "Wave 2 task A", "blockedBy": [], "owner": "worker-1", "steps": [], "completed_steps": [], "metadata": {} },
-    "w2-b": { "status": "pending", "description": "Wave 2 task B", "blockedBy": [], "owner": null, "steps": [], "completed_steps": [], "metadata": {} },
-    "w3-a": { "status": "pending", "description": "Wave 3 task A", "blockedBy": [], "owner": null, "steps": [], "completed_steps": [], "metadata": {} }
-  }
-}
