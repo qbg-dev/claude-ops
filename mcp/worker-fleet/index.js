@@ -23196,7 +23196,7 @@ import { join as join13 } from "path";
 import { spawnSync as spawnSync4 } from "child_process";
 function registerReviewTools(server) {
   server.registerTool("deep_review", {
-    description: "Launch a multi-pass deep review pipeline (v3). Workers follow investigation protocols with structured attack vectors, confidence scoring, and chain-of-thought evidence. Context pre-pass gathers static analysis, dependency graphs, test coverage, and git blame context. Judge agent does adversarial validation. Reads REVIEW.md for project-specific 'Always Flag'/'Never Flag' rules. Material is ADDITIVE \u2014 combine scope (git diff) and content (files). `scope` auto-detects: branch=diff since branch, SHA=commit, 'uncommitted'=working changes, 'pr:N'=PR. Graduated voting uses confidence + votes. Auto-skips trivial changes (lockfile-only, <5 lines). Smart focus auto-detects claude-md and silent-failure specializations. Emoji severity markers (\uD83D\uDD34\uD83D\uDFE1\uD83D\uDD35\uD83D\uDFE3) in reports. Pre-existing issues tracked separately via blame context. Creates dedicated tmux session.",
+    description: "Launch a multi-pass deep review pipeline (v4). NEW in v2: dynamic role designer (Sonnet designs optimal team composition), worktree isolation (fixes on separate branch), inter-worker communication (file-based comms), post-exit output validation (JSON schema enforcement), multi-verifier dispatch (chrome/curl/test/script verifiers in parallel), lightweight static analysis (oxlint/biome/tsc auto-detect). Workers follow investigation protocols with structured attack vectors, confidence scoring, chain-of-thought evidence, and self-verification via subagents. Context pre-pass gathers static analysis, dependency graphs, test coverage, and git blame context. Judge agent does adversarial validation. Material is ADDITIVE. Use --v1 for legacy static focus areas. RECOMMENDATION: launch deep review then continue working on other tasks \u2014 it runs in the background and catches gnarly bugs while you handle generic issues.",
     inputSchema: {
       scope: exports_external.string().optional().describe("Git diff scope. Auto-detects: branch name (e.g. 'main'), commit SHA, 'uncommitted', 'pr:42'. Default: HEAD if no content. Additive with content."),
       content: exports_external.union([exports_external.string(), exports_external.array(exports_external.string())]).optional().describe("File path(s) to review. Comma-separated string or array. Additive with scope."),
@@ -23209,7 +23209,10 @@ function registerReviewTools(server) {
       no_context: exports_external.boolean().optional().describe("Skip context pre-pass (static analysis, dependency graph, test coverage). Default: false."),
       force: exports_external.boolean().optional().describe("Force review even if auto-skip would trigger (lockfile-only changes, <5 substantive lines). Default: false."),
       verify: exports_external.boolean().optional().describe("Enable verification phase after review. Spawns a verifier worker that deploys to a test slot, walks the verification checklist, writes scripts/tests, and tests all enumerated paths. Default: false."),
-      verify_roles: exports_external.array(exports_external.string()).optional().describe("User roles to test as during verification (e.g. ['admin', 'shenlan-pm']). Only used when verify=true.")
+      verify_roles: exports_external.array(exports_external.string()).optional().describe("User roles to test as during verification (e.g. ['admin', 'shenlan-pm']). Only used when verify=true."),
+      v1: exports_external.boolean().optional().describe("Use v1 mode: static focus areas, no role designer, no worktree isolation. Default: false."),
+      max_workers: exports_external.number().optional().describe("Max worker budget for the role designer. Default: passes \xD7 8."),
+      no_worktree: exports_external.boolean().optional().describe("Skip worktree isolation \u2014 run workers directly in PROJECT_ROOT. Default: false.")
     }
   }, async ({
     scope,
@@ -23223,12 +23226,16 @@ function registerReviewTools(server) {
     no_context,
     force,
     verify,
-    verify_roles
+    verify_roles,
+    v1,
+    max_workers,
+    no_worktree
   }) => {
     try {
-      const scriptPath = join13(CLAUDE_OPS, "scripts", "deep-review.sh");
+      const deepReviewDir = process.env.DEEP_REVIEW_DIR || (existsSync10(join13(HOME, ".deep-review", "scripts", "deep-review.sh")) ? join13(HOME, ".deep-review") : null) || process.env.CLAUDE_OPS_DIR || join13(HOME, ".claude-ops");
+      const scriptPath = join13(deepReviewDir, "scripts", "deep-review.sh");
       if (!existsSync10(scriptPath)) {
-        throw new Error(`deep-review.sh not found at ${scriptPath}`);
+        throw new Error(`deep-review.sh not found at ${scriptPath}. Install deep-review to ~/.deep-review/ or set DEEP_REVIEW_DIR.`);
       }
       const args = [];
       if (scope) {
@@ -23268,6 +23275,15 @@ function registerReviewTools(server) {
       if (verify_roles?.length) {
         args.push("--verify-roles", verify_roles.join(","));
       }
+      if (v1) {
+        args.push("--v1");
+      }
+      if (max_workers) {
+        args.push("--max-workers", String(max_workers));
+      }
+      if (no_worktree) {
+        args.push("--no-worktree");
+      }
       if (content) {
         const paths = Array.isArray(content) ? content : content.split(",");
         for (const p of paths) {
@@ -23281,7 +23297,7 @@ function registerReviewTools(server) {
       const launchResult = spawnSync4("bash", [scriptPath, ...args], {
         encoding: "utf-8",
         cwd: PROJECT_ROOT,
-        env: { ...process.env, PROJECT_ROOT },
+        env: { ...process.env, PROJECT_ROOT, DEEP_REVIEW_DIR: deepReviewDir },
         timeout: 120000
       });
       if (launchResult.status !== 0 && launchResult.status !== null) {
@@ -23332,9 +23348,16 @@ function registerReviewTools(server) {
             `        tmux a -t ${reviewSession}`,
             ``,
             `Pipeline: ${totalWorkers} workers -> bucket -> majority vote (>=2/${passesPerFocus} per focus group) -> validate -> dedup -> autofix -> report + notify`,
-            verify ? `Verify: enabled (verifier spawns after coordinator, tests all enumerated paths)` : `Verify: disabled`,
+            v1 ? `Mode: v1 (static focus areas)` : `Mode: v2 (dynamic roles, worktree isolation, output validation)`,
+            verify ? `Verify: enabled (4 specialized verifiers: chrome, curl, test, script)` : `Verify: disabled`,
             `Report: ${sessionDir}/report.md`,
-            verify ? `Verification: ${sessionDir}/verification-results.md` : ""
+            verify ? `Verification: ${sessionDir}/verification-*-results.json` : "",
+            ``,
+            `RECOMMENDATION: Deep review takes 15-25 min. While it runs:`,
+            `\u2022 Work on generic/simple issues from your task list`,
+            `\u2022 Launch targeted quick reviews on specific files`,
+            `\u2022 Continue development \u2014 deep review catches gnarly bugs in the background`,
+            `You'll be notified when results are ready.`
           ].join(`
 `)
         }]

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { existsSync } from "fs";
 import { join } from "path";
 import { spawnSync } from "child_process";
-import { HOME, PROJECT_ROOT, CLAUDE_OPS } from "../config";
+import { HOME, PROJECT_ROOT } from "../config";
 
 export function registerReviewTools(server: McpServer): void {
 
@@ -93,6 +93,9 @@ server.registerTool(
     force,
     verify,
     verify_roles,
+    v1,
+    max_workers,
+    no_worktree,
   }: {
     scope?: string;
     content?: string | string[];
@@ -111,9 +114,14 @@ server.registerTool(
     no_worktree?: boolean;
   }) => {
     try {
-      const scriptPath = join(CLAUDE_OPS, "scripts", "deep-review.sh");
+      // Resolve deep-review package: DEEP_REVIEW_DIR env > ~/.deep-review > CLAUDE_OPS fallback
+      const deepReviewDir = process.env.DEEP_REVIEW_DIR
+        || (existsSync(join(HOME, ".deep-review", "scripts", "deep-review.sh")) ? join(HOME, ".deep-review") : null)
+        || process.env.CLAUDE_OPS_DIR
+        || join(HOME, ".claude-ops");
+      const scriptPath = join(deepReviewDir, "scripts", "deep-review.sh");
       if (!existsSync(scriptPath)) {
-        throw new Error(`deep-review.sh not found at ${scriptPath}`);
+        throw new Error(`deep-review.sh not found at ${scriptPath}. Install deep-review to ~/.deep-review/ or set DEEP_REVIEW_DIR.`);
       }
 
       const args: string[] = [];
@@ -183,7 +191,7 @@ server.registerTool(
       const launchResult = spawnSync("bash", [scriptPath, ...args], {
         encoding: "utf-8",
         cwd: PROJECT_ROOT,
-        env: { ...process.env, PROJECT_ROOT },
+        env: { ...process.env, PROJECT_ROOT, DEEP_REVIEW_DIR: deepReviewDir },
         timeout: 120_000, // 2 min — context pre-pass (tsc + deps) can be slow
       });
 
