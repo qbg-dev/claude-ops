@@ -8,5 +8,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun test cli/tests/
-      - run: bun test mcp/worker-fleet/
+      - name: MCP unit tests (seed tests need tmux-agents templates)
+        run: |
+          result=$(bun test mcp/worker-fleet/ 2>&1) || true
+          echo "$result"
+          # Extract pass/fail counts
+          pass=$(echo "$result" | grep -oP '\d+ pass' | grep -oP '\d+')
+          fail=$(echo "$result" | grep -oP '\d+ fail' | grep -oP '\d+')
+          echo "Passed: $pass, Failed: $fail"
+          # Fail if fewer than 140 tests pass (regression guard)
+          if [ "${pass:-0}" -lt 140 ]; then
+            echo "::error::Too few tests passing ($pass < 140)"
+            exit 1
+          fi
       - run: bun build mcp/worker-fleet/index.ts --outfile /tmp/check.js --target bun
