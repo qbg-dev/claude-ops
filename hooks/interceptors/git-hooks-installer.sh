@@ -87,11 +87,13 @@ for i in $(seq 0 $(( HOOK_COUNT - 1 ))); do
 
   TARGET_FILE="$TARGET_HOOKS_DIR/$HOOK_NAME"
 
-  # Idempotent: skip if target exists and md5 matches
+  # Idempotent: skip if target exists and md5 matches.
+  # Guard: if md5 is unavailable (both commands fail), force reinstall rather than silently skipping.
   if [ -f "$TARGET_FILE" ]; then
     SOURCE_MD5=$(md5 -q "$ACTUAL_SOURCE" 2>/dev/null || md5sum "$ACTUAL_SOURCE" 2>/dev/null | cut -d' ' -f1)
     TARGET_MD5=$(md5 -q "$TARGET_FILE" 2>/dev/null || md5sum "$TARGET_FILE" 2>/dev/null | cut -d' ' -f1)
-    [ "$SOURCE_MD5" = "$TARGET_MD5" ] && continue
+    # Only skip if both hashes are non-empty and equal (avoids silent skip when md5 unavailable)
+    [ -n "$SOURCE_MD5" ] && [ -n "$TARGET_MD5" ] && [ "$SOURCE_MD5" = "$TARGET_MD5" ] && continue
   fi
 
   # Install: copy and make executable

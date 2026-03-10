@@ -39,18 +39,22 @@ _NORM="$COMMAND"
 _NORM="${_NORM#env }"
 _NORM="${_NORM#/usr/bin/env }"
 _NORM="${_NORM#command }"
-# bash -c "..." / bash -c '...' — extract the inner command
-if [[ "$_NORM" == bash\ -c\ * ]]; then
-  _INNER="${_NORM#bash -c }"
+# Unwrap shell -c "..." wrappers — loop to handle double-nesting (e.g. bash -c 'bash -c "..."').
+# Without the loop, a double-nested command leaves the inner git preceded by '"' which bypasses regex checks.
+# Handles: bash, sh, zsh, dash.
+_UNWRAP_LIMIT=3
+_UNWRAP_COUNT=0
+while [[ "$_NORM" == bash\ -c\ * || "$_NORM" == sh\ -c\ * || "$_NORM" == zsh\ -c\ * || "$_NORM" == dash\ -c\ * ]] && [ "$_UNWRAP_COUNT" -lt "$_UNWRAP_LIMIT" ]; do
+  _INNER="${_NORM#*-c }"
   _INNER="${_INNER#\"}" ; _INNER="${_INNER%\"}"
   _INNER="${_INNER#\'}" ; _INNER="${_INNER%\'}"
   _NORM="$_INNER"
-fi
+  _UNWRAP_COUNT=$((_UNWRAP_COUNT + 1))
+done
 COMMAND_NORM="$_NORM"
 
 # ── Check: git commit --amend ──
-if echo "$COMMAND_NORM" | grep -qE '(^|\s|&&|;|\|)\s*git\s+commit\s+.*--amend' || \
-   echo "$COMMAND_NORM" | grep -qE '(^|\s|&&|;|\|)\s*git\s+commit\s+--amend'; then
+if echo "$COMMAND_NORM" | grep -qE '(^|\s|&&|;|\|)\s*git\s+commit\s+.*--amend'; then
   hook_block "Blocked: \`git commit --amend\` is not allowed. Use \`git revert\` to undo a commit, or create a new commit instead."
   exit 0
 fi
