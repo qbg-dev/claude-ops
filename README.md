@@ -23,12 +23,19 @@ That's it. The worker launches in a tmux pane, reads its mission, and starts wor
 
 | Tool | Install | Why |
 |------|---------|-----|
+| Claude Code | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) | The AI that runs in each worker |
 | bun | `curl -fsSL https://bun.sh/install \| bash` | Runs CLI + MCP server |
 | tmux | `brew install tmux` | Pane management |
 | git | `brew install git` | Worktree isolation |
-| cargo | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` | Build `dr-context` (deep review analysis) |
+| cargo | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` | Build `dr-context` (deep review analysis, optional) |
 
-`fleet setup` checks all of these and tells you what's missing.
+`fleet setup` checks bun, tmux, and claude, then verifies Fleet Mail connectivity.
+
+**Fleet Mail is required.** Workers use it for coordination. Set it up before running `fleet setup`:
+```bash
+fleet mail-server start                           # start a local server
+fleet mail-server connect http://server:8025      # or connect to existing
+```
 
 ## What You Get
 
@@ -152,7 +159,7 @@ See [templates/flat-worker/types/README.md](templates/flat-worker/types/README.m
 ├── bin/                          # CLI shim + compiled tools
 │   ├── fleet                     # CLI entry point (delegates to TypeScript)
 │   └── dr-context                # Compiled Rust binary (deep review analysis)
-├── cli/                          # TypeScript CLI (citty + Bun)
+├── cli/                          # TypeScript CLI (commander + Bun)
 │   ├── index.ts                  # Entry point
 │   ├── commands/                 # Subcommands (create, start, stop, ls, ...)
 │   └── lib/                      # Shared modules (config, tmux, paths, fmt)

@@ -17,14 +17,18 @@ export function register(parent: Command): void {
 
       // 1. Check dependencies
       info("Checking dependencies...");
-      for (const tool of ["bun", "tmux"]) {
-        const result = Bun.spawnSync(["which", tool], { stderr: "pipe" });
+      const deps: Array<{ name: string; hint: string }> = [
+        { name: "bun", hint: "curl -fsSL https://bun.sh/install | bash" },
+        { name: "tmux", hint: "brew install tmux" },
+        { name: "claude", hint: "https://docs.anthropic.com/en/docs/claude-code" },
+      ];
+      for (const { name, hint } of deps) {
+        const result = Bun.spawnSync(["which", name], { stderr: "pipe" });
         if (result.exitCode === 0) {
-          ok(`${tool} → ${result.stdout.toString().trim()}`);
+          ok(`${name} → ${result.stdout.toString().trim()}`);
         } else {
-          console.log(`  ${chalk.red("✗")} ${tool} not found`);
-          if (tool === "bun") console.log("    Install: curl -fsSL https://bun.sh/install | bash");
-          if (tool === "tmux") console.log("    Install: brew install tmux");
+          console.log(`  ${chalk.red("✗")} ${name} not found`);
+          console.log(`    Install: ${hint}`);
           errors++;
         }
       }
