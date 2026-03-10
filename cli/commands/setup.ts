@@ -36,16 +36,25 @@ export function register(parent: Command): void {
 
       if (errors > 0) fail("Install missing tools above, then re-run: fleet setup");
 
-      // 2. Resolve fleet repo
-      if (!existsSync(FLEET_DIR)) {
-        fail(`Fleet repo not found at ${FLEET_DIR}. Clone it first:\n  git clone <repo-url> ~/.claude-fleet`);
+      // 2. Resolve fleet repo — prefer the repo we're running from
+      let fleetDir = FLEET_DIR;
+      if (!existsSync(fleetDir)) {
+        // We might be running directly from the repo (e.g., bun run cli/index.ts setup)
+        // Detect repo root from this script's location
+        const scriptDir = import.meta.dir; // cli/commands/
+        const repoRoot = join(scriptDir, "../.."); // repo root
+        if (existsSync(join(repoRoot, "cli/index.ts")) && existsSync(join(repoRoot, "mcp/worker-fleet/index.ts"))) {
+          fleetDir = repoRoot;
+        } else {
+          fail(`Fleet repo not found at ${fleetDir}. Clone it first:\n  git clone https://github.com/qbg-dev/claude-fleet.git ~/.claude-fleet`);
+        }
       }
-      ok(`Fleet repo: ${FLEET_DIR}`);
+      ok(`Fleet repo: ${fleetDir}`);
 
       // 3. Symlinks
       info("Setting up symlinks...");
-      const realDir = Bun.spawnSync(["realpath", FLEET_DIR], { stderr: "pipe" })
-        .stdout.toString().trim() || FLEET_DIR;
+      const realDir = Bun.spawnSync(["realpath", fleetDir], { stderr: "pipe" })
+        .stdout.toString().trim() || fleetDir;
 
       if (!existsSync(join(HOME, ".claude-fleet"))) {
         Bun.spawnSync(["ln", "-sfn", realDir, join(HOME, ".claude-fleet")]);
@@ -116,10 +125,10 @@ export function register(parent: Command): void {
       }
 
       // 6. Install dependencies
-      const pkgJson = join(FLEET_DIR, "package.json");
+      const pkgJson = join(fleetDir, "package.json");
       if (existsSync(pkgJson)) {
         info("Installing dependencies...");
-        const install = Bun.spawnSync(["bun", "install"], { cwd: FLEET_DIR, stderr: "pipe" });
+        const install = Bun.spawnSync(["bun", "install"], { cwd: fleetDir, stderr: "pipe" });
         if (install.exitCode === 0) {
           ok("Dependencies installed");
         } else {
@@ -174,7 +183,7 @@ export function register(parent: Command): void {
       // 8. Register MCP server (after Fleet Mail so FLEET_MAIL_URL is available)
       info("Registering MCP server...");
       const settingsFile = join(HOME, ".claude/settings.json");
-      const mcpScript = join(FLEET_DIR, "mcp/worker-fleet/index.ts");
+      const mcpScript = join(fleetDir, "mcp/worker-fleet/index.ts");
       const bunPath = Bun.spawnSync(["which", "bun"]).stdout.toString().trim();
 
       if (!existsSync(mcpScript)) {
@@ -212,7 +221,7 @@ export function register(parent: Command): void {
           const stderrText = await new Response(mcpProc.stderr).text();
           const firstLine = stderrText.split("\n").filter(l => l.trim())[0] || "unknown error";
           warn(`MCP server exited with code ${mcpProc.exitCode}: ${firstLine}`);
-          console.log(`    Try: cd ${join(FLEET_DIR, "mcp/worker-fleet")} && bun install`);
+          console.log(`    Try: cd ${join(fleetDir, "mcp/worker-fleet")} && bun install`);
         } else {
           mcpProc.kill();
           ok("MCP server verified (starts cleanly)");
@@ -325,7 +334,7 @@ export function register(parent: Command): void {
       info("Detecting optional plugins...");
 
       // Watchdog plugin
-      const watchdogPlugin = join(FLEET_DIR, "extensions/watchdog/watchdog.sh");
+      const watchdogPlugin = join(fleetDir, "extensions/watchdog/watchdog.sh");
       if (existsSync(watchdogPlugin)) {
         const watchdogPlist = join(HOME, "Library/LaunchAgents/com.tmux-agents.watchdog.plist");
         const legacyPlist = join(HOME, "Library/LaunchAgents/com.claude-ops.harness-watchdog.plist");
@@ -333,7 +342,7 @@ export function register(parent: Command): void {
           ok("Watchdog: installed (launchd daemon active)");
         } else {
           warn("Watchdog: found but not installed as daemon");
-          console.log(`    Install: bash ${join(FLEET_DIR, "extensions/watchdog/install.sh")}`);
+          console.log(`    Install: bash ${join(fleetDir, "extensions/watchdog/install.sh")}`);
         }
       } else {
         info("Watchdog: not found (optional — supervises long-running workers)");
@@ -343,7 +352,7 @@ export function register(parent: Command): void {
       const deepReviewDir = process.env.DEEP_REVIEW_DIR || join(HOME, ".deep-review");
       if (existsSync(join(deepReviewDir, "scripts/deep-review.sh"))) {
         ok(`Deep review: ${deepReviewDir}`);
-      } else if (existsSync(join(FLEET_DIR, "scripts/deep-review.sh"))) {
+      } else if (existsSync(join(fleetDir, "scripts/deep-review.sh"))) {
         ok("Deep review: bundled (in fleet repo)");
       } else {
         info("Deep review: not found (optional — multi-pass adversarial code review)");

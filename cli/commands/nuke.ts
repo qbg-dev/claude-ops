@@ -167,14 +167,14 @@ function settingsHasFleetEntries(): { hasMcp: boolean; hasHooks: boolean } {
     const hasMcp = !!settings.mcpServers?.["worker-fleet"];
 
     let hasHooks = false;
-    const fleetPatterns = ["~/.claude-fleet/", "~/.claude-ops/", "~/.claude-hooks/"];
-    // Hooks can be in various arrays
+    const fleetPatterns = ["/.claude-fleet/", "/.claude-ops/", "/.claude-hooks/", "/.tmux-agents/"];
     for (const key of Object.keys(settings.hooks || {})) {
       const hookArray = settings.hooks[key];
       if (!Array.isArray(hookArray)) continue;
-      for (const hook of hookArray) {
-        const cmd = hook.command || "";
-        if (fleetPatterns.some((p) => cmd.includes(p))) {
+      for (const entry of hookArray) {
+        const cmds: string[] = (entry.hooks || []).map((h: any) => h.command || "");
+        if (entry.command) cmds.push(entry.command);
+        if (cmds.some((cmd: string) => fleetPatterns.some((p) => cmd.includes(p)))) {
           hasHooks = true;
           break;
         }
@@ -213,7 +213,10 @@ function cleanSettings(dryRun: boolean): void {
   }
 
   let modified = false;
-  const fleetPatterns = ["~/.claude-fleet/", "~/.claude-ops/", "~/.claude-hooks/"];
+  // Match both tilde and expanded paths
+  const fleetPatterns = [
+    "/.claude-fleet/", "/.claude-ops/", "/.claude-hooks/", "/.tmux-agents/",
+  ];
 
   // Remove mcpServers["worker-fleet"]
   if (settings.mcpServers?.["worker-fleet"]) {
@@ -233,9 +236,11 @@ function cleanSettings(dryRun: boolean): void {
       if (!Array.isArray(hookArray)) continue;
 
       const before = hookArray.length;
-      const filtered = hookArray.filter((hook: any) => {
-        const cmd = hook.command || "";
-        return !fleetPatterns.some((p) => cmd.includes(p));
+      const filtered = hookArray.filter((entry: any) => {
+        // Hook entries are { hooks: [{ type, command }] } — check nested commands
+        const cmds: string[] = (entry.hooks || []).map((h: any) => h.command || "");
+        if (entry.command) cmds.push(entry.command); // fallback for flat format
+        return !cmds.some((cmd: string) => fleetPatterns.some((p) => cmd.includes(p)));
       });
       const removed = before - filtered.length;
 
