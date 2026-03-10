@@ -1,11 +1,11 @@
 # Event Bus
 
-The claude-ops event bus is a JSONL append-log with pluggable side-effects. Agents publish typed events; side-effect scripts run asynchronously for each event type.
+The claude-fleet event bus is a JSONL append-log with pluggable side-effects. Agents publish typed events; side-effect scripts run asynchronously for each event type.
 
 ## Setup
 
 ```bash
-source ~/.claude-ops/lib/event-bus.sh
+source ~/.claude-fleet/lib/event-bus.sh
 ```
 
 The bus resolves its directory from `PROJECT_ROOT` (or `git rev-parse --show-toplevel`). Project buses live at `.claude/bus/`.
@@ -55,7 +55,7 @@ Plus your payload fields.
 
 ## Side-Effects
 
-Side-effects are declared per event type in `.claude/bus/schema.json` (or `~/.claude-ops/bus/schema.json` as fallback). Scripts live in `~/.claude-ops/bus/side-effects/`.
+Side-effects are declared per event type in `.claude/bus/schema.json` (or `~/.claude-fleet/bus/schema.json` as fallback). Scripts live in `~/.claude-fleet/bus/side-effects/`.
 
 ```json
 {
@@ -164,7 +164,7 @@ bus_compact
 | `agent.crash-loop` | notify_assignee, notify_tmux_if_urgent | `canonical` |
 | `agent.respawned` | notify_tmux_if_urgent | `canonical`, `pane_id` |
 
-Full reference: `.claude/bus/schema.json` in your project, or `~/.claude-ops/bus/schema.json`.
+Full reference: `.claude/bus/schema.json` in your project, or `~/.claude-fleet/bus/schema.json`.
 
 ## Named Filters
 
@@ -189,7 +189,7 @@ bus_query_filter "agent-state"
 `harness-jq.sh` provides `hq_send` as a shorthand for coordinator→agent messaging:
 
 ```bash
-source ~/.claude-ops/lib/harness-jq.sh
+source ~/.claude-fleet/lib/harness-jq.sh
 
 # Send a directive to a worker
 hq_send "my-harness" "my-harness/worker-1" "directive" "Focus on T-3 next"

@@ -58,31 +58,31 @@ MCP server (per-project via .mcp.json)
 
 ## Watchdog
 
-Runs via launchd (`com.claude-ops.harness-watchdog`), checks every 30s.
+Runs via launchd (`com.claude-fleet.harness-watchdog`), checks every 30s.
 
-**Stuck detection**: Liveness heartbeat hook (fires on every tool call, prompt submit, stop) writes epoch to `~/.claude-ops/state/watchdog-runtime/{worker}/liveness`. Watchdog checks: if `now - liveness > 60s` → stuck. Scrollback MD5 diff as secondary signal.
+**Stuck detection**: Liveness heartbeat hook (fires on every tool call, prompt submit, stop) writes epoch to `~/.claude-fleet/state/watchdog-runtime/{worker}/liveness`. Watchdog checks: if `now - liveness > 60s` → stuck. Scrollback MD5 diff as secondary signal.
 
 **Respawn**: Kill Claude → `_record_relaunch(worker, reason)` (increments `watchdog_relaunches` + writes `last_relaunch.{at, reason}` in registry) → touch liveness → rebuild command → send to pane → wait for TUI → inject seed.
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.claude-ops.harness-watchdog  # restart
-bash ~/.claude-ops/scripts/harness-watchdog.sh --status              # state table
+launchctl kickstart -k gui/$(id -u)/com.claude-fleet.harness-watchdog  # restart
+bash ~/.claude-fleet/scripts/harness-watchdog.sh --status              # state table
 ```
 
 ## Development
 
 ```bash
 # Edit + rebuild MCP
-cd ~/.claude-ops/mcp/worker-fleet
+cd ~/.claude-fleet/mcp/worker-fleet
 vim index.ts
 bun build index.ts --target=node --outfile=index.js
 
 # Tests
-bash ~/.claude-ops/tests/run-all.sh
+bash ~/.claude-fleet/tests/run-all.sh
 
 # Hooks
-bash ~/.claude-ops/scripts/setup-hooks.sh      # install
-bash ~/.claude-ops/scripts/lint-hooks.sh --fix  # verify + repair
+bash ~/.claude-fleet/scripts/setup-hooks.sh      # install
+bash ~/.claude-fleet/scripts/lint-hooks.sh --fix  # verify + repair
 ```
 
 ## mission_authority

@@ -1,12 +1,12 @@
-# Show HN: claude-ops — agent harness infrastructure for Claude Code
+# Show HN: claude-fleet — agent harness infrastructure for Claude Code
 
-**Title**: Show HN: claude-ops — persistent agent harnesses built on Claude Code's native hooks
+**Title**: Show HN: claude-fleet — persistent agent harnesses built on Claude Code's native hooks
 
 ---
 
 I've been running Claude Code agents on long tasks (multi-day coding projects, doc generation, audit pipelines) and kept running into the same problem: agents stop unexpectedly, lose context, and you have to manually restart them with a fresh prompt.
 
-claude-ops solves this by sitting on top of Claude Code's built-in hook system. Four hooks—PreToolUse, PostToolUse, Stop, UserPromptSubmit—become the control plane:
+claude-fleet solves this by sitting on top of Claude Code's built-in hook system. Four hooks—PreToolUse, PostToolUse, Stop, UserPromptSubmit—become the control plane:
 
 **The Stop hook is the core mechanism.** When Claude tries to stop, the hook fires. If there are tasks left, it blocks the stop and shows the agent its current task and what's next. The agent reads this and keeps working. This is why agents don't need polling loops or external orchestrators—the hook _is_ the loop.
 
@@ -22,10 +22,10 @@ The design:
 
 Everything is bash + jq + tmux. The hooks are ~200 lines each. The install is a single curl command.
 
-This repo's own docs are maintained by an oss-steward agent running on claude-ops.
+This repo's own docs are maintained by an oss-steward agent running on claude-fleet.
 
-GitHub: https://github.com/qbg-dev/claude-ops
-Getting started: https://github.com/qbg-dev/claude-ops/blob/main/docs/getting-started.md
+GitHub: https://github.com/qbg-dev/claude-fleet
+Getting started: https://github.com/qbg-dev/claude-fleet/blob/main/docs/getting-started.md
 
 ---
 

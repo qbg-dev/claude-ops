@@ -4,7 +4,7 @@ Four components. All shell scripts + JSON + one TypeScript MCP server.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                           claude-ops                                 │
+│                           claude-fleet                                 │
 │                                                                      │
 │  ┌──────────────────┐    ┌──────────────────┐   ┌────────────────┐  │
 │  │  MCP Server       │    │    Watchdog       │   │     Hooks      │  │
@@ -24,7 +24,7 @@ Four components. All shell scripts + JSON + one TypeScript MCP server.
 │  │  tmux pane ←→ git worktree ←→ Claude session ←→ auto-memory   │  │
 │  │                                                                │  │
 │  │  Config: {project}/.claude/workers/registry.json               │  │
-│  │  State:  ~/.claude-ops/state/                                  │  │
+│  │  State:  ~/.claude-fleet/state/                                  │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -98,10 +98,10 @@ Watchdog sees graceful-stop:
 
 | Location | What | Lifetime |
 |----------|------|----------|
-| `~/.claude-ops/` | Infrastructure (this repo) | All projects |
+| `~/.claude-fleet/` | Infrastructure (this repo) | All projects |
 | `{project}/.claude/workers/` | Worker config + state | Project lifetime |
 | `{project}/.claude/workers/{name}/inbox.jsonl` | Durable messages | Append-only |
-| `~/.claude-ops/state/sessions/` | Per-session runtime | ~24h TTL |
+| `~/.claude-fleet/state/sessions/` | Per-session runtime | ~24h TTL |
 | `~/.claude/projects/{path}/memory/` | Claude auto-memory per worktree | Permanent |
 
 ## Legacy: Harness System
