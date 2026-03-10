@@ -275,9 +275,9 @@ if [ "$_phase_b_triggered" = "true" ]; then
     DEPLOY_TARGET=$(jq -r '.target // "unknown"' "$DEPLOY_FLAG" 2>/dev/null || echo "unknown")
     DEPLOY_SERVICE=$(jq -r '.service // "all"' "$DEPLOY_FLAG" 2>/dev/null || echo "all")
     if [ "$DEPLOY_TARGET" = "prod" ]; then
-      DEPLOY_DOMAIN="wx.baoyuansmartlife.com"
+      DEPLOY_DOMAIN="${FLEET_PROD_DOMAIN:-}"
     else
-      DEPLOY_DOMAIN="test.baoyuansmartlife.com"
+      DEPLOY_DOMAIN="${FLEET_TEST_DOMAIN:-}"
     fi
     # Consume the flag
     rm -f "$DEPLOY_FLAG"

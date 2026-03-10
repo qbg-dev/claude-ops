@@ -201,14 +201,14 @@ run_gate_wt() {
     | HARNESS_STATE_DIR="$MOCK_STATE_DIR" PROJECT_ROOT="$_WORKTREE" bash "$HOOK" 2>/dev/null
 }
 
-RESULT=$(run_gate_wt "Bash" '{"command":"sshpass -p secret ssh root@120.77.216.196 ls"}')
+RESULT=$(FLEET_PROD_IP="198.51.100.10" run_gate_wt "Bash" '{"command":"sshpass -p secret ssh root@198.51.100.10 ls"}')
 assert "prod IP gate: blocks direct prod ssh from worktree" "block" "$RESULT"
 
-RESULT=$(run_gate_wt "Bash" '{"command":"rsync -av dist/ root@120.77.216.196:/opt/app/"}')
+RESULT=$(FLEET_PROD_IP="198.51.100.10" run_gate_wt "Bash" '{"command":"rsync -av dist/ root@198.51.100.10:/opt/app/"}')
 assert "prod IP gate: blocks rsync to prod from worktree" "block" "$RESULT"
 
 # Non-prod IP should still be allowed (denied pattern is never-match-xyz*)
-RESULT=$(run_gate_wt "Bash" '{"command":"ssh root@8.129.82.75 ls"}')
+RESULT=$(FLEET_PROD_IP="198.51.100.10" run_gate_wt "Bash" '{"command":"ssh root@198.51.100.20 ls"}')
 assert_empty "prod IP gate: non-prod IP allowed from worktree" "$RESULT"
 
 rm -rf "$_MAIN_REPO" "$_WORKTREE"

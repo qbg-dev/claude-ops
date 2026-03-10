@@ -525,8 +525,8 @@ describe("generateSeedContent", () => {
     const seed = generateSeedContent();
     expect(seed).not.toContain("baoyuansmartlife");
     expect(seed).not.toContain("wx.baoyuan");
-    expect(seed).not.toContain("8.129.82.75");
-    expect(seed).not.toContain("120.77.216.196");
+    // Verify no real infrastructure IPs leak into seed content
+    expect(seed).not.toMatch(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
   });
 });
 

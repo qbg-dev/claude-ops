@@ -80,11 +80,11 @@ SAMPLE_USAGE_ZERO = """
 
 SAMPLE_CONFIG = {
     "accounts": {
-        "harvard": {"email": "wzhu@college.harvard.edu", "session_cap": 1.0, "weekly_cap": 1.0},
-        "personal": {"email": "fuchengwarrenzhu@gmail.com", "session_cap": 0.90, "weekly_cap": 0.93},
-        "warren": {"email": "warrenzhu513@gmail.com", "session_cap": 1.0, "weekly_cap": 1.0},
+        "work": {"email": "alice@work.example.com", "session_cap": 1.0, "weekly_cap": 1.0},
+        "personal": {"email": "alice.dev@gmail.example.com", "session_cap": 0.90, "weekly_cap": 0.93},
+        "main": {"email": "alice@example.com", "session_cap": 1.0, "weekly_cap": 1.0},
     },
-    "active": "warren",
+    "active": "main",
 }
 
 SAMPLE_CREDS = '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-abc","refreshToken":"sk-ant-ort01-xyz","expiresAt":9999999999999,"scopes":["scope1"],"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}'
@@ -365,9 +365,9 @@ class TestEmailToLabel(unittest.TestCase):
     """Test email_to_label lookup."""
 
     def test_found(self):
-        self.assertEqual(cm.email_to_label("wzhu@college.harvard.edu", SAMPLE_CONFIG), "harvard")
-        self.assertEqual(cm.email_to_label("fuchengwarrenzhu@gmail.com", SAMPLE_CONFIG), "personal")
-        self.assertEqual(cm.email_to_label("warrenzhu513@gmail.com", SAMPLE_CONFIG), "warren")
+        self.assertEqual(cm.email_to_label("alice@work.example.com", SAMPLE_CONFIG), "work")
+        self.assertEqual(cm.email_to_label("alice.dev@gmail.example.com", SAMPLE_CONFIG), "personal")
+        self.assertEqual(cm.email_to_label("alice@example.com", SAMPLE_CONFIG), "main")
 
     def test_not_found(self):
         self.assertIsNone(cm.email_to_label("unknown@example.com", SAMPLE_CONFIG))
@@ -377,24 +377,24 @@ class TestResolve(unittest.TestCase):
     """Test resolve() — accepts label, email, or email prefix."""
 
     def test_resolve_by_label(self):
-        label, email = cm.resolve("harvard", SAMPLE_CONFIG)
-        self.assertEqual(label, "harvard")
-        self.assertEqual(email, "wzhu@college.harvard.edu")
+        label, email = cm.resolve("work", SAMPLE_CONFIG)
+        self.assertEqual(label, "work")
+        self.assertEqual(email, "alice@work.example.com")
 
     def test_resolve_by_email(self):
-        label, email = cm.resolve("wzhu@college.harvard.edu", SAMPLE_CONFIG)
-        self.assertEqual(label, "harvard")
-        self.assertEqual(email, "wzhu@college.harvard.edu")
+        label, email = cm.resolve("alice@work.example.com", SAMPLE_CONFIG)
+        self.assertEqual(label, "work")
+        self.assertEqual(email, "alice@work.example.com")
 
     def test_resolve_by_email_prefix(self):
-        label, email = cm.resolve("wzhu", SAMPLE_CONFIG)
-        self.assertEqual(label, "harvard")
-        self.assertEqual(email, "wzhu@college.harvard.edu")
+        label, email = cm.resolve("alice", SAMPLE_CONFIG)
+        self.assertEqual(label, "work")
+        self.assertEqual(email, "alice@work.example.com")
 
     def test_resolve_full_personal_email(self):
-        label, email = cm.resolve("fuchengwarrenzhu@gmail.com", SAMPLE_CONFIG)
+        label, email = cm.resolve("alice.dev@gmail.example.com", SAMPLE_CONFIG)
         self.assertEqual(label, "personal")
-        self.assertEqual(email, "fuchengwarrenzhu@gmail.com")
+        self.assertEqual(email, "alice.dev@gmail.example.com")
 
     def test_resolve_unknown(self):
         label, email = cm.resolve("nonexistent@example.com", SAMPLE_CONFIG)
@@ -406,7 +406,7 @@ class TestActiveEmail(unittest.TestCase):
     """Test active_email() helper."""
 
     def test_returns_email(self):
-        self.assertEqual(cm.active_email(SAMPLE_CONFIG), "warrenzhu513@gmail.com")
+        self.assertEqual(cm.active_email(SAMPLE_CONFIG), "alice@example.com")
 
     def test_no_active(self):
         cfg = {"accounts": SAMPLE_CONFIG["accounts"]}
@@ -421,25 +421,25 @@ class TestConfigIO(unittest.TestCase):
     def test_load_save_config(self):
         with TempAccountsDir():
             cfg = cm.load_config()
-            self.assertEqual(cfg["active"], "warren")
-            self.assertIn("harvard", cfg["accounts"])
+            self.assertEqual(cfg["active"], "main")
+            self.assertIn("work", cfg["accounts"])
 
-            cfg["active"] = "harvard"
+            cfg["active"] = "work"
             cm.save_config(cfg)
 
             cfg2 = cm.load_config()
-            self.assertEqual(cfg2["active"], "harvard")
+            self.assertEqual(cfg2["active"], "work")
 
     def test_load_save_cache(self):
         with TempAccountsDir():
             cache = cm.load_cache()
             self.assertEqual(cache, {})
 
-            cache["harvard"] = {"session_pct": 50, "weekly_pct": 30}
+            cache["work"] = {"session_pct": 50, "weekly_pct": 30}
             cm.save_cache(cache)
 
             cache2 = cm.load_cache()
-            self.assertEqual(cache2["harvard"]["session_pct"], 50)
+            self.assertEqual(cache2["work"]["session_pct"], 50)
 
     def test_save_creds_file_permissions(self):
         with TempAccountsDir() as tmpdir:
@@ -464,13 +464,13 @@ class TestConfigIO(unittest.TestCase):
 class TestCmdSave(unittest.TestCase):
     """Test save command."""
 
-    @patch.object(cm, 'auth_status', return_value={"loggedIn": True, "email": "warrenzhu513@gmail.com"})
+    @patch.object(cm, 'auth_status', return_value={"loggedIn": True, "email": "alice@example.com"})
     @patch.object(cm, 'keychain_read', return_value=SAMPLE_CREDS)
     def test_save_auto_detect_label(self, mock_kr, mock_as):
         with TempAccountsDir() as tmpdir:
             result = cm.cmd_save([])
             self.assertEqual(result, 0)
-            self.assertTrue((tmpdir / "warren.json").exists())
+            self.assertTrue((tmpdir / "main.json").exists())
 
     @patch.object(cm, 'auth_status', return_value={"loggedIn": True, "email": "new@example.com"})
     @patch.object(cm, 'keychain_read', return_value=SAMPLE_CREDS)
@@ -507,17 +507,17 @@ class TestCmdSwitch(unittest.TestCase):
     def test_switch_success(self, mock_kr, mock_kw, mock_as, mock_probe, mock_chrome):
         mock_as.side_effect = [
             # First call: verify current account for auto-save
-            {"loggedIn": True, "email": "warrenzhu513@gmail.com"},
+            {"loggedIn": True, "email": "alice@example.com"},
             # Second call: verify target account
-            {"loggedIn": True, "email": "wzhu@college.harvard.edu"},
+            {"loggedIn": True, "email": "alice@work.example.com"},
         ]
         with TempAccountsDir() as tmpdir:
-            cm.save_creds_file("harvard", SAMPLE_CREDS)
-            cm.save_creds_file("warren", SAMPLE_CREDS)
-            result = cm.cmd_switch(["harvard"])
+            cm.save_creds_file("work", SAMPLE_CREDS)
+            cm.save_creds_file("main", SAMPLE_CREDS)
+            result = cm.cmd_switch(["work"])
             self.assertEqual(result, 0)
             cfg = cm.load_config()
-            self.assertEqual(cfg["active"], "harvard")
+            self.assertEqual(cfg["active"], "work")
 
     @patch.object(cm, 'chrome_check')
     @patch.object(cm, '_probe_usage', return_value={"session_pct": 20, "weekly_pct": 40})
@@ -526,16 +526,16 @@ class TestCmdSwitch(unittest.TestCase):
     @patch.object(cm, 'keychain_read', return_value=SAMPLE_CREDS)
     def test_switch_by_email(self, mock_kr, mock_kw, mock_as, mock_probe, mock_chrome):
         mock_as.side_effect = [
-            {"loggedIn": True, "email": "warrenzhu513@gmail.com"},
-            {"loggedIn": True, "email": "wzhu@college.harvard.edu"},
+            {"loggedIn": True, "email": "alice@example.com"},
+            {"loggedIn": True, "email": "alice@work.example.com"},
         ]
         with TempAccountsDir() as tmpdir:
-            cm.save_creds_file("harvard", SAMPLE_CREDS)
-            cm.save_creds_file("warren", SAMPLE_CREDS)
-            result = cm.cmd_switch(["wzhu@college.harvard.edu"])
+            cm.save_creds_file("work", SAMPLE_CREDS)
+            cm.save_creds_file("main", SAMPLE_CREDS)
+            result = cm.cmd_switch(["alice@work.example.com"])
             self.assertEqual(result, 0)
             cfg = cm.load_config()
-            self.assertEqual(cfg["active"], "harvard")
+            self.assertEqual(cfg["active"], "work")
 
     @patch.object(cm, 'chrome_check')
     @patch.object(cm, '_probe_usage', return_value={"session_pct": 10, "weekly_pct": 5})
@@ -544,37 +544,37 @@ class TestCmdSwitch(unittest.TestCase):
     @patch.object(cm, 'keychain_read', return_value=SAMPLE_CREDS)
     def test_switch_by_email_prefix(self, mock_kr, mock_kw, mock_as, mock_probe, mock_chrome):
         mock_as.side_effect = [
-            {"loggedIn": True, "email": "warrenzhu513@gmail.com"},
-            {"loggedIn": True, "email": "wzhu@college.harvard.edu"},
+            {"loggedIn": True, "email": "alice@example.com"},
+            {"loggedIn": True, "email": "alice@work.example.com"},
         ]
         with TempAccountsDir() as tmpdir:
-            cm.save_creds_file("harvard", SAMPLE_CREDS)
-            cm.save_creds_file("warren", SAMPLE_CREDS)
-            result = cm.cmd_switch(["wzhu"])
+            cm.save_creds_file("work", SAMPLE_CREDS)
+            cm.save_creds_file("main", SAMPLE_CREDS)
+            result = cm.cmd_switch(["alice"])
             self.assertEqual(result, 0)
             cfg = cm.load_config()
-            self.assertEqual(cfg["active"], "harvard")
+            self.assertEqual(cfg["active"], "work")
 
     @patch('builtins.input', return_value="1")
     @patch.object(cm, 'chrome_check')
     @patch.object(cm, '_probe_usage', return_value={"session_pct": 10, "weekly_pct": 5})
     @patch.object(cm, '_gcal_notify_resets')
     @patch.object(cm, '_probe_all_parallel')
-    @patch.object(cm, 'auth_status', return_value={"loggedIn": True, "email": "wzhu@college.harvard.edu"})
+    @patch.object(cm, 'auth_status', return_value={"loggedIn": True, "email": "alice@work.example.com"})
     @patch.object(cm, 'keychain_write')
     @patch.object(cm, 'keychain_read', return_value=SAMPLE_CREDS)
     def test_switch_no_args_interactive(self, mock_kr, mock_kw, mock_as, mock_parallel, mock_gcal, mock_probe, mock_chrome, mock_input):
         """switch with no args enters interactive pick mode."""
         mock_parallel.return_value = (
-            {"harvard": {"session_pct": 10, "weekly_pct": 5, "status": "available",
+            {"work": {"session_pct": 10, "weekly_pct": 5, "status": "available",
                          "checked_at": datetime.now(timezone.utc).isoformat()}},
             {},
         )
         with TempAccountsDir() as tmpdir:
-            cm.save_creds_file("harvard", SAMPLE_CREDS)
+            cm.save_creds_file("work", SAMPLE_CREDS)
             cm.save_creds_file("personal", SAMPLE_CREDS)
-            cm.save_creds_file("warren", SAMPLE_CREDS)
-            # Input "1" selects first account (harvard)
+            cm.save_creds_file("main", SAMPLE_CREDS)
+            # Input "1" selects first account (work)
             result = cm.cmd_switch([])
             self.assertEqual(result, 0)
 
@@ -585,7 +585,7 @@ class TestCmdSwitch(unittest.TestCase):
 
     def test_switch_no_saved_creds(self):
         with TempAccountsDir():
-            result = cm.cmd_switch(["harvard"])
+            result = cm.cmd_switch(["work"])
             self.assertEqual(result, 1)
 
 
@@ -600,7 +600,7 @@ class TestCmdStatus(unittest.TestCase):
     def test_status_with_cache(self):
         with TempAccountsDir():
             cache = {
-                "harvard": {
+                "work": {
                     "session_pct": 30, "weekly_pct": 50,
                     "checked_at": datetime.now(timezone.utc).isoformat(),
                     "status": "available",
@@ -629,7 +629,7 @@ class TestCmdCheck(unittest.TestCase):
             result = cm.cmd_check([])
             self.assertEqual(result, 0)
             cache = cm.load_cache()
-            self.assertEqual(cache["warren"]["session_pct"], 45)
+            self.assertEqual(cache["main"]["session_pct"], 45)
 
     @patch.object(cm, '_probe_usage', return_value=None)
     def test_check_probe_failure(self, mock_probe):
@@ -651,27 +651,27 @@ class TestCmdGcalSet(unittest.TestCase):
     def test_gcal_set_updates_cache_and_events(self, mock_track, mock_notify):
         with TempAccountsDir():
             result = cm.cmd_gcal_set([
-                "harvard", "45", "67",
+                "work", "45", "67",
                 "8pm (America/Chicago)",
                 "Mar 2 at 3pm (America/Chicago)",
                 "5",
             ])
             self.assertEqual(result, 0)
             cache = cm.load_cache()
-            self.assertEqual(cache["harvard"]["session_pct"], 45)
-            self.assertEqual(cache["harvard"]["weekly_pct"], 67)
-            self.assertEqual(cache["harvard"]["sonnet_pct"], 5)
+            self.assertEqual(cache["work"]["session_pct"], 45)
+            self.assertEqual(cache["work"]["weekly_pct"], 67)
+            self.assertEqual(cache["work"]["sonnet_pct"], 5)
             mock_track.assert_called_once()
             mock_notify.assert_called_once()
 
     def test_gcal_set_too_few_args(self):
         with TempAccountsDir():
-            result = cm.cmd_gcal_set(["harvard", "45"])
+            result = cm.cmd_gcal_set(["work", "45"])
             self.assertEqual(result, 1)
 
     def test_gcal_set_invalid_pct(self):
         with TempAccountsDir():
-            result = cm.cmd_gcal_set(["harvard", "abc", "67", "8pm", "Mar 2"])
+            result = cm.cmd_gcal_set(["work", "abc", "67", "8pm", "Mar 2"])
             self.assertEqual(result, 1)
 
 
@@ -681,10 +681,10 @@ class TestCmdGcalSync(unittest.TestCase):
     @patch.object(cm, '_update_tracking_events')
     def test_sync_from_cache(self, mock_track):
         with TempAccountsDir():
-            cache = {"harvard": {"session_pct": 30, "weekly_pct": 50}}
+            cache = {"work": {"session_pct": 30, "weekly_pct": 50}}
             cm.save_cache(cache)
             cfg = cm.load_config()
-            cfg["active"] = "harvard"
+            cfg["active"] = "work"
             cm.save_config(cfg)
 
             result = cm.cmd_gcal_sync([])
@@ -694,7 +694,7 @@ class TestCmdGcalSync(unittest.TestCase):
     def test_sync_no_cache(self):
         with TempAccountsDir():
             cfg = cm.load_config()
-            cfg["active"] = "harvard"
+            cfg["active"] = "work"
             cm.save_config(cfg)
 
             result = cm.cmd_gcal_sync([])
@@ -716,13 +716,13 @@ class TestCmdGcalSyncAll(unittest.TestCase):
     def test_sync_all(self, mock_track):
         with TempAccountsDir():
             cache = {
-                "harvard": {"session_pct": 10, "weekly_pct": 5},
-                "warren": {"session_pct": 100, "weekly_pct": 100},
+                "work": {"session_pct": 10, "weekly_pct": 5},
+                "main": {"session_pct": 100, "weekly_pct": 100},
             }
             cm.save_cache(cache)
             result = cm.cmd_gcal_sync_all([])
             self.assertEqual(result, 0)
-            # Called for harvard and warren (not personal — no cache)
+            # Called for work and main (not personal — no cache)
             self.assertEqual(mock_track.call_count, 2)
 
 
@@ -734,9 +734,9 @@ class TestCmdCheckAll(unittest.TestCase):
     def test_check_all_parallel(self, mock_parallel, mock_gcal):
         mock_parallel.return_value = (
             {
-                "harvard": {"session_pct": 10, "weekly_pct": 5, "status": "available",
+                "work": {"session_pct": 10, "weekly_pct": 5, "status": "available",
                             "checked_at": datetime.now(timezone.utc).isoformat()},
-                "warren": {"session_pct": 100, "weekly_pct": 100, "status": "session_exhausted",
+                "main": {"session_pct": 100, "weekly_pct": 100, "status": "session_exhausted",
                            "session_resets": "4pm (America/Chicago)",
                            "weekly_resets": "Feb 26 at 10am (America/Chicago)",
                            "checked_at": datetime.now(timezone.utc).isoformat()},
@@ -744,13 +744,13 @@ class TestCmdCheckAll(unittest.TestCase):
             {},  # no errors
         )
         with TempAccountsDir() as tmpdir:
-            cm.save_creds_file("harvard", SAMPLE_CREDS)
-            cm.save_creds_file("warren", SAMPLE_CREDS)
+            cm.save_creds_file("work", SAMPLE_CREDS)
+            cm.save_creds_file("main", SAMPLE_CREDS)
             result = cm.cmd_check_all([])
             self.assertEqual(result, 0)
             cache = cm.load_cache()
-            self.assertEqual(cache["harvard"]["session_pct"], 10)
-            self.assertEqual(cache["warren"]["session_pct"], 100)
+            self.assertEqual(cache["work"]["session_pct"], 10)
+            self.assertEqual(cache["main"]["session_pct"], 100)
 
     def test_check_all_no_creds(self):
         with TempAccountsDir():
@@ -837,7 +837,7 @@ class TestGcalNotifyResets(unittest.TestCase):
                 "weekly_pct": 100,
                 "weekly_resets": "Feb 26 at 10am (America/Chicago)",
             }
-            created = cm._gcal_notify_resets("warren", data)
+            created = cm._gcal_notify_resets("main", data)
             self.assertEqual(len(created), 2)
             self.assertEqual(mock_create.call_count, 2)
 
@@ -845,7 +845,7 @@ class TestGcalNotifyResets(unittest.TestCase):
     def test_skips_non_exhausted(self, mock_create):
         with TempAccountsDir():
             data = {"session_pct": 50, "weekly_pct": 60}
-            created = cm._gcal_notify_resets("warren", data)
+            created = cm._gcal_notify_resets("main", data)
             self.assertEqual(len(created), 0)
             mock_create.assert_not_called()
 
@@ -858,11 +858,11 @@ class TestGcalNotifyResets(unittest.TestCase):
                 "weekly_pct": 50,
             }
             # First call creates
-            cm._gcal_notify_resets("warren", data)
+            cm._gcal_notify_resets("main", data)
             self.assertEqual(mock_create.call_count, 1)
 
             # Second call with same reset time is deduped
-            cm._gcal_notify_resets("warren", data)
+            cm._gcal_notify_resets("main", data)
             self.assertEqual(mock_create.call_count, 1)  # still 1
 
 
@@ -904,28 +904,28 @@ class TestRoundTrip(unittest.TestCase):
     @patch.object(cm, 'keychain_write')
     @patch.object(cm, 'keychain_read', return_value=SAMPLE_CREDS)
     def test_save_then_switch(self, mock_kr, mock_kw, mock_as, mock_probe, mock_chrome):
-        mock_as.return_value = {"loggedIn": True, "email": "wzhu@college.harvard.edu"}
+        mock_as.return_value = {"loggedIn": True, "email": "alice@work.example.com"}
 
         with TempAccountsDir() as tmpdir:
-            # Save harvard
-            result = cm.cmd_save(["harvard"])
+            # Save work
+            result = cm.cmd_save(["work"])
             self.assertEqual(result, 0)
-            self.assertTrue((tmpdir / "harvard.json").exists())
+            self.assertTrue((tmpdir / "work.json").exists())
 
-            # Save warren
-            mock_as.return_value = {"loggedIn": True, "email": "warrenzhu513@gmail.com"}
-            result = cm.cmd_save(["warren"])
+            # Save main
+            mock_as.return_value = {"loggedIn": True, "email": "alice@example.com"}
+            result = cm.cmd_save(["main"])
             self.assertEqual(result, 0)
 
-            # Switch to harvard
+            # Switch to work
             mock_as.side_effect = [
-                {"loggedIn": True, "email": "warrenzhu513@gmail.com"},  # auto-save verify
-                {"loggedIn": True, "email": "wzhu@college.harvard.edu"},  # target verify
+                {"loggedIn": True, "email": "alice@example.com"},  # auto-save verify
+                {"loggedIn": True, "email": "alice@work.example.com"},  # target verify
             ]
-            result = cm.cmd_switch(["harvard"])
+            result = cm.cmd_switch(["work"])
             self.assertEqual(result, 0)
             cfg = cm.load_config()
-            self.assertEqual(cfg["active"], "harvard")
+            self.assertEqual(cfg["active"], "work")
 
 
 if __name__ == "__main__":

@@ -170,10 +170,12 @@ if [ "$TOOL_NAME" = "Bash" ]; then
 
   # ── Worktree-specific: prod access ──
   if [ "$_IS_WORKTREE" = true ]; then
-    _PROD_IP="120.77.216.196"
-    if echo "$COMMAND" | grep -qF "$_PROD_IP" || echo "$COMMAND_NORM" | grep -qF "$_PROD_IP"; then
-      hook_block "Direct prod access ($_PROD_IP) blocked from worktree. Workers cannot deploy to prod — notify Warren's main session."
-      exit 0
+    _PROD_IP="${FLEET_PROD_IP:-}"
+    if [ -n "$_PROD_IP" ]; then
+      if echo "$COMMAND" | grep -qF "$_PROD_IP" || echo "$COMMAND_NORM" | grep -qF "$_PROD_IP"; then
+        hook_block "Direct prod access ($_PROD_IP) blocked from worktree. Workers cannot deploy to prod — notify Warren's main session."
+        exit 0
+      fi
     fi
   fi
 

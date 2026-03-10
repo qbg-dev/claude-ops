@@ -63,7 +63,7 @@ if [ "$TO" = "user" ]; then
 fi
 
 # ── Fleet Mail config ────────────────────────────────────────
-FLEET_MAIL_URL="${FLEET_MAIL_URL:-http://5.161.107.142:8026}"
+FLEET_MAIL_URL="${FLEET_MAIL_URL:-http://127.0.0.1:8025}"
 
 # Resolve project namespace from directory
 PROJECT_NAME=$(basename "$PROJECT_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')

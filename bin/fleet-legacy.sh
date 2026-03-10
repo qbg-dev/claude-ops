@@ -27,7 +27,7 @@ VERSION="1.0.0"
 # FLEET_DATA_DIR   = data (per-project worker configs, states)
 CLAUDE_FLEET_DIR="${CLAUDE_FLEET_DIR:-${CLAUDE_OPS_DIR:-$HOME/.claude-fleet}}"
 FLEET_DATA_DIR="$HOME/.claude/fleet"
-FLEET_MAIL_URL="${FLEET_MAIL_URL:-http://5.161.107.142:8026}"
+FLEET_MAIL_URL="${FLEET_MAIL_URL:-http://127.0.0.1:8025}"
 DEFAULT_SESSION="w"
 
 # ─── Dependencies ───

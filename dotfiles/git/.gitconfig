@@ -1,8 +1,8 @@
 # This is Git's per-user configuration file.
 [user]
 # Please adapt and uncomment the following lines:
-name = Fucheng Warren Zhu
-email = wzhu@college.harvard.edu
+name = ${GIT_USER_NAME}
+email = ${GIT_USER_EMAIL}
 [credential "https://github.com"]
 	helper =
 	helper = !gh auth git-credential

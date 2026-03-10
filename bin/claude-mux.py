@@ -118,7 +118,7 @@ def resolve(identifier, cfg):
     for label, info in cfg["accounts"].items():
         if info["email"] == identifier:
             return label, info["email"]
-    # Try as email prefix (e.g. "wzhu" matches "wzhu@college.harvard.edu")
+    # Try as email prefix (e.g. "alice" matches "alice@example.com")
     for label, info in cfg["accounts"].items():
         if info["email"].startswith(identifier):
             return label, info["email"]
@@ -1221,7 +1221,7 @@ def cmd_gcal_set(args):
     """Direct gcal update: claude-mux gcal-set <email> <s%> <w%> <s_resets> <w_resets> [sonnet%]"""
     if len(args) < 5:
         print("Usage: claude-mux gcal-set <email> <session%> <weekly%> <session_resets> <weekly_resets> [sonnet%]")
-        print('Example: claude-mux gcal-set wzhu@college.harvard.edu 35 67 "4pm (America/Chicago)" "Feb 26 at 10am (America/Chicago)"')
+        print('Example: claude-mux gcal-set alice@example.com 35 67 "4pm (America/Chicago)" "Feb 26 at 10am (America/Chicago)"')
         return 1
 
     cfg = load_config()

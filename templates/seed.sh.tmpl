@@ -162,12 +162,8 @@ MM will reject completions without evidence. Run these and include output in you
 4. **Verify** (backend): `curl -sf https://test.<domain>/api/v1/<endpoint> | jq .`
 5. **Verify** (UI): generate autologin URL and confirm the page renders correctly:
    ```bash
-   SESSION=$(curl -s https://test.baoyuansmartlife.com/login \
-     -H "Content-Type: application/json" \
-     -d '"'"'{"username":"admin","password":"UHbPHzjF0jlq71-8"}'"'"' | jq -r .token)
-   curl -s https://test.baoyuansmartlife.com/api/v1/auth/autologin-token \
-     -H "Authorization: Bearer $SESSION" -H "Content-Type: application/json" \
-     -d '"'"'{"username":"admin","redirect":"/app/"}'"'"' | jq -r .url
+   # Use the autologin script instead of hardcoding credentials:
+   bash .claude/scripts/autologin.sh admin --env test
    ```
 
 ### Reporting Done

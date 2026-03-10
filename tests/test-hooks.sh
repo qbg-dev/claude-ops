@@ -106,7 +106,7 @@ cat > claude_files/miniapp-chat-verify/_test-task.md << 'EOF'
 1. Opened the page
 2. Clicked the button
 ## Evidence
-curl -s https://wx.baoyuansmartlife.com/api/v1/test returned {"status":"ok","data":[...]}
+curl -s https://example.com/api/v1/test returned {"status":"ok","data":[...]}
 Response time: 245ms. Verified the response includes all expected fields.
 ## Result
 PASS — endpoint returns expected data with correct structure
