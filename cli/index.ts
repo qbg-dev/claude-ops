@@ -46,9 +46,12 @@ import { register as registerMail } from "./commands/mail";
 import { register as registerMailServer } from "./commands/mail-server";
 import { register as registerFork } from "./commands/fork";
 import { register as registerMcp } from "./commands/mcp";
+import { register as registerRun } from "./commands/run";
+import { register as registerSetupAgent } from "./commands/setup-agent";
 
 registerSetup(program);
 registerCreate(program);
+registerRun(program);
 registerStart(program);
 registerStop(program);
 registerLs(program);
@@ -61,5 +64,6 @@ registerMail(program);
 registerMailServer(program);
 registerFork(program);
 registerMcp(program);
+registerSetupAgent(program);
 
 program.parse();
