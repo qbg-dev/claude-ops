@@ -4035,7 +4035,7 @@ server.registerTool(
 // ═══════════════════════════════════════════════════════════════════
 // FLEET MAIL — Gmail-conformant inter-agent email
 // ═══════════════════════════════════════════════════════════════════
-// HTTP proxy to Fleet Mail server (Rust + Dolt, centralized on Hetzner).
+// HTTP proxy to Fleet Mail server (Rust + SQLite).
 // Each worker auto-provisions an account on first use. Tokens cached in registry.json.
 // Account names are namespaced by project: "{project}/{worker}" to avoid collisions
 // when multiple projects share the same mail server.

@@ -118,7 +118,7 @@ export async function autoProvisionUser(): Promise<string> {
       process.stderr.write("Warning: using fallback token (user account exists but token lost)\n");
       return fallback;
     }
-    throw new Error("BMS user account exists but token not in registry. Query kevinster: ssh kevinster 'cd ~/mail_db && dolt sql -q \"SELECT bearer_token FROM accounts WHERE name=\\\"user\\\"\"'");
+    throw new Error("BMS user account exists but token not in registry. Check: fleet mail-server status");
   }
   throw new Error(`BMS registration failed: ${resp.status}`);
 }

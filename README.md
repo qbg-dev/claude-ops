@@ -74,7 +74,7 @@ Workers never push or merge. A designated merger handles main.
 | **MCP Server** | 20+ tools for messaging, state, tasks, hooks, fleet visibility | [architecture.md](docs/architecture.md) |
 | **Watchdog** | launchd daemon (30s): respawn dead/stuck workers, crash-loop protection | [architecture.md](docs/architecture.md) |
 | **Hooks** | PreToolUse/PostToolUse/Stop/PromptSubmit lifecycle hooks | [hooks.md](docs/hooks.md) |
-| **Fleet Mail** | Durable mail server (Rust + Dolt), LKML-style task threads | [architecture.md](docs/architecture.md) |
+| **Fleet Mail** | Durable mail server (Rust + SQLite), LKML-style task threads | [architecture.md](docs/architecture.md) |
 | **Deep Review** | Multi-pass adversarial code review pipeline | [Deep Review](#deep-review) |
 | **CLI** | `fleet` command for all fleet operations | [CLI Reference](#cli-reference) |
 
@@ -272,7 +272,26 @@ Config is stored in `~/.claude/fleet/defaults.json` (`fleet_mail_url`, `fleet_ma
 
 Workers auto-provision mail accounts on `fleet create`. Each worker gets a per-account bearer token stored at `~/.claude/fleet/{project}/{name}/token`.
 
-If Fleet Mail isn't configured, workers still function — they just won't have durable messaging.
+Fleet Mail is required. `fleet setup` checks connectivity and fails if Fleet Mail is unreachable.
+
+### Self-Hosting
+
+boring-mail is a single Rust binary with SQLite storage. No external database needed.
+
+```bash
+# Build
+git clone https://github.com/qbg-dev/boring-mail-server.git
+cd boring-mail-server && cargo build --release
+cp target/release/boring-mail ~/.cargo/bin/
+
+# Start (fleet CLI handles token generation)
+fleet mail-server start
+
+# Or run manually
+BORING_MAIL_BIND=0.0.0.0:8025 BORING_MAIL_ADMIN_TOKEN=$(uuidgen) boring-mail serve
+```
+
+Data lives in `./mail.db` (SQLite). Back up this single file.
 
 ---
 

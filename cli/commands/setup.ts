@@ -123,26 +123,35 @@ export default defineCommand({
       }
     }
 
-    // 8. Fleet Mail status
+    // 8. Fleet Mail (required)
     info("Fleet Mail...");
     if (FLEET_MAIL_URL) {
+      let mailOk = false;
       try {
         const resp = await fetch(`${FLEET_MAIL_URL}/health`, { signal: AbortSignal.timeout(3000) });
         if (resp.ok) {
           ok(`Fleet Mail: ${FLEET_MAIL_URL} ${chalk.green("(reachable)")}`);
+          mailOk = true;
         } else {
-          warn(`Fleet Mail: ${FLEET_MAIL_URL} (returned ${resp.status})`);
+          console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (returned ${resp.status})`);
         }
       } catch {
-        warn(`Fleet Mail: ${FLEET_MAIL_URL} (unreachable)`);
+        console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (unreachable)`);
+      }
+      if (!mailOk) {
+        fail("Fleet Mail is required but unreachable. Check the server and re-run: fleet setup");
       }
       if (FLEET_MAIL_TOKEN) {
         ok(`Admin token: ${FLEET_MAIL_TOKEN.slice(0, 8)}...`);
       }
     } else {
-      warn("Fleet Mail not configured");
-      console.log(`    Connect: ${chalk.cyan("fleet mail-server connect <url> --token <token>")}`);
-      console.log(`    Local:   ${chalk.cyan("fleet mail-server start")}`);
+      console.log(`  ${chalk.red("✗")} Fleet Mail not configured`);
+      console.log("");
+      console.log(`  Fleet Mail is required for worker coordination.`);
+      console.log(`  ${chalk.cyan("fleet mail-server start")}       — start a local server`);
+      console.log(`  ${chalk.cyan("fleet mail-server connect <url>")} — connect to a remote server`);
+      console.log("");
+      fail("Configure Fleet Mail, then re-run: fleet setup");
     }
 
     console.log("");
@@ -150,9 +159,6 @@ export default defineCommand({
     console.log("");
     console.log("  fleet ls                    — list workers");
     console.log(`  fleet create <n> "m"        — create a worker`);
-    if (!FLEET_MAIL_URL) {
-      console.log(`  fleet mail-server connect   — connect Fleet Mail`);
-    }
     console.log("  fleet help                  — all commands");
   },
 });

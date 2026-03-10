@@ -163,6 +163,22 @@ The child inherits the parent's conversation history via `--resume --fork-sessio
 
 ## Fleet Mail
 
+### Setup
+
+Fleet Mail is required. Connect to an existing server or self-host:
+
+```bash
+# Option A: Connect to existing
+fleet mail-server connect http://your-server:8025 --token <admin-token>
+
+# Option B: Self-host (single binary, SQLite storage)
+fleet mail-server start
+```
+
+`fleet setup` checks Fleet Mail connectivity. Workers auto-provision accounts on `fleet create`.
+
+### Usage
+
 Workers coordinate through a durable mail server. Inside a worker:
 
 ```
