@@ -514,188 +514,17 @@ if $HAS_DIFF && ! $NO_CONTEXT; then
     # 2. Dependency graph — imports and callers
     echo "  Building dependency graph..."
     DEP_FILE="$SESSION_DIR/dep-graph.json"
-    python3 << 'DEPEOF' - "$PROJECT_ROOT" "$CHANGED_FILES" "$DEP_FILE"
-import sys, json, os, subprocess, re
-
-project_root = sys.argv[1]
-changed_files = [f.strip() for f in sys.argv[2].strip().split('\n') if f.strip()]
-out_path = sys.argv[3]
-
-graph = {}
-for cf in changed_files:
-    entry = {"imported_by": [], "imports": [], "churn_30d": 0}
-
-    # Find callers (files that import this one)
-    basename = os.path.splitext(os.path.basename(cf))[0]
-    try:
-        result = subprocess.run(
-            ["grep", "-rn", "--include=*.ts", "--include=*.tsx", "--include=*.js",
-             f"from.*['\"].*{basename}['\"]", project_root],
-            capture_output=True, text=True, timeout=10
-        )
-        for line in result.stdout.strip().split('\n'):
-            if line and cf not in line:  # Don't count self-imports
-                parts = line.split(':', 2)
-                if len(parts) >= 2:
-                    rel = os.path.relpath(parts[0], project_root)
-                    entry["imported_by"].append(f"{rel}:{parts[1]}")
-        entry["imported_by"] = entry["imported_by"][:20]  # Cap at 20
-    except Exception:
-        pass
-
-    # Find imports (what this file imports)
-    full_path = os.path.join(project_root, cf)
-    if os.path.exists(full_path):
-        try:
-            with open(full_path) as f:
-                content = f.read()
-            imports = re.findall(r'from\s+[\'"]([^\'"]+)[\'"]', content)
-            entry["imports"] = imports[:20]
-        except Exception:
-            pass
-
-    # Git churn (commits in last 30 days)
-    try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "--since=30 days ago", "--", cf],
-            capture_output=True, text=True, timeout=5, cwd=project_root
-        )
-        entry["churn_30d"] = len([l for l in result.stdout.strip().split('\n') if l])
-    except Exception:
-        pass
-
-    graph[cf] = entry
-
-with open(out_path, 'w') as f:
-    json.dump(graph, f, indent=2)
-print(f"    {len(graph)} files mapped")
-DEPEOF
+    "$CLAUDE_OPS/bin/dr-context" dep-graph "$PROJECT_ROOT" "$CHANGED_FILES" "$DEP_FILE"
 
     # 3. Test coverage — check for test file siblings
     echo "  Checking test coverage..."
     TEST_FILE="$SESSION_DIR/test-coverage.json"
-    python3 << 'TESTEOF' - "$PROJECT_ROOT" "$CHANGED_FILES" "$TEST_FILE"
-import sys, json, os, glob
-
-project_root = sys.argv[1]
-changed_files = [f.strip() for f in sys.argv[2].strip().split('\n') if f.strip()]
-out_path = sys.argv[3]
-
-coverage = {}
-for cf in changed_files:
-    basename = os.path.splitext(os.path.basename(cf))[0]
-    # Check common test file patterns
-    test_patterns = [
-        f"**/tests/**/{basename}.test.*",
-        f"**/tests/**/{basename}.spec.*",
-        f"**/__tests__/{basename}.*",
-        f"**/{basename}.test.*",
-        f"**/{basename}.spec.*",
-    ]
-    found_tests = []
-    for pattern in test_patterns:
-        matches = glob.glob(os.path.join(project_root, pattern), recursive=True)
-        for m in matches:
-            found_tests.append(os.path.relpath(m, project_root))
-
-    coverage[cf] = {
-        "has_tests": len(found_tests) > 0,
-        "test_files": found_tests[:5]
-    }
-
-tested = sum(1 for v in coverage.values() if v["has_tests"])
-with open(out_path, 'w') as f:
-    json.dump(coverage, f, indent=2)
-print(f"    {tested}/{len(coverage)} files have tests")
-TESTEOF
+    "$CLAUDE_OPS/bin/dr-context" test-coverage "$PROJECT_ROOT" "$CHANGED_FILES" "$TEST_FILE"
 
     # 4. Blame context — classify lines as new vs pre-existing
     echo "  Building blame context..."
     BLAME_FILE="$SESSION_DIR/blame-context.json"
-    python3 << 'BLAMEEOF' - "$PROJECT_ROOT" "$MATERIAL_FILE" "$BLAME_FILE"
-import sys, json, os, subprocess, re
-
-project_root = sys.argv[1]
-material_file = sys.argv[2]
-out_path = sys.argv[3]
-
-# Parse diff to find changed line numbers per file
-with open(material_file) as f:
-    content = f.read()
-
-blame_data = {}
-current_file = None
-current_new_lines = []
-
-for line in content.split('\n'):
-    # Track current file
-    m = re.match(r'^diff --git a/(\S+)', line)
-    if m:
-        if current_file and current_new_lines:
-            blame_data[current_file] = current_new_lines
-        current_file = m.group(1)
-        current_new_lines = []
-        continue
-
-    # Parse hunk headers for line numbers
-    m = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
-    if m:
-        start = int(m.group(1))
-        count = int(m.group(2)) if m.group(2) else 1
-        # Track these as the new line range
-        continue
-
-if current_file and current_new_lines:
-    blame_data[current_file] = current_new_lines
-
-# For each changed file, run git blame on surrounding context
-result = {}
-for filepath in list(blame_data.keys())[:30]:  # Cap at 30 files
-    full_path = os.path.join(project_root, filepath)
-    if not os.path.exists(full_path):
-        continue
-
-    try:
-        # Get the current HEAD commit
-        head_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5, cwd=project_root
-        )
-        head_sha = head_result.stdout.strip()[:8]
-
-        # Run git blame on the file
-        blame_result = subprocess.run(
-            ["git", "blame", "--porcelain", filepath],
-            capture_output=True, text=True, timeout=10, cwd=project_root
-        )
-
-        if blame_result.returncode == 0:
-            # Count lines by author recency
-            new_lines = 0
-            old_lines = 0
-            for bl in blame_result.stdout.split('\n'):
-                if bl.startswith('author-time '):
-                    pass  # Could use timestamps for finer classification
-                # Lines starting with commit SHA
-                if len(bl) >= 40 and bl[0:8].isalnum():
-                    sha = bl[:8]
-                    if sha == head_sha or sha == '00000000':
-                        new_lines += 1
-                    else:
-                        old_lines += 1
-
-            result[filepath] = {
-                "new_in_diff": new_lines,
-                "pre_existing": old_lines,
-                "ratio_new": round(new_lines / max(new_lines + old_lines, 1), 2)
-            }
-    except Exception:
-        pass
-
-with open(out_path, 'w') as f:
-    json.dump(result, f, indent=2)
-print(f"    {len(result)} files blame-analyzed")
-BLAMEEOF
+    "$CLAUDE_OPS/bin/dr-context" blame-context "$PROJECT_ROOT" "$MATERIAL_FILE" "$BLAME_FILE"
 
     echo "  Context gathering complete."
   ) || echo "  WARN: Context pre-pass had errors (non-fatal, continuing)"
@@ -705,56 +534,7 @@ fi
 # ── Split material + generate randomized orderings ───────────
 echo "Generating $TOTAL_WORKERS randomized orderings..."
 
-python3 << 'PYEOF' - "$MATERIAL_FILE" "$SESSION_DIR" "$TOTAL_WORKERS"
-import sys, os, random, json
-from datetime import datetime, timezone
-
-material_file = sys.argv[1]
-session_dir = sys.argv[2]
-num_workers = int(sys.argv[3])
-
-with open(material_file) as f:
-    content = f.read()
-
-# Split into chunks at natural boundaries
-chunks = []
-current = []
-for line in content.split('\n'):
-    # Split at diff boundaries, section headers, or file markers
-    if (line.startswith('diff --git ') or
-        line.startswith('## ') or
-        line.startswith('═══ ')) and current:
-        chunks.append('\n'.join(current))
-        current = []
-    current.append(line)
-if current:
-    chunks.append('\n'.join(current))
-
-# If content didn't split well, treat the whole thing as one chunk
-if len(chunks) <= 1:
-    chunks = [content]
-
-print(f"  Split into {len(chunks)} chunks")
-
-# Generate randomized orderings
-for i in range(1, num_workers + 1):
-    shuffled = chunks[:]
-    random.shuffle(shuffled)
-    outpath = os.path.join(session_dir, f'material-pass-{i}.txt')
-    with open(outpath, 'w') as f:
-        f.write('\n'.join(shuffled))
-
-# Write session metadata
-meta = {
-    'session_id': os.path.basename(session_dir),
-    'num_chunks': len(chunks),
-    'num_workers': num_workers,
-    'lines': content.count('\n'),
-    'created_at': datetime.now(timezone.utc).isoformat()
-}
-with open(os.path.join(session_dir, 'meta.json'), 'w') as f:
-    json.dump(meta, f, indent=2)
-PYEOF
+"$CLAUDE_OPS/bin/dr-context" shuffle "$MATERIAL_FILE" "$SESSION_DIR" "$TOTAL_WORKERS"
 
 # ── Build focus assignment table ─────────────────────────────
 FOCUS_LIST_CSV=$(IFS=','; echo "${FOCUS_AREAS[*]}")

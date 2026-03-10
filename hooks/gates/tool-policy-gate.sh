@@ -86,6 +86,18 @@ if [ "$TOOL_NAME" = "Bash" ]; then
 
   # ── Universal gates (run regardless of denyList) ──────────────────
 
+  # Block tmux kill-session — agents must never destroy tmux sessions
+  if echo "$COMMAND_NORM" | grep -qE 'tmux\s+kill-ses(sion)?'; then
+    hook_block "tmux kill-session is blocked fleet-wide. Sessions are managed by the orchestrator, not individual agents."
+    exit 0
+  fi
+
+  # Block tmux kill-window on own window — agents must not destroy their own pane context
+  if echo "$COMMAND_NORM" | grep -qE 'tmux\s+kill-window'; then
+    hook_block "tmux kill-window is blocked fleet-wide. Use recycle() to cleanly shut down instead of killing windows."
+    exit 0
+  fi
+
   # Block direct prod access from worktrees — workers cannot deploy to prod
   if [ "$_IS_WORKTREE" = true ]; then
     _PROD_IP="120.77.216.196"
