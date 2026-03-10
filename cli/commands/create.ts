@@ -123,24 +123,40 @@ export async function runCreate(
     info(`Worktree already exists: ${worktreeDir}`);
   }
 
-  // 6. Ensure parent repo has .mcp.json (create if missing, never override), then symlink
+  // 6. Ensure parent repo .mcp.json includes worker-fleet, then symlink to worktree
   const mcpSrc = join(projectRoot, ".mcp.json");
-  if (!existsSync(mcpSrc)) {
-    const bunPath = process.execPath || join(process.env.HOME || "", ".bun/bin/bun");
-    const mcpConfig = {
-      mcpServers: {
-        "worker-fleet": {
-          command: bunPath,
-          args: ["run", join(FLEET_DIR, "mcp/worker-fleet/index.ts")],
-          env: {
-            ...(FLEET_MAIL_URL ? { FLEET_MAIL_URL } : {}),
-          },
-        },
-      },
-    };
-    writeFileSync(mcpSrc, JSON.stringify(mcpConfig, null, 2) + "\n");
-    info("Created .mcp.json in parent repo");
+  const bunPath = process.execPath || join(process.env.HOME || "", ".bun/bin/bun");
+  const fleetEntry = {
+    command: bunPath,
+    args: ["run", join(FLEET_DIR, "mcp/worker-fleet/index.ts")],
+    env: {
+      ...(FLEET_MAIL_URL ? { FLEET_MAIL_URL } : {}),
+    },
+  };
+
+  // Read existing config (or start fresh), merge worker-fleet in
+  let mcpConfig: Record<string, any> = { mcpServers: {} };
+  if (existsSync(mcpSrc)) {
+    try {
+      mcpConfig = JSON.parse(readFileSync(mcpSrc, "utf-8"));
+      if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
+    } catch {
+      mcpConfig = { mcpServers: {} };
+    }
   }
+
+  // Only write if worker-fleet is missing or stale (different command/args)
+  const existing = mcpConfig.mcpServers["worker-fleet"];
+  const needsUpdate = !existing
+    || existing.command !== fleetEntry.command
+    || JSON.stringify(existing.args) !== JSON.stringify(fleetEntry.args);
+
+  if (needsUpdate) {
+    mcpConfig.mcpServers["worker-fleet"] = fleetEntry;
+    writeFileSync(mcpSrc, JSON.stringify(mcpConfig, null, 2) + "\n");
+    info(existing ? "Updated worker-fleet in .mcp.json" : "Added worker-fleet to .mcp.json");
+  }
+
   if (projectRoot !== worktreeDir) {
     Bun.spawnSync(["rm", "-f", join(worktreeDir, ".mcp.json")]);
     Bun.spawnSync(["ln", "-sf", mcpSrc, join(worktreeDir, ".mcp.json")]);
