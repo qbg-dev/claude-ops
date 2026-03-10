@@ -23,15 +23,26 @@ import {
   starMessage,
   trashMessage,
   searchMessages,
+  unarchiveMessage,
+  untrashMessage,
+  bmsRequest,
+  parseSearchQuery,
+  applySearchFilters,
+  senderName,
+  recipientNames,
 } from "./bms.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { MainArea } from "./components/MainArea.js";
 import { CommandBar } from "./components/CommandBar.js";
 import { HelpOverlay } from "./components/HelpOverlay.js";
+import { ComposeOverlay } from "./components/ComposeOverlay.js";
 
 const SIDEBAR_WIDTH = 18;
-const POLL_INTERVAL = 15000; // 15s to avoid rate limits
+const POLL_ACTIVE = 3000;   // 3s for active pane
+const POLL_INACTIVE = 30000; // 30s for inactive panes
+const POLL_GLOBAL = 30000;   // 30s for registry/directory
 const MAX_CONCURRENT_UNREAD = 3; // batch unread fetches
+const UNDO_TIMEOUT = 3000;  // 3s undo window
 
 export function App({
   initialTokenMap,
@@ -70,6 +81,8 @@ export function App({
       const s = stateRef.current;
       const pane = s.panes[paneIndex];
       if (!pane) return;
+      // Search results are static — don't refresh
+      if (pane.tab === "search") return;
 
       const token = getToken(pane.worker);
       try {
@@ -152,11 +165,75 @@ export function App({
     refreshAll();
   }, []);
 
-  // ── Polling ──
+  // ── Adaptive Polling ──
+  const paneTimersRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
+  const globalTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Per-pane adaptive timers
   useEffect(() => {
-    const timer = setInterval(refreshAll, POLL_INTERVAL);
-    return () => clearInterval(timer);
-  }, [refreshAll]);
+    const timers = paneTimersRef.current;
+    // Clear old timers
+    timers.forEach((t) => clearInterval(t));
+    timers.clear();
+
+    const s = stateRef.current;
+    s.panes.forEach((_, i) => {
+      const interval = i === s.activePaneIndex ? POLL_ACTIVE : POLL_INACTIVE;
+      const t = setInterval(() => refreshPane(i), interval);
+      timers.set(i, t);
+    });
+
+    return () => {
+      timers.forEach((t) => clearInterval(t));
+      timers.clear();
+    };
+  }, [state.panes.length, state.activePaneIndex, refreshPane]);
+
+  // Global registry/directory refresh
+  useEffect(() => {
+    if (globalTimerRef.current) clearInterval(globalTimerRef.current);
+    globalTimerRef.current = setInterval(async () => {
+      const reg = loadRegistry();
+      const tMap = loadTokenMap(reg);
+      dispatch({ type: "SET_REGISTRY", registry: reg });
+      dispatch({ type: "SET_TOKEN_MAP", tokenMap: tMap });
+
+      const workers = Object.entries(reg)
+        .filter(([k]) => k !== "_config")
+        .map(([name, w]: [string, any]) => ({
+          name,
+          status: w.status || "idle",
+          perpetual: !!w.perpetual,
+          hasBms: !!w.bms_token,
+          unread: 0,
+          pane: w.pane_id || "",
+          runtime: w.custom?.runtime || "claude",
+          sleepUntil: w.custom?.sleep_until,
+        }));
+
+      const withBms = workers.filter((w) => w.hasBms);
+      for (let i = 0; i < withBms.length; i += MAX_CONCURRENT_UNREAD) {
+        const batch = withBms.slice(i, i + MAX_CONCURRENT_UNREAD);
+        await Promise.all(
+          batch.map(async (w) => {
+            const token = tMap.get(w.name) || "";
+            if (!token) return;
+            try {
+              w.unread = await fetchUnreadCount(token);
+            } catch {}
+          })
+        );
+      }
+      dispatch({ type: "SET_WORKER_LIST", workers });
+
+      const dir = await fetchDirectory(stateRef.current.userToken);
+      dispatch({ type: "SET_DIRECTORY", directory: dir });
+    }, POLL_GLOBAL);
+
+    return () => {
+      if (globalTimerRef.current) clearInterval(globalTimerRef.current);
+    };
+  }, []);
 
   // ── Clear status messages after 3s ──
   useEffect(() => {

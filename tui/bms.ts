@@ -3,18 +3,14 @@
  * Extracted from harness REPL for shared use.
  */
 
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { join, basename } from "path";
 
 const BMS_URL = process.env.BMS_URL || "http://127.0.0.1:8025";
 
 const PROJECT_ROOT =
   process.env.PROJECT_ROOT ||
   (() => {
-    const wellKnown = `${process.env.HOME}/Desktop/zPersonalProjects/Wechat`;
-    try {
-      readFileSync(`${wellKnown}/.claude/workers/registry.json`);
-      return wellKnown;
-    } catch {}
     try {
       const { spawnSync } = require("child_process");
       return spawnSync("git", ["rev-parse", "--show-toplevel"]).stdout.toString().trim();
@@ -23,7 +19,17 @@ const PROJECT_ROOT =
     }
   })();
 
-export const REGISTRY_PATH = `${PROJECT_ROOT}/.claude/workers/registry.json`;
+function resolveRegistryPath(): string {
+  const HOME = process.env.HOME!;
+  const projectName = basename(PROJECT_ROOT).replace(/-w-.*$/, '');
+  const fleetPath = join(HOME, ".claude/fleet", projectName, "registry.json");
+  if (existsSync(fleetPath)) return fleetPath;
+  const legacyPath = join(PROJECT_ROOT, ".claude/workers/registry.json");
+  if (existsSync(legacyPath)) return legacyPath;
+  return fleetPath; // default to new location
+}
+
+export const REGISTRY_PATH = resolveRegistryPath();
 
 // ── BMS HTTP Client ──
 
@@ -332,4 +338,99 @@ export async function fetchLabels(token: string): Promise<any[]> {
 
 export async function fetchAnalytics(token: string): Promise<any> {
   return bmsRequest(token, "GET", "/api/analytics");
+}
+
+// ── Undo Helpers ──
+
+export async function unarchiveMessage(
+  token: string,
+  messageId: string
+): Promise<void> {
+  await bmsRequest(token, "POST", `/api/messages/${messageId}/modify`, {
+    addLabelIds: ["INBOX"],
+    removeLabelIds: ["ARCHIVED"],
+  });
+}
+
+export async function untrashMessage(
+  token: string,
+  messageId: string
+): Promise<void> {
+  await bmsRequest(token, "POST", `/api/messages/${messageId}/untrash`);
+}
+
+// ── Search Query Parser ──
+
+export interface ParsedSearchQuery {
+  from?: string;
+  to?: string;
+  isUnread?: boolean;
+  isStarred?: boolean;
+  label?: string;
+  before?: string;
+  after?: string;
+  q: string;
+}
+
+export function parseSearchQuery(input: string): ParsedSearchQuery {
+  const result: ParsedSearchQuery = { q: "" };
+  const remaining: string[] = [];
+
+  const tokens = input.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  for (const token of tokens) {
+    const lower = token.toLowerCase();
+    if (lower.startsWith("from:")) {
+      result.from = token.slice(5).replace(/^"|"$/g, "");
+    } else if (lower.startsWith("to:")) {
+      result.to = token.slice(3).replace(/^"|"$/g, "");
+    } else if (lower === "is:unread") {
+      result.isUnread = true;
+    } else if (lower === "is:starred") {
+      result.isStarred = true;
+    } else if (lower.startsWith("label:")) {
+      result.label = token.slice(6).replace(/^"|"$/g, "");
+    } else if (lower.startsWith("before:")) {
+      result.before = token.slice(7);
+    } else if (lower.startsWith("after:")) {
+      result.after = token.slice(6);
+    } else {
+      remaining.push(token);
+    }
+  }
+
+  result.q = remaining.join(" ");
+  return result;
+}
+
+export function applySearchFilters(messages: any[], parsed: ParsedSearchQuery, directory: Record<string, string>): any[] {
+  return messages.filter((msg) => {
+    if (parsed.isUnread !== undefined) {
+      const hasUnread = (msg.labelIds || []).includes("UNREAD");
+      if (parsed.isUnread && !hasUnread) return false;
+    }
+    if (parsed.isStarred !== undefined) {
+      const hasStarred = (msg.labelIds || []).includes("STARRED");
+      if (parsed.isStarred && !hasStarred) return false;
+    }
+    if (parsed.label) {
+      if (!(msg.labelIds || []).includes(parsed.label.toUpperCase())) return false;
+    }
+    if (parsed.from) {
+      const fromName = senderName(msg, directory).toLowerCase();
+      if (!fromName.includes(parsed.from.toLowerCase())) return false;
+    }
+    if (parsed.to) {
+      const toNames = recipientNames(msg, directory).toLowerCase();
+      if (!toNames.includes(parsed.to.toLowerCase())) return false;
+    }
+    if (parsed.before) {
+      const msgDate = new Date(msg.internalDate);
+      if (msgDate >= new Date(parsed.before)) return false;
+    }
+    if (parsed.after) {
+      const msgDate = new Date(msg.internalDate);
+      if (msgDate <= new Date(parsed.after)) return false;
+    }
+    return true;
+  });
 }

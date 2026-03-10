@@ -6,7 +6,7 @@ import React, { createContext, useContext } from "react";
 
 // ── Types ──
 
-export type Tab = "inbox" | "threads" | "fleet" | "sent";
+export type Tab = "inbox" | "threads" | "fleet" | "sent" | "search";
 export type FocusPanel = "sidebar" | "pane" | "command";
 
 export interface WorkerInfo {
@@ -31,6 +31,25 @@ export interface PaneState {
   messages: any[];
   threads: any[];
   loading: boolean;
+  previousTab: Tab | null;
+  searchQuery: string;
+  selectedIds: Set<string>;
+}
+
+export interface UndoAction {
+  type: "archive" | "trash";
+  messageId: string;
+  messageIds?: string[];
+  paneIndex: number;
+  expiresAt: number;
+}
+
+export interface ComposeFields {
+  to: string;
+  cc: string;
+  subject: string;
+  body: string;
+  activeField: "to" | "cc" | "subject" | "body";
 }
 
 export interface AppState {
@@ -59,9 +78,15 @@ export interface AppState {
 
   replyMode: boolean; // inline reply below message
   replyInput: string;
+  replyAllMode: boolean;
 
   commandHistory: string[]; // previous commands for up/down cycling
   commandHistoryIndex: number; // -1 = not cycling, 0..N = position
+
+  undoAction: UndoAction | null;
+  composeMode: boolean;
+  composeFields: ComposeFields;
+  splitRatio: number;
 }
 
 // ── Actions ──
@@ -108,7 +133,23 @@ export type Action =
   | { type: "EXIT_REPLY" }
   | { type: "SET_REPLY_INPUT"; input: string }
   | { type: "SET_COMMAND_HISTORY"; history: string[] }
-  | { type: "SET_COMMAND_HISTORY_INDEX"; index: number };
+  | { type: "SET_COMMAND_HISTORY_INDEX"; index: number }
+  | { type: "MARK_MESSAGE_READ"; paneIndex: number; messageId: string }
+  | { type: "OPTIMISTIC_REMOVE_MESSAGE"; paneIndex: number; messageId: string }
+  | { type: "OPTIMISTIC_REMOVE_MESSAGES"; paneIndex: number; messageIds: string[] }
+  | { type: "OPTIMISTIC_TOGGLE_LABEL"; paneIndex: number; messageId: string; label: string; add: boolean }
+  | { type: "SET_UNDO"; undo: UndoAction }
+  | { type: "CLEAR_UNDO" }
+  | { type: "ENTER_SEARCH_TAB" }
+  | { type: "TOGGLE_SELECTION"; messageId: string }
+  | { type: "CLEAR_SELECTION" }
+  | { type: "ENTER_COMPOSE" }
+  | { type: "EXIT_COMPOSE" }
+  | { type: "SET_COMPOSE_FIELD"; field: "to" | "cc" | "subject" | "body"; value: string }
+  | { type: "NEXT_COMPOSE_FIELD" }
+  | { type: "ENTER_REPLY_ALL" }
+  | { type: "EXIT_REPLY_ALL" }
+  | { type: "RESIZE_PANE"; delta: number };
 
 // ── Helpers ──
 
@@ -121,7 +162,7 @@ function activePane(state: AppState): PaneState {
 }
 
 function listLength(pane: PaneState): number {
-  if (pane.tab === "inbox" || pane.tab === "sent") return pane.messages.length;
+  if (pane.tab === "inbox" || pane.tab === "sent" || pane.tab === "search") return pane.messages.length;
   if (pane.tab === "threads") return pane.threads.length;
   return 0;
 }
@@ -364,6 +405,9 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: [],
         threads: [],
         loading: true,
+        previousTab: null,
+        searchQuery: "",
+        selectedIds: new Set(),
       };
       return {
         ...state,
@@ -427,6 +471,142 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SET_COMMAND_HISTORY_INDEX":
       return { ...state, commandHistoryIndex: action.index };
 
+    case "MARK_MESSAGE_READ": {
+      const pane = state.panes[action.paneIndex];
+      if (!pane) return state;
+      const messages = pane.messages.map((m: any) =>
+        m.id === action.messageId
+          ? { ...m, labelIds: (m.labelIds || []).filter((l: string) => l !== "UNREAD") }
+          : m
+      );
+      let openMessage = pane.openMessage;
+      if (openMessage?.id === action.messageId) {
+        openMessage = { ...openMessage, labelIds: (openMessage.labelIds || []).filter((l: string) => l !== "UNREAD") };
+      }
+      return updatePane(state, action.paneIndex, { messages, openMessage });
+    }
+
+    case "OPTIMISTIC_REMOVE_MESSAGE": {
+      const pane = state.panes[action.paneIndex];
+      if (!pane) return state;
+      const messages = pane.messages.filter((m: any) => m.id !== action.messageId);
+      const threads = pane.threads.filter((t: any) => t.id !== action.messageId);
+      const selectedIndex = Math.min(pane.selectedIndex, Math.max(0, messages.length - 1));
+      return updatePane(state, action.paneIndex, {
+        messages, threads, selectedIndex,
+        openMessage: null, openThread: null,
+      });
+    }
+
+    case "OPTIMISTIC_REMOVE_MESSAGES": {
+      const pane = state.panes[action.paneIndex];
+      if (!pane) return state;
+      const idSet = new Set(action.messageIds);
+      const messages = pane.messages.filter((m: any) => !idSet.has(m.id));
+      const threads = pane.threads.filter((t: any) => !idSet.has(t.id));
+      const selectedIndex = Math.min(pane.selectedIndex, Math.max(0, messages.length - 1));
+      return updatePane(state, action.paneIndex, {
+        messages, threads, selectedIndex,
+        openMessage: null, openThread: null,
+        selectedIds: new Set(),
+      });
+    }
+
+    case "OPTIMISTIC_TOGGLE_LABEL": {
+      const pane = state.panes[action.paneIndex];
+      if (!pane) return state;
+      const messages = pane.messages.map((m: any) => {
+        if (m.id !== action.messageId) return m;
+        const labels = m.labelIds || [];
+        return {
+          ...m,
+          labelIds: action.add
+            ? [...labels, action.label]
+            : labels.filter((l: string) => l !== action.label),
+        };
+      });
+      let openMessage = pane.openMessage;
+      if (openMessage?.id === action.messageId) {
+        const labels = openMessage.labelIds || [];
+        openMessage = {
+          ...openMessage,
+          labelIds: action.add
+            ? [...labels, action.label]
+            : labels.filter((l: string) => l !== action.label),
+        };
+      }
+      return updatePane(state, action.paneIndex, { messages, openMessage });
+    }
+
+    case "SET_UNDO":
+      return { ...state, undoAction: action.undo };
+
+    case "CLEAR_UNDO":
+      return { ...state, undoAction: null };
+
+    case "ENTER_SEARCH_TAB": {
+      const pane = activePane(state);
+      return updateActivePane(state, {
+        previousTab: pane.tab === "search" ? pane.previousTab : pane.tab,
+        tab: "search",
+        selectedIndex: 0,
+        scrollOffset: 0,
+        openMessage: null,
+        openThread: null,
+      });
+    }
+
+    case "TOGGLE_SELECTION": {
+      const pane = activePane(state);
+      const newSelected = new Set(pane.selectedIds);
+      if (newSelected.has(action.messageId)) {
+        newSelected.delete(action.messageId);
+      } else {
+        newSelected.add(action.messageId);
+      }
+      return updateActivePane(state, { selectedIds: newSelected });
+    }
+
+    case "CLEAR_SELECTION":
+      return updateActivePane(state, { selectedIds: new Set() });
+
+    case "ENTER_COMPOSE":
+      return {
+        ...state,
+        composeMode: true,
+        composeFields: { to: "", cc: "", subject: "", body: "", activeField: "to" },
+      };
+
+    case "EXIT_COMPOSE":
+      return { ...state, composeMode: false };
+
+    case "SET_COMPOSE_FIELD":
+      return {
+        ...state,
+        composeFields: { ...state.composeFields, [action.field]: action.value },
+      };
+
+    case "NEXT_COMPOSE_FIELD": {
+      const fields: Array<"to" | "cc" | "subject" | "body"> = ["to", "cc", "subject", "body"];
+      const idx = fields.indexOf(state.composeFields.activeField);
+      const nextField = fields[(idx + 1) % fields.length];
+      return {
+        ...state,
+        composeFields: { ...state.composeFields, activeField: nextField },
+      };
+    }
+
+    case "ENTER_REPLY_ALL":
+      return { ...state, replyAllMode: true, replyMode: true, replyInput: "" };
+
+    case "EXIT_REPLY_ALL":
+      return { ...state, replyAllMode: false };
+
+    case "RESIZE_PANE": {
+      const newRatio = Math.max(0.2, Math.min(0.8, state.splitRatio + action.delta));
+      return { ...state, splitRatio: newRatio };
+    }
+
     default:
       return state;
   }
@@ -457,6 +637,9 @@ export function createInitialState(
         messages: [],
         threads: [],
         loading: true,
+        previousTab: null,
+        searchQuery: "",
+        selectedIds: new Set(),
       },
     ],
     activePaneIndex: 0,
@@ -473,8 +656,13 @@ export function createInitialState(
     tabCompletionBase: "",
     replyMode: false,
     replyInput: "",
+    replyAllMode: false,
     commandHistory: [],
     commandHistoryIndex: -1,
+    undoAction: null,
+    composeMode: false,
+    composeFields: { to: "", cc: "", subject: "", body: "", activeField: "to" },
+    splitRatio: 0.5,
   };
 }
 
