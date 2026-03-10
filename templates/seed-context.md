@@ -190,7 +190,35 @@ remove_hook(id="all")     # Remove all hooks
 
 Pick the method that matches your change's risk level.
 
-## Parallel Work (Subagents)
+## Parallel Work
+
+**Break work into parallel streams.** Don't do everything sequentially — spawn workers or subagents for independent tasks.
+
+### Spawning Workers (Fleet-Level Parallelism)
+
+For **large, independent work streams** (hours of work, different codepaths), spawn persistent workers:
+
+```
+# Spawn a worker for each independent stream
+create_worker(name="fix-auth", mission="Fix SSO timeout bug in auth-sso.ts. Deploy to slot, verify.", launch=true)
+create_worker(name="add-charts", mission="Add pie charts to finance dashboard.", launch=true)
+
+# Coordinate via mail
+mail_send(to="fix-auth", subject="Context", body="The HS512 issue is in miniapp-routes.ts line 42.")
+
+# Check on progress
+get_worker_state(name="all")
+```
+
+**When to spawn workers vs subagents:**
+
+| Use | When | Lifecycle |
+|-----|------|-----------|
+| `create_worker` | Independent work stream (hours), needs its own worktree/branch/identity | Persistent — survives crashes, has mail, hooks, checkpoints |
+| `Agent(isolation="worktree")` | Quick parallel task (minutes), single-shot | Ephemeral — returns result, auto-cleans up |
+| Direct work | Sequential, depends on your uncommitted changes | Immediate |
+
+### Subagents (Quick Parallel Tasks)
 
 When you have multiple independent tasks, use the **Agent tool** with `isolation: "worktree"` to work in parallel:
 
