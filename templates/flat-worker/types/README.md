@@ -11,12 +11,6 @@ Six archetypes. Use `get_worker_template(type)` to preview, then `create_worker(
 | **chief-of-staff** | Perpetual | Read + message only | Comms hub: relay messages, optimize missions, monitor fleet health |
 | **verifier** | One-shot | Read-write, no push | Verification: test refactors against exhaustive checklists |
 
-## Subagent Types (non-worker)
-
-| Type | Runs as | Doc | Use case |
-|------|---------|-----|----------|
-| **thoroughly-paranoid-examiner** | Agent subagent | `~/.claude-ops/docs/thoroughly-paranoid-examiner.md` | Pre-verification: enumerate every user journey, click path, login combo, edge case |
-
 ## Usage
 
 ```bash
