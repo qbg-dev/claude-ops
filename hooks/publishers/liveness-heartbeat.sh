@@ -21,4 +21,5 @@ if [ -n "$_AID" ]; then
 else
   date +%s > "$RUNTIME_DIR/liveness"
 fi
+echo '{}'
 exit 0

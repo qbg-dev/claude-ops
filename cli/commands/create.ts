@@ -98,7 +98,7 @@ export async function runCreate(
     model,
     reasoning_effort: effort,
     permission_mode: perm,
-    sleep_duration: sleepDuration,
+    sleep_duration: sleepDuration ?? null,
     window,
     worktree: worktreeDir,
     branch,

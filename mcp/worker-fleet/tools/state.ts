@@ -164,14 +164,14 @@ server.registerTool(
         writeFileSync(join(cacheDir, "config-cache.json"), stateJson);
       } catch {}
 
-      // Emit bus event (best-effort)
+      // Emit bus event (best-effort) — pass payload via env to avoid shell injection
       try {
         const payload = JSON.stringify({
           worker: targetName, key, value, channel: "worker-fleet-mcp", updated_by: WORKER_NAME,
         });
         execSync(
-          `source "${CLAUDE_OPS}/lib/event-bus.sh" && bus_publish "agent.state-changed" '${payload.replace(/'/g, "'\\''")}'`,
-          { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash" }
+          `source "${CLAUDE_OPS}/lib/event-bus.sh" && bus_publish "agent.state-changed" "$BUS_PAYLOAD"`,
+          { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash", env: { ...process.env, BUS_PAYLOAD: payload } }
         );
       } catch {}
 

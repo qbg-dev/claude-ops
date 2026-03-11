@@ -63,11 +63,11 @@ export function generateSeed(workerName: string, projectRoot: string): string {
   const claudeOps = process.env.CLAUDE_OPS_DIR || process.env.TMUX_AGENTS_DIR || join(process.env.HOME!, ".tmux-agents");
   const result = Bun.spawnSync(
     [Bun.which("bun") || "bun", "-e", `
-      const { generateSeedContent } = await import('${claudeOps}/mcp/worker-fleet/index.ts');
-      process.stdout.write(generateSeedContent('${workerName}'));
+      const { generateSeedContent } = await import(process.env._FLEET_OPS_DIR + '/mcp/worker-fleet/index.ts');
+      process.stdout.write(generateSeedContent(process.env.WORKER_NAME));
     `],
     {
-      env: { ...process.env, WORKER_NAME: workerName, PROJECT_ROOT: projectRoot },
+      env: { ...process.env, WORKER_NAME: workerName, PROJECT_ROOT: projectRoot, _FLEET_OPS_DIR: claudeOps },
       stderr: "pipe",
     },
   );

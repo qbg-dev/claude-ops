@@ -8,7 +8,7 @@ import type { WatchdogEffects } from "./types";
 /** Known blocking patterns in Claude Code TUI */
 const BLOCKING_PATTERNS = /Waiting for task|hook error[\s\S]*hook error|No output[\s\S]*No output/;
 
-/** Claude TUI idle indicator (status bar) */
+/** Claude TUI idle indicator (status bar — matches the bypass permissions status line) */
 const IDLE_INDICATOR = /bypass permissions/;
 
 /**

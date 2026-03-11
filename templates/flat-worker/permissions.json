@@ -1,7 +1,7 @@
 {
   "model": "opus",
   "permission_mode": "bypassPermissions",
-  "disallowed_tools": [
+  "denyList": [
     "Bash(git checkout main*)",
     "Bash(git merge*)",
     "Bash(git push*)",

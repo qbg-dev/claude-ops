@@ -633,46 +633,7 @@ export function canUpdateWorker(callerName: string, targetName: string, registry
 }
 
 // ── Inbox Helpers ────────────────────────────────────────────────────
-
-/** Write an escalation entry to the triage queue (.claude/triage/queue.jsonl) */
-export function writeToTriageQueue(
-  content: string,
-  summary: string | undefined,
-  fromWorker: string,
-  opts?: { options?: string[]; category?: string; urgency?: string },
-): { ok: true; id: string } | { ok: false; error: string } {
-  try {
-    const triageDir = join(PROJECT_ROOT, ".claude/triage");
-    if (!existsSync(triageDir)) mkdirSync(triageDir, { recursive: true });
-    const triagePath = join(triageDir, "queue.jsonl");
-    const id = `tq-${Date.now()}`;
-    const entry: Record<string, any> = {
-      id,
-      category: opts?.category || (opts?.options?.length ? "worker-question" : "worker-escalation"),
-      title: summary || content.slice(0, 60),
-      detail: content,
-      source: fromWorker,
-      from_worker: fromWorker,
-      added_at: new Date().toISOString(),
-      status: "pending",
-    };
-    if (opts?.options?.length) entry.options = opts.options;
-    if (opts?.urgency) entry.urgency = opts.urgency;
-    const { appendFileSync } = require("fs");
-    appendFileSync(triagePath, JSON.stringify(entry) + "\n");
-    return { ok: true, id };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
-
-/** Build structured message body from content + optional context/options */
-export function buildMessageBody(content: string, context?: string, options?: string[]): string {
-  let body = content;
-  if (context) body += `\n\n---\n${context}`;
-  if (options?.length) body += `\n\nOptions:\n${options.map((o, i) => `  ${i + 1}) ${o}`).join("\n")}`;
-  return body;
-}
+// writeToTriageQueue and buildMessageBody are in helpers.ts (canonical versions)
 
 /** Read worker's model from registry */
 export function getWorkerModel(): string {

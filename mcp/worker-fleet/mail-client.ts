@@ -252,11 +252,20 @@ export async function resolveFleetMailAccountId(name: string): Promise<string> {
         _fleetMailDirectoryCache[nsUserName] = acct.id;
         return nsUserName;
       }
-      // 409 = already exists but not in cache — refresh
+      // 409 = already exists but not in cache — refresh (max 1 retry)
       if (provResp.status === 409) {
+        if ((resolveFleetMailAccountId as any)._retrying) {
+          delete (resolveFleetMailAccountId as any)._retrying;
+          throw new Error(`Fleet Mail account '${nsName}' exists but cannot be resolved after retry`);
+        }
+        (resolveFleetMailAccountId as any)._retrying = true;
         _fleetMailDirectoryCache = null;
         _fleetMailDirCacheTime = 0;
-        return resolveFleetMailAccountId(name);
+        try {
+          return await resolveFleetMailAccountId(name);
+        } finally {
+          delete (resolveFleetMailAccountId as any)._retrying;
+        }
       }
     } catch {}
   }

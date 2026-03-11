@@ -12,7 +12,7 @@
 import { mkdirSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync } from "fs";
 import { join } from "path";
 import { resolveConfig, resolveProjectRoot, resolveProjectName, CRASH_DIR, RUNTIME_DIR, FLEET_DATA, FLEET_CLI } from "./config";
-import { logInfo, logError, setQuiet } from "./logger";
+import { logInfo, logWarn, logError, setQuiet } from "./logger";
 import { checkWorkerAsync } from "./worker-checker";
 import { markCrashLoop } from "./crash-tracker";
 import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow } from "./pane-manager";
@@ -177,10 +177,15 @@ async function runOnce(): Promise<void> {
 
 function launchViaFleet(workerName: string): void {
   const fleet = Bun.which("fleet") || FLEET_CLI;
-  Bun.spawn([fleet, "start", workerName, "-p", projectName], {
+  const result = Bun.spawnSync([fleet, "start", workerName, "-p", projectName], {
     stderr: "pipe",
     stdout: "pipe",
+    timeout: 30_000,
   });
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr?.toString().trim().slice(0, 200) || "unknown error";
+    logWarn("LAUNCH-FAIL", `fleet start ${workerName} exited ${result.exitCode}: ${stderr}`, workerName);
+  }
 }
 
 function updateStateRelaunch(workerName: string, reason: string): void {

@@ -8,6 +8,7 @@ import { join } from "path";
 import type { WatchdogEffects } from "./types";
 import { RUNTIME_DIR, FLEET_DATA } from "./config";
 import { listAlivePanes } from "./pane-manager";
+import { logWarn } from "./logger";
 
 /** Create production effects for a given project */
 export function createProductionEffects(projectName: string): WatchdogEffects {
@@ -118,7 +119,8 @@ export function createProductionEffects(projectName: string): WatchdogEffects {
         const data = await resp.json() as any;
         const count = data?._diagnostics?.unread_count ?? data?.messages?.length ?? 0;
         return count > 0;
-      } catch {
+      } catch (e) {
+        logWarn("MAIL-CHECK", `Fleet Mail check failed for ${worker}: ${e instanceof Error ? e.message : e}`, worker);
         return false;
       }
     },
