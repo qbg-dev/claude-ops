@@ -173,7 +173,7 @@ export function runDiagnostics(): DiagnosticIssue[] {
       issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json.`, fix: "Run update_state('pane_id', '" + process.env.TMUX_PANE + "') to fix" });
     }
   } else {
-    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — not running in tmux. Messaging and watchdog will NOT work.", fix: "Launch via launch-flat-worker.sh" });
+    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set — not running in tmux. Messaging and watchdog will NOT work.", fix: "Launch via `fleet start <name>`" });
   }
 
   // ── Registry linter ──
@@ -203,7 +203,7 @@ export function runDiagnostics(): DiagnosticIssue[] {
     for (const [hookName, desc] of requiredHooks) {
       const hookPath = join(hooksDir, hookName);
       if (!existsSync(hookPath)) {
-        issues.push({ severity: "warning", check: `git.hook.${hookName}`, message: `Git ${hookName} hook not installed — ${desc}`, fix: `Relaunch with launch-flat-worker.sh to install hooks, or manually copy from ~/.claude-ops/scripts/worker-${hookName.replace("-", "-")}-hook.sh` });
+        issues.push({ severity: "warning", check: `git.hook.${hookName}`, message: `Git ${hookName} hook not installed — ${desc}`, fix: `Relaunch with \`fleet start\` to install hooks, or manually copy from scripts/worker-${hookName}-hook.sh` });
       } else {
         // Check it's executable
         try {

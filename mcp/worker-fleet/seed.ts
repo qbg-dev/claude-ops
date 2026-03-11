@@ -27,7 +27,7 @@ export function loadSeedContext(branch: string, missionAuthority: string, worker
 
 // ── Seed Content Generation ──────────────────────────────────────────
 
-/** Generate the seed prompt content for a worker (same template as launch-flat-worker.sh).
+/** Generate the seed prompt content for a worker.
  *  Optional workerName parameter allows generating seeds for any worker (used by watchdog). */
 export function generateSeedContent(handoff?: string, workerName?: string): string {
   const effectiveName = workerName || WORKER_NAME;
