@@ -26,6 +26,8 @@ var __export = (target, all) => {
       set: (newValue) => all[name] = () => newValue
     });
 };
+var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
+var __require = import.meta.require;
 
 // node_modules/.bun/ajv@8.18.0/node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS((exports) => {
@@ -6497,6 +6499,987 @@ var require_dist = __commonJS((exports, module) => {
   module.exports = exports = formatsPlugin;
   Object.defineProperty(exports, "__esModule", { value: true });
   exports.default = formatsPlugin;
+});
+
+// shared/lock-utils.ts
+import { mkdirSync, rmSync } from "fs";
+function acquireLock(lockPath, maxWaitMs = 1e4) {
+  const start = Date.now();
+  while (true) {
+    try {
+      mkdirSync(lockPath, { recursive: false });
+      return true;
+    } catch {
+      if (Date.now() - start > maxWaitMs) {
+        try {
+          rmSync(lockPath, { recursive: true, force: true });
+        } catch {}
+        try {
+          mkdirSync(lockPath, { recursive: false });
+          return true;
+        } catch {}
+        return false;
+      }
+      globalThis.Bun.sleepSync(100);
+    }
+  }
+}
+function releaseLock(lockPath) {
+  try {
+    rmSync(lockPath, { recursive: true, force: true });
+  } catch {}
+}
+var init_lock_utils = () => {};
+
+// shared/types.ts
+var SYSTEM_HOOKS;
+var init_types = __esm(() => {
+  SYSTEM_HOOKS = [
+    { id: "sys-1", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "rm\\s+-rf\\s+[/~.]" }, action: "block", message: "Catastrophic rm -rf blocked" },
+    { id: "sys-2", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+reset\\s+--hard" }, action: "block", message: "git reset --hard blocked" },
+    { id: "sys-3", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+clean\\s+-[fd]" }, action: "block", message: "git clean blocked" },
+    { id: "sys-4", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+push.*--force" }, action: "block", message: "Force push blocked" },
+    { id: "sys-5", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+checkout\\s+main\\b" }, action: "block", message: "Workers stay on their branch" },
+    { id: "sys-6", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+merge\\b" }, action: "block", message: "Workers don't merge \u2014 use Fleet Mail" },
+    { id: "sys-7", owner: "system", event: "PreToolUse", tool: "Edit", condition: { file_glob: "**/fleet/**/config.json" }, action: "block", message: "Use update_worker_config tool" },
+    { id: "sys-8", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/config.json" }, action: "block", message: "Use update_worker_config tool" },
+    { id: "sys-9", owner: "system", event: "PreToolUse", tool: "Edit", condition: { file_glob: "**/fleet/**/state.json" }, action: "block", message: "Use update_state tool" },
+    { id: "sys-10", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/state.json" }, action: "block", message: "Use update_state tool" },
+    { id: "sys-11", owner: "system", event: "PreToolUse", tool: "Edit", condition: { file_glob: "**/fleet/**/token" }, action: "block", message: "Token is auto-provisioned" },
+    { id: "sys-12", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/token" }, action: "block", message: "Token is auto-provisioned" }
+  ];
+});
+
+// cli/lib/paths.ts
+import { join as join12 } from "path";
+import { existsSync as existsSync9, readFileSync as readFileSync9 } from "fs";
+function resolveMailConfig() {
+  const envUrl = process.env.FLEET_MAIL_URL || null;
+  const envToken = process.env.FLEET_MAIL_TOKEN || null;
+  let fileUrl = null;
+  let fileToken = null;
+  const dp = defaultsPath();
+  if (existsSync9(dp)) {
+    try {
+      const d = JSON.parse(readFileSync9(dp, "utf-8"));
+      if (d.fleet_mail_url)
+        fileUrl = String(d.fleet_mail_url);
+      if (d.fleet_mail_token)
+        fileToken = String(d.fleet_mail_token);
+    } catch {}
+  }
+  return {
+    url: envUrl || fileUrl,
+    token: envToken || fileToken
+  };
+}
+function workerDir(project, name) {
+  return join12(FLEET_DATA, project, name);
+}
+function configPath(project, name) {
+  return join12(workerDir(project, name), "config.json");
+}
+function defaultsPath() {
+  return join12(FLEET_DATA, "defaults.json");
+}
+var HOME2, FLEET_DIR2, FLEET_DATA, _mailConfig, FLEET_MAIL_URL2, FLEET_MAIL_TOKEN;
+var init_paths = __esm(() => {
+  HOME2 = process.env.HOME || process.env.USERPROFILE || "/tmp";
+  FLEET_DIR2 = process.env.CLAUDE_FLEET_DIR || process.env.CLAUDE_OPS_DIR || join12(HOME2, ".claude-fleet");
+  FLEET_DATA = join12(HOME2, ".claude", "fleet");
+  _mailConfig = resolveMailConfig();
+  FLEET_MAIL_URL2 = _mailConfig.url;
+  FLEET_MAIL_TOKEN = _mailConfig.token;
+});
+
+// shared/io.ts
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync8, mkdirSync as mkdirSync8 } from "fs";
+import { dirname, join as join13 } from "path";
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync10(path, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function writeJson(path, data) {
+  mkdirSync8(dirname(path), { recursive: true });
+  writeFileSync8(path, JSON.stringify(data, null, 2) + `
+`);
+}
+function writeJsonLocked(path, data) {
+  mkdirSync8(dirname(REGISTRY_LOCK_PATH), { recursive: true });
+  if (!acquireLock(REGISTRY_LOCK_PATH)) {
+    throw new Error("Could not acquire worker-registry lock after 10s \u2014 stale lock?");
+  }
+  try {
+    writeJson(path, data);
+  } finally {
+    releaseLock(REGISTRY_LOCK_PATH);
+  }
+}
+var HOME3, FLEET_ROOT, REGISTRY_LOCK_PATH;
+var init_io = __esm(() => {
+  init_lock_utils();
+  HOME3 = process.env.HOME || process.env.USERPROFILE || "/tmp";
+  FLEET_ROOT = process.env.CLAUDE_FLEET_DIR || process.env.CLAUDE_OPS_DIR || join13(HOME3, ".claude-fleet");
+  REGISTRY_LOCK_PATH = join13(FLEET_ROOT, "state", "locks", "worker-registry");
+});
+
+// cli/lib/config.ts
+function getConfig(project, name) {
+  const cp = configPath(project, name);
+  return readJson(cp);
+}
+function getState(project, name) {
+  const sp = `${workerDir(project, name)}/state.json`;
+  return readJson(sp);
+}
+var init_config = __esm(() => {
+  init_paths();
+  init_types();
+  init_types();
+  init_io();
+  init_io();
+  init_types();
+});
+
+// cli/lib/tmux.ts
+function run(args) {
+  const result = Bun.spawnSync(["tmux", ...args], { stderr: "pipe" });
+  return {
+    ok: result.exitCode === 0,
+    stdout: result.stdout.toString().trim(),
+    stderr: result.stderr.toString().trim()
+  };
+}
+function sessionExists(session) {
+  return run(["has-session", "-t", session]).ok;
+}
+function createSession(session, window, cwd) {
+  run(["new-session", "-d", "-s", session, "-n", window, "-c", cwd]);
+  const { stdout } = run(["list-panes", "-t", session, "-F", "#{pane_id}"]);
+  return stdout.split(`
+`)[0];
+}
+function getPaneTarget(paneId) {
+  const { stdout } = run([
+    "list-panes",
+    "-a",
+    "-F",
+    "#{pane_id} #{session_name}:#{window_index}.#{pane_index}"
+  ]);
+  for (const line of stdout.split(`
+`)) {
+    const [id, target] = line.split(" ");
+    if (id === paneId)
+      return target || "";
+  }
+  return "";
+}
+function windowExists(session, window) {
+  const { ok, stdout } = run(["list-windows", "-t", session, "-F", "#{window_name}"]);
+  if (!ok)
+    return false;
+  return stdout.split(`
+`).includes(window);
+}
+function splitIntoWindow(session, window, cwd) {
+  const { stdout } = run([
+    "split-window",
+    "-t",
+    `${session}:${window}`,
+    "-c",
+    cwd,
+    "-d",
+    "-P",
+    "-F",
+    "#{pane_id}"
+  ]);
+  run(["select-layout", "-t", `${session}:${window}`, "tiled"]);
+  return stdout;
+}
+function createWindow(session, window, cwd, index) {
+  if (index === undefined) {
+    const { stdout: windowList } = run(["list-windows", "-t", session, "-F", "#{window_index}"]);
+    const usedIndices = new Set(windowList.split(`
+`).filter(Boolean).map(Number));
+    const { stdout: baseStr } = run(["show-options", "-gv", "base-index"]);
+    let freeIndex = parseInt(baseStr, 10) || 1;
+    while (usedIndices.has(freeIndex))
+      freeIndex++;
+    index = freeIndex;
+  }
+  const target = `${session}:${index}`;
+  const { stdout } = run([
+    "new-window",
+    "-t",
+    target,
+    "-n",
+    window,
+    "-c",
+    cwd,
+    "-d",
+    "-P",
+    "-F",
+    "#{pane_id}"
+  ]);
+  return stdout;
+}
+function setPaneTitle(paneId, title) {
+  run(["select-pane", "-T", title, "-t", paneId]);
+}
+function sendKeys(paneId, text) {
+  run(["send-keys", "-t", paneId, text]);
+}
+function sendEnter(paneId) {
+  run(["send-keys", "-t", paneId, "-H", "0d"]);
+}
+function capturePane(paneId, lines = 100) {
+  const { ok, stdout } = run(["capture-pane", "-t", paneId, "-p", "-S", `-${lines}`]);
+  return ok ? stdout : "";
+}
+async function waitForPrompt(paneId, timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const output = capturePane(paneId, 5);
+    if (/[\u276F>]\s*$/m.test(output))
+      return true;
+    await Bun.sleep(2000);
+  }
+  return false;
+}
+function pasteBuffer(paneId, content) {
+  const { writeFileSync: writeFileSync9, unlinkSync: unlinkSync2 } = __require("fs");
+  const MAX_CHUNK = 8 * 1024;
+  if (content.length > MAX_CHUNK) {
+    const tmpFile2 = `/tmp/fleet-paste-${process.pid}.txt`;
+    writeFileSync9(tmpFile2, content);
+    try {
+      const bufName = `fleet-${process.pid}`;
+      run(["delete-buffer", "-b", bufName]);
+      const load = run(["load-buffer", "-b", bufName, tmpFile2]);
+      if (!load.ok)
+        return false;
+      run(["paste-buffer", "-b", bufName, "-t", paneId]);
+      Bun.sleepSync(500);
+      run(["delete-buffer", "-b", bufName]);
+      return true;
+    } finally {
+      try {
+        unlinkSync2(tmpFile2);
+      } catch {}
+    }
+  }
+  const tmpFile = `/tmp/fleet-paste-${process.pid}.txt`;
+  writeFileSync9(tmpFile, content);
+  try {
+    const bufName = `fleet-${process.pid}`;
+    run(["delete-buffer", "-b", bufName]);
+    const load = run(["load-buffer", "-b", bufName, tmpFile]);
+    if (!load.ok)
+      return false;
+    run(["paste-buffer", "-b", bufName, "-t", paneId, "-d"]);
+    return true;
+  } finally {
+    try {
+      unlinkSync2(tmpFile);
+    } catch {}
+  }
+}
+
+// node_modules/.bun/chalk@5.6.2/node_modules/chalk/source/vendor/ansi-styles/index.js
+function assembleStyles() {
+  const codes = new Map;
+  for (const [groupName, group] of Object.entries(styles)) {
+    for (const [styleName, style] of Object.entries(group)) {
+      styles[styleName] = {
+        open: `\x1B[${style[0]}m`,
+        close: `\x1B[${style[1]}m`
+      };
+      group[styleName] = styles[styleName];
+      codes.set(style[0], style[1]);
+    }
+    Object.defineProperty(styles, groupName, {
+      value: group,
+      enumerable: false
+    });
+  }
+  Object.defineProperty(styles, "codes", {
+    value: codes,
+    enumerable: false
+  });
+  styles.color.close = "\x1B[39m";
+  styles.bgColor.close = "\x1B[49m";
+  styles.color.ansi = wrapAnsi16();
+  styles.color.ansi256 = wrapAnsi256();
+  styles.color.ansi16m = wrapAnsi16m();
+  styles.bgColor.ansi = wrapAnsi16(ANSI_BACKGROUND_OFFSET);
+  styles.bgColor.ansi256 = wrapAnsi256(ANSI_BACKGROUND_OFFSET);
+  styles.bgColor.ansi16m = wrapAnsi16m(ANSI_BACKGROUND_OFFSET);
+  Object.defineProperties(styles, {
+    rgbToAnsi256: {
+      value(red, green, blue) {
+        if (red === green && green === blue) {
+          if (red < 8) {
+            return 16;
+          }
+          if (red > 248) {
+            return 231;
+          }
+          return Math.round((red - 8) / 247 * 24) + 232;
+        }
+        return 16 + 36 * Math.round(red / 255 * 5) + 6 * Math.round(green / 255 * 5) + Math.round(blue / 255 * 5);
+      },
+      enumerable: false
+    },
+    hexToRgb: {
+      value(hex) {
+        const matches = /[a-f\d]{6}|[a-f\d]{3}/i.exec(hex.toString(16));
+        if (!matches) {
+          return [0, 0, 0];
+        }
+        let [colorString] = matches;
+        if (colorString.length === 3) {
+          colorString = [...colorString].map((character) => character + character).join("");
+        }
+        const integer2 = Number.parseInt(colorString, 16);
+        return [
+          integer2 >> 16 & 255,
+          integer2 >> 8 & 255,
+          integer2 & 255
+        ];
+      },
+      enumerable: false
+    },
+    hexToAnsi256: {
+      value: (hex) => styles.rgbToAnsi256(...styles.hexToRgb(hex)),
+      enumerable: false
+    },
+    ansi256ToAnsi: {
+      value(code) {
+        if (code < 8) {
+          return 30 + code;
+        }
+        if (code < 16) {
+          return 90 + (code - 8);
+        }
+        let red;
+        let green;
+        let blue;
+        if (code >= 232) {
+          red = ((code - 232) * 10 + 8) / 255;
+          green = red;
+          blue = red;
+        } else {
+          code -= 16;
+          const remainder = code % 36;
+          red = Math.floor(code / 36) / 5;
+          green = Math.floor(remainder / 6) / 5;
+          blue = remainder % 6 / 5;
+        }
+        const value = Math.max(red, green, blue) * 2;
+        if (value === 0) {
+          return 30;
+        }
+        let result = 30 + (Math.round(blue) << 2 | Math.round(green) << 1 | Math.round(red));
+        if (value === 2) {
+          result += 60;
+        }
+        return result;
+      },
+      enumerable: false
+    },
+    rgbToAnsi: {
+      value: (red, green, blue) => styles.ansi256ToAnsi(styles.rgbToAnsi256(red, green, blue)),
+      enumerable: false
+    },
+    hexToAnsi: {
+      value: (hex) => styles.ansi256ToAnsi(styles.hexToAnsi256(hex)),
+      enumerable: false
+    }
+  });
+  return styles;
+}
+var ANSI_BACKGROUND_OFFSET = 10, wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`, wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`, wrapAnsi16m = (offset = 0) => (red, green, blue) => `\x1B[${38 + offset};2;${red};${green};${blue}m`, styles, modifierNames, foregroundColorNames, backgroundColorNames, colorNames, ansiStyles, ansi_styles_default;
+var init_ansi_styles = __esm(() => {
+  styles = {
+    modifier: {
+      reset: [0, 0],
+      bold: [1, 22],
+      dim: [2, 22],
+      italic: [3, 23],
+      underline: [4, 24],
+      overline: [53, 55],
+      inverse: [7, 27],
+      hidden: [8, 28],
+      strikethrough: [9, 29]
+    },
+    color: {
+      black: [30, 39],
+      red: [31, 39],
+      green: [32, 39],
+      yellow: [33, 39],
+      blue: [34, 39],
+      magenta: [35, 39],
+      cyan: [36, 39],
+      white: [37, 39],
+      blackBright: [90, 39],
+      gray: [90, 39],
+      grey: [90, 39],
+      redBright: [91, 39],
+      greenBright: [92, 39],
+      yellowBright: [93, 39],
+      blueBright: [94, 39],
+      magentaBright: [95, 39],
+      cyanBright: [96, 39],
+      whiteBright: [97, 39]
+    },
+    bgColor: {
+      bgBlack: [40, 49],
+      bgRed: [41, 49],
+      bgGreen: [42, 49],
+      bgYellow: [43, 49],
+      bgBlue: [44, 49],
+      bgMagenta: [45, 49],
+      bgCyan: [46, 49],
+      bgWhite: [47, 49],
+      bgBlackBright: [100, 49],
+      bgGray: [100, 49],
+      bgGrey: [100, 49],
+      bgRedBright: [101, 49],
+      bgGreenBright: [102, 49],
+      bgYellowBright: [103, 49],
+      bgBlueBright: [104, 49],
+      bgMagentaBright: [105, 49],
+      bgCyanBright: [106, 49],
+      bgWhiteBright: [107, 49]
+    }
+  };
+  modifierNames = Object.keys(styles.modifier);
+  foregroundColorNames = Object.keys(styles.color);
+  backgroundColorNames = Object.keys(styles.bgColor);
+  colorNames = [...foregroundColorNames, ...backgroundColorNames];
+  ansiStyles = assembleStyles();
+  ansi_styles_default = ansiStyles;
+});
+
+// node_modules/.bun/chalk@5.6.2/node_modules/chalk/source/vendor/supports-color/index.js
+import process3 from "process";
+import os from "os";
+import tty from "tty";
+function hasFlag(flag, argv = globalThis.Deno ? globalThis.Deno.args : process3.argv) {
+  const prefix = flag.startsWith("-") ? "" : flag.length === 1 ? "-" : "--";
+  const position = argv.indexOf(prefix + flag);
+  const terminatorPosition = argv.indexOf("--");
+  return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
+}
+function envForceColor() {
+  if ("FORCE_COLOR" in env) {
+    if (env.FORCE_COLOR === "true") {
+      return 1;
+    }
+    if (env.FORCE_COLOR === "false") {
+      return 0;
+    }
+    return env.FORCE_COLOR.length === 0 ? 1 : Math.min(Number.parseInt(env.FORCE_COLOR, 10), 3);
+  }
+}
+function translateLevel(level) {
+  if (level === 0) {
+    return false;
+  }
+  return {
+    level,
+    hasBasic: true,
+    has256: level >= 2,
+    has16m: level >= 3
+  };
+}
+function _supportsColor(haveStream, { streamIsTTY, sniffFlags = true } = {}) {
+  const noFlagForceColor = envForceColor();
+  if (noFlagForceColor !== undefined) {
+    flagForceColor = noFlagForceColor;
+  }
+  const forceColor = sniffFlags ? flagForceColor : noFlagForceColor;
+  if (forceColor === 0) {
+    return 0;
+  }
+  if (sniffFlags) {
+    if (hasFlag("color=16m") || hasFlag("color=full") || hasFlag("color=truecolor")) {
+      return 3;
+    }
+    if (hasFlag("color=256")) {
+      return 2;
+    }
+  }
+  if ("TF_BUILD" in env && "AGENT_NAME" in env) {
+    return 1;
+  }
+  if (haveStream && !streamIsTTY && forceColor === undefined) {
+    return 0;
+  }
+  const min = forceColor || 0;
+  if (env.TERM === "dumb") {
+    return min;
+  }
+  if (process3.platform === "win32") {
+    const osRelease = os.release().split(".");
+    if (Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
+      return Number(osRelease[2]) >= 14931 ? 3 : 2;
+    }
+    return 1;
+  }
+  if ("CI" in env) {
+    if (["GITHUB_ACTIONS", "GITEA_ACTIONS", "CIRCLECI"].some((key) => (key in env))) {
+      return 3;
+    }
+    if (["TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE"].some((sign) => (sign in env)) || env.CI_NAME === "codeship") {
+      return 1;
+    }
+    return min;
+  }
+  if ("TEAMCITY_VERSION" in env) {
+    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+  }
+  if (env.COLORTERM === "truecolor") {
+    return 3;
+  }
+  if (env.TERM === "xterm-kitty") {
+    return 3;
+  }
+  if (env.TERM === "xterm-ghostty") {
+    return 3;
+  }
+  if (env.TERM === "wezterm") {
+    return 3;
+  }
+  if ("TERM_PROGRAM" in env) {
+    const version2 = Number.parseInt((env.TERM_PROGRAM_VERSION || "").split(".")[0], 10);
+    switch (env.TERM_PROGRAM) {
+      case "iTerm.app": {
+        return version2 >= 3 ? 3 : 2;
+      }
+      case "Apple_Terminal": {
+        return 2;
+      }
+    }
+  }
+  if (/-256(color)?$/i.test(env.TERM)) {
+    return 2;
+  }
+  if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+    return 1;
+  }
+  if ("COLORTERM" in env) {
+    return 1;
+  }
+  return min;
+}
+function createSupportsColor(stream, options = {}) {
+  const level = _supportsColor(stream, {
+    streamIsTTY: stream && stream.isTTY,
+    ...options
+  });
+  return translateLevel(level);
+}
+var env, flagForceColor, supportsColor, supports_color_default;
+var init_supports_color = __esm(() => {
+  ({ env } = process3);
+  if (hasFlag("no-color") || hasFlag("no-colors") || hasFlag("color=false") || hasFlag("color=never")) {
+    flagForceColor = 0;
+  } else if (hasFlag("color") || hasFlag("colors") || hasFlag("color=true") || hasFlag("color=always")) {
+    flagForceColor = 1;
+  }
+  supportsColor = {
+    stdout: createSupportsColor({ isTTY: tty.isatty(1) }),
+    stderr: createSupportsColor({ isTTY: tty.isatty(2) })
+  };
+  supports_color_default = supportsColor;
+});
+
+// node_modules/.bun/chalk@5.6.2/node_modules/chalk/source/utilities.js
+function stringReplaceAll(string4, substring, replacer) {
+  let index = string4.indexOf(substring);
+  if (index === -1) {
+    return string4;
+  }
+  const substringLength = substring.length;
+  let endIndex = 0;
+  let returnValue = "";
+  do {
+    returnValue += string4.slice(endIndex, index) + substring + replacer;
+    endIndex = index + substringLength;
+    index = string4.indexOf(substring, endIndex);
+  } while (index !== -1);
+  returnValue += string4.slice(endIndex);
+  return returnValue;
+}
+function stringEncaseCRLFWithFirstIndex(string4, prefix, postfix, index) {
+  let endIndex = 0;
+  let returnValue = "";
+  do {
+    const gotCR = string4[index - 1] === "\r";
+    returnValue += string4.slice(endIndex, gotCR ? index - 1 : index) + prefix + (gotCR ? `\r
+` : `
+`) + postfix;
+    endIndex = index + 1;
+    index = string4.indexOf(`
+`, endIndex);
+  } while (index !== -1);
+  returnValue += string4.slice(endIndex);
+  return returnValue;
+}
+
+// node_modules/.bun/chalk@5.6.2/node_modules/chalk/source/index.js
+function createChalk(options) {
+  return chalkFactory(options);
+}
+var stdoutColor, stderrColor, GENERATOR, STYLER, IS_EMPTY, levelMapping, styles2, applyOptions = (object4, options = {}) => {
+  if (options.level && !(Number.isInteger(options.level) && options.level >= 0 && options.level <= 3)) {
+    throw new Error("The `level` option should be an integer from 0 to 3");
+  }
+  const colorLevel = stdoutColor ? stdoutColor.level : 0;
+  object4.level = options.level === undefined ? colorLevel : options.level;
+}, chalkFactory = (options) => {
+  const chalk = (...strings) => strings.join(" ");
+  applyOptions(chalk, options);
+  Object.setPrototypeOf(chalk, createChalk.prototype);
+  return chalk;
+}, getModelAnsi = (model, level, type, ...arguments_) => {
+  if (model === "rgb") {
+    if (level === "ansi16m") {
+      return ansi_styles_default[type].ansi16m(...arguments_);
+    }
+    if (level === "ansi256") {
+      return ansi_styles_default[type].ansi256(ansi_styles_default.rgbToAnsi256(...arguments_));
+    }
+    return ansi_styles_default[type].ansi(ansi_styles_default.rgbToAnsi(...arguments_));
+  }
+  if (model === "hex") {
+    return getModelAnsi("rgb", level, type, ...ansi_styles_default.hexToRgb(...arguments_));
+  }
+  return ansi_styles_default[type][model](...arguments_);
+}, usedModels, proto, createStyler = (open, close, parent) => {
+  let openAll;
+  let closeAll;
+  if (parent === undefined) {
+    openAll = open;
+    closeAll = close;
+  } else {
+    openAll = parent.openAll + open;
+    closeAll = close + parent.closeAll;
+  }
+  return {
+    open,
+    close,
+    openAll,
+    closeAll,
+    parent
+  };
+}, createBuilder = (self, _styler, _isEmpty) => {
+  const builder = (...arguments_) => applyStyle(builder, arguments_.length === 1 ? "" + arguments_[0] : arguments_.join(" "));
+  Object.setPrototypeOf(builder, proto);
+  builder[GENERATOR] = self;
+  builder[STYLER] = _styler;
+  builder[IS_EMPTY] = _isEmpty;
+  return builder;
+}, applyStyle = (self, string4) => {
+  if (self.level <= 0 || !string4) {
+    return self[IS_EMPTY] ? "" : string4;
+  }
+  let styler = self[STYLER];
+  if (styler === undefined) {
+    return string4;
+  }
+  const { openAll, closeAll } = styler;
+  if (string4.includes("\x1B")) {
+    while (styler !== undefined) {
+      string4 = stringReplaceAll(string4, styler.close, styler.open);
+      styler = styler.parent;
+    }
+  }
+  const lfIndex = string4.indexOf(`
+`);
+  if (lfIndex !== -1) {
+    string4 = stringEncaseCRLFWithFirstIndex(string4, closeAll, openAll, lfIndex);
+  }
+  return openAll + string4 + closeAll;
+}, chalk, chalkStderr, source_default;
+var init_source = __esm(() => {
+  init_ansi_styles();
+  init_supports_color();
+  ({ stdout: stdoutColor, stderr: stderrColor } = supports_color_default);
+  GENERATOR = Symbol("GENERATOR");
+  STYLER = Symbol("STYLER");
+  IS_EMPTY = Symbol("IS_EMPTY");
+  levelMapping = [
+    "ansi",
+    "ansi",
+    "ansi256",
+    "ansi16m"
+  ];
+  styles2 = Object.create(null);
+  Object.setPrototypeOf(createChalk.prototype, Function.prototype);
+  for (const [styleName, style] of Object.entries(ansi_styles_default)) {
+    styles2[styleName] = {
+      get() {
+        const builder = createBuilder(this, createStyler(style.open, style.close, this[STYLER]), this[IS_EMPTY]);
+        Object.defineProperty(this, styleName, { value: builder });
+        return builder;
+      }
+    };
+  }
+  styles2.visible = {
+    get() {
+      const builder = createBuilder(this, this[STYLER], true);
+      Object.defineProperty(this, "visible", { value: builder });
+      return builder;
+    }
+  };
+  usedModels = ["rgb", "hex", "ansi256"];
+  for (const model of usedModels) {
+    styles2[model] = {
+      get() {
+        const { level } = this;
+        return function(...arguments_) {
+          const styler = createStyler(getModelAnsi(model, levelMapping[level], "color", ...arguments_), ansi_styles_default.color.close, this[STYLER]);
+          return createBuilder(this, styler, this[IS_EMPTY]);
+        };
+      }
+    };
+    const bgModel = "bg" + model[0].toUpperCase() + model.slice(1);
+    styles2[bgModel] = {
+      get() {
+        const { level } = this;
+        return function(...arguments_) {
+          const styler = createStyler(getModelAnsi(model, levelMapping[level], "bgColor", ...arguments_), ansi_styles_default.bgColor.close, this[STYLER]);
+          return createBuilder(this, styler, this[IS_EMPTY]);
+        };
+      }
+    };
+  }
+  proto = Object.defineProperties(() => {}, {
+    ...styles2,
+    level: {
+      enumerable: true,
+      get() {
+        return this[GENERATOR].level;
+      },
+      set(level) {
+        this[GENERATOR].level = level;
+      }
+    }
+  });
+  Object.defineProperties(createChalk.prototype, styles2);
+  chalk = createChalk();
+  chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
+  source_default = chalk;
+});
+
+// cli/lib/fmt.ts
+var ok = (msg) => console.log(`${source_default.green("\u2713")} ${msg}`), info = (msg) => console.log(`${source_default.cyan("\u2192")} ${msg}`), warn = (msg) => console.log(`${source_default.yellow("\u26A0")} ${msg}`), fail = (msg) => {
+  console.error(`${source_default.red("ERROR:")} ${msg}`);
+  process.exit(1);
+};
+var init_fmt = __esm(() => {
+  init_source();
+});
+
+// cli/lib/launch.ts
+var exports_launch = {};
+__export(exports_launch, {
+  launchInTmux: () => launchInTmux
+});
+import { readFileSync as readFileSync11, writeFileSync as writeFileSync9, existsSync as existsSync10, copyFileSync as copyFileSync2, mkdirSync as mkdirSync9 } from "fs";
+import { join as join14 } from "path";
+async function launchInTmux(name, project, session, window, windowIndex, options) {
+  const dir = workerDir(project, name);
+  const config2 = getConfig(project, name);
+  if (!config2)
+    fail(`No config.json for '${name}'`);
+  const worktree = config2.worktree;
+  if (!worktree)
+    fail(`No worktree configured for ${name}`);
+  if (!existsSync10(worktree))
+    fail(`Worktree not found: ${worktree}`);
+  const runtime = options?.runtime || "claude";
+  info(`Launching in tmux (session: ${session}, window: ${window}, runtime: ${runtime})`);
+  const projectRoot = resolveProjectRootFromWorktree(worktree);
+  if (projectRoot && projectRoot !== worktree) {
+    const mcpSrc = join14(projectRoot, ".mcp.json");
+    const mcpDst = join14(worktree, ".mcp.json");
+    if (existsSync10(mcpSrc)) {
+      try {
+        const { unlinkSync: unlinkSync2, symlinkSync: symlinkSync3 } = __require("fs");
+        try {
+          unlinkSync2(mcpDst);
+        } catch {}
+        symlinkSync3(mcpSrc, mcpDst);
+      } catch {}
+    }
+  }
+  installWorktreeGitHooks(worktree, projectRoot);
+  let paneId;
+  let createdSession = false;
+  if (!sessionExists(session)) {
+    paneId = createSession(session, window, worktree);
+    createdSession = true;
+  } else if (windowExists(session, window)) {
+    paneId = splitIntoWindow(session, window, worktree);
+  } else {
+    paneId = createWindow(session, window, worktree, windowIndex);
+  }
+  setPaneTitle(paneId, name);
+  if (createdSession) {
+    sendKeys(paneId, `cd "${worktree}"`);
+    sendEnter(paneId);
+  }
+  const { model, reasoning_effort: effort, permission_mode: perm } = config2;
+  let cmd;
+  if (runtime === "codex") {
+    cmd = `WORKER_NAME="${name}" WORKER_RUNTIME=codex codex -m "${model}"`;
+    if (perm === "bypassPermissions") {
+      cmd += " --dangerously-bypass-approvals-and-sandbox";
+    } else {
+      cmd += " -s workspace-write -a on-request";
+    }
+    cmd += ` -c model_reasoning_effort=${effort}`;
+    cmd += " --no-alt-screen";
+    cmd += ` --add-dir "${dir}"`;
+  } else {
+    cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME="${name}" claude --model "${model}" --effort "${effort}"`;
+    if (perm === "bypassPermissions") {
+      cmd += " --dangerously-skip-permissions";
+    } else {
+      cmd += ` --permission-mode "${perm}"`;
+    }
+    cmd += ` --add-dir "${dir}"`;
+  }
+  sendKeys(paneId, cmd);
+  sendEnter(paneId);
+  info("Waiting for TUI...");
+  const ready = await waitForPrompt(paneId);
+  if (!ready)
+    warn("TUI timeout after 60s, proceeding anyway");
+  await Bun.sleep(2000);
+  let seedContent;
+  try {
+    const result = Bun.spawnSync([Bun.which("bun") || "bun", "-e", `
+        const { generateSeedContent } = await import('${FLEET_DIR2}/mcp/worker-fleet/index.ts');
+        process.stdout.write(generateSeedContent());
+      `], {
+      env: { ...process.env, WORKER_NAME: name, PROJECT_ROOT: worktree },
+      stderr: "pipe"
+    });
+    seedContent = result.exitCode === 0 ? result.stdout.toString() : `You are worker ${name}. Read mission.md, then start your next cycle.`;
+  } catch {
+    seedContent = `You are worker ${name}. Read mission.md, then start your next cycle.`;
+  }
+  const pasted = pasteBuffer(paneId, seedContent);
+  if (!pasted) {
+    warn("Failed to load seed buffer \u2014 worker launched without seed");
+  } else {
+    const settleMs = Math.min(8000, 2000 + Math.floor(seedContent.length / 4096) * 1000);
+    await Bun.sleep(settleMs);
+    sendEnter(paneId);
+    await Bun.sleep(3000);
+    const output = capturePane(paneId, 10);
+    if (/command not found|bad pattern|zsh:|bash:/.test(output) && !/\u276F.*command not found/.test(output)) {
+      warn("Detected garbled seed (shell errors) \u2014 seed may have leaked into shell");
+    }
+    if (/\u276F/.test(output))
+      sendEnter(paneId);
+  }
+  const paneTarget = getPaneTarget(paneId);
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const oldState = getState(project, name);
+  const oldSessionId = oldState?.session_id || "";
+  let pastSessions = oldState?.past_sessions || [];
+  if (oldSessionId) {
+    pastSessions = [oldSessionId, ...pastSessions].slice(0, 10);
+  }
+  writeJsonLocked(join14(dir, "state.json"), {
+    status: "active",
+    pane_id: paneId,
+    pane_target: paneTarget,
+    tmux_session: session,
+    session_id: "",
+    past_sessions: pastSessions,
+    last_relaunch: { at: now, reason: "fleet-start" },
+    relaunch_count: (oldState?.relaunch_count || 0) + 1,
+    cycles_completed: oldState?.cycles_completed || 0,
+    last_cycle_at: oldState?.last_cycle_at || null,
+    custom: oldState?.custom || {}
+  });
+  updateRegistry(name, project, paneId, paneTarget, session);
+  ok(`Worker '${name}' launched in pane ${paneId} (session: ${session}, window: ${window})`);
+  return paneId;
+}
+function installWorktreeGitHooks(worktree, projectRoot) {
+  try {
+    const result = Bun.spawnSync(["git", "-C", worktree, "rev-parse", "--absolute-git-dir"], { stderr: "pipe" });
+    const gitDir = result.exitCode === 0 ? result.stdout.toString().trim() : null;
+    if (!gitDir)
+      return;
+    const hooksDir = join14(gitDir, "hooks");
+    mkdirSync9(hooksDir, { recursive: true });
+    const hookNames = ["commit-msg", "post-commit"];
+    for (const hookName of hookNames) {
+      let src = projectRoot ? join14(projectRoot, `.claude/scripts/worker-${hookName}-hook.sh`) : "";
+      if (!src || !existsSync10(src)) {
+        src = join14(FLEET_DIR2, `scripts/worker-${hookName}-hook.sh`);
+      }
+      if (existsSync10(src)) {
+        const dst = join14(hooksDir, hookName);
+        if (!existsSync10(dst)) {
+          copyFileSync2(src, dst);
+          Bun.spawnSync(["chmod", "+x", dst]);
+        }
+      }
+    }
+  } catch {}
+}
+function resolveProjectRootFromWorktree(worktree) {
+  const match = worktree.match(/^(.+?)(?:-w-[^/]+)?$/);
+  if (match && existsSync10(match[1]))
+    return match[1];
+  try {
+    const result = Bun.spawnSync(["git", "-C", worktree, "rev-parse", "--show-toplevel"], { stderr: "pipe" });
+    return result.exitCode === 0 ? result.stdout.toString().trim() : null;
+  } catch {
+    return null;
+  }
+}
+function updateRegistry(name, project, paneId, paneTarget, session) {
+  const registryPath = join14(FLEET_DATA, project, "registry.json");
+  if (!existsSync10(registryPath))
+    return;
+  const config2 = getConfig(project, name);
+  if (!config2)
+    return;
+  try {
+    const registry2 = JSON.parse(readFileSync11(registryPath, "utf-8"));
+    registry2[name] = {
+      ...registry2[name] || {},
+      pane_id: paneId,
+      pane_target: paneTarget,
+      tmux_session: session,
+      branch: config2.branch,
+      worktree: config2.worktree,
+      window: config2.window,
+      model: config2.model,
+      permission_mode: config2.permission_mode,
+      status: "active"
+    };
+    writeFileSync9(registryPath, JSON.stringify(registry2, null, 2) + `
+`);
+  } catch {}
+}
+var init_launch = __esm(() => {
+  init_paths();
+  init_config();
+  init_fmt();
 });
 
 // node_modules/.bun/zod@3.25.76/node_modules/zod/v3/external.js
@@ -19527,49 +20510,11 @@ import {
 } from "fs";
 import { join as join3 } from "path";
 
-// shared/lock-utils.ts
-import { mkdirSync, rmSync } from "fs";
-function acquireLock(lockPath, maxWaitMs = 1e4) {
-  const start = Date.now();
-  while (true) {
-    try {
-      mkdirSync(lockPath, { recursive: false });
-      return true;
-    } catch {
-      if (Date.now() - start > maxWaitMs) {
-        try {
-          rmSync(lockPath, { recursive: true, force: true });
-        } catch {}
-        try {
-          mkdirSync(lockPath, { recursive: false });
-          return true;
-        } catch {}
-        return false;
-      }
-      globalThis.Bun.sleepSync(100);
-    }
-  }
-}
-function releaseLock(lockPath) {
-  try {
-    rmSync(lockPath, { recursive: true, force: true });
-  } catch {}
-}
-// shared/types.ts
-var SYSTEM_HOOKS = [
-  { id: "sys-1", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "rm\\s+-rf\\s+[/~.]" }, action: "block", message: "Catastrophic rm -rf blocked" },
-  { id: "sys-2", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+reset\\s+--hard" }, action: "block", message: "git reset --hard blocked" },
-  { id: "sys-3", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+clean\\s+-[fd]" }, action: "block", message: "git clean blocked" },
-  { id: "sys-4", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+push.*--force" }, action: "block", message: "Force push blocked" },
-  { id: "sys-5", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+checkout\\s+main\\b" }, action: "block", message: "Workers stay on their branch" },
-  { id: "sys-6", owner: "system", event: "PreToolUse", tool: "Bash", condition: { command_pattern: "git\\s+merge\\b" }, action: "block", message: "Workers don't merge \u2014 use Fleet Mail" },
-  { id: "sys-7", owner: "system", event: "PreToolUse", tool: "Edit", condition: { file_glob: "**/fleet/**/config.json" }, action: "block", message: "Use update_worker_config tool" },
-  { id: "sys-8", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/config.json" }, action: "block", message: "Use update_worker_config tool" },
-  { id: "sys-9", owner: "system", event: "PreToolUse", tool: "Edit", condition: { file_glob: "**/fleet/**/state.json" }, action: "block", message: "Use update_state tool" },
-  { id: "sys-10", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/state.json" }, action: "block", message: "Use update_state tool" },
-  { id: "sys-11", owner: "system", event: "PreToolUse", tool: "Edit", condition: { file_glob: "**/fleet/**/token" }, action: "block", message: "Token is auto-provisioned" },
-  { id: "sys-12", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/token" }, action: "block", message: "Token is auto-provisioned" }
-];
+// mcp/shared/lock-utils.ts
+init_lock_utils();
+
+// mcp/worker-fleet/registry.ts
+init_types();
 
 // mcp/worker-fleet/helpers.ts
 import {
@@ -20161,8 +21106,7 @@ function getWorkerModel() {
 // mcp/worker-fleet/tmux.ts
 import { readFileSync as readFileSync3, writeFileSync as writeFileSync3, existsSync as existsSync3, mkdirSync as mkdirSync4, rmSync as rmSync2 } from "fs";
 import { join as join4 } from "path";
-import { execSync as execSync3, spawnSync as spawnSync2, spawn } from "child_process";
-import { randomUUID } from "crypto";
+import { execSync as execSync3, spawnSync as spawnSync2 } from "child_process";
 function isPaneAlive(paneId) {
   try {
     const check2 = spawnSync2("tmux", ["display-message", "-t", paneId, "-p", "#{pane_id}"], {
@@ -20207,16 +21151,29 @@ function tmuxSendMessage(paneId, text) {
     });
   } catch {}
   if (!isPaneIdle(paneId)) {
-    const tmpDir = join4(HOME, ".claude-ops/tmp");
-    if (!existsSync3(tmpDir))
-      mkdirSync4(tmpDir, { recursive: true });
-    const msgFile = join4(tmpDir, `retry-${randomUUID()}.txt`);
-    writeFileSync3(msgFile, text);
-    const deliverScript = join4(CLAUDE_OPS, "mcp/worker-fleet/deliver-tmux-msg.sh");
-    spawn("bash", [deliverScript, paneId, msgFile], {
-      detached: true,
-      stdio: "ignore"
-    }).unref();
+    setTimeout(() => {
+      try {
+        const bufName2 = `force-${Date.now()}-${process.pid}`;
+        const tmpDir = join4(HOME, ".claude-ops/tmp");
+        if (!existsSync3(tmpDir))
+          mkdirSync4(tmpDir, { recursive: true });
+        const tmpFile2 = join4(tmpDir, `${bufName2}.txt`);
+        writeFileSync3(tmpFile2, text);
+        try {
+          spawnSync2("tmux", ["load-buffer", "-b", bufName2, tmpFile2], { timeout: 5000 });
+          spawnSync2("tmux", ["paste-buffer", "-b", bufName2, "-t", paneId, "-d"], { timeout: 5000 });
+          globalThis.Bun.sleepSync(500);
+          spawnSync2("tmux", ["send-keys", "-t", paneId, "-H", "0d"], { timeout: 5000 });
+        } finally {
+          try {
+            rmSync2(tmpFile2);
+          } catch {}
+          try {
+            spawnSync2("tmux", ["delete-buffer", "-b", bufName2], { timeout: 2000 });
+          } catch {}
+        }
+      } catch {}
+    }, 15000);
     return;
   }
   const bufName = `msg-${paneId.replace("%", "")}-${Date.now()}`;
@@ -20666,7 +21623,7 @@ function runDiagnostics() {
       issues.push({ severity: "error", check: "registry.pane_id", message: `Pane ${process.env.TMUX_PANE} not registered for '${WORKER_NAME}' in registry.json.`, fix: "Run update_state('pane_id', '" + process.env.TMUX_PANE + "') to fix" });
     }
   } else {
-    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set \u2014 not running in tmux. Messaging and watchdog will NOT work.", fix: "Launch via launch-flat-worker.sh" });
+    issues.push({ severity: "error", check: "env.TMUX_PANE", message: "TMUX_PANE not set \u2014 not running in tmux. Messaging and watchdog will NOT work.", fix: "Launch via `fleet start <name>`" });
   }
   try {
     const registry2 = readRegistry();
@@ -20691,7 +21648,7 @@ function runDiagnostics() {
     for (const [hookName, desc] of requiredHooks) {
       const hookPath = join6(hooksDir, hookName);
       if (!existsSync4(hookPath)) {
-        issues.push({ severity: "warning", check: `git.hook.${hookName}`, message: `Git ${hookName} hook not installed \u2014 ${desc}`, fix: `Relaunch with launch-flat-worker.sh to install hooks, or manually copy from ~/.claude-ops/scripts/worker-${hookName.replace("-", "-")}-hook.sh` });
+        issues.push({ severity: "warning", check: `git.hook.${hookName}`, message: `Git ${hookName} hook not installed \u2014 ${desc}`, fix: `Relaunch with \`fleet start\` to install hooks, or manually copy from scripts/worker-${hookName}-hook.sh` });
       } else {
         try {
           const stat = statSync(hookPath);
@@ -20898,104 +21855,6 @@ ${new Date().toISOString()}
       } catch {}
       const prefix = targetName !== WORKER_NAME ? `${targetName}.` : "state.";
       return withLint({ content: [{ type: "text", text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-    }
-  });
-  server.registerTool("update_config", { description: "Update fleet-wide _config fields in the registry (commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups). Only mission_authority or operator can call this.", inputSchema: {
-    key: exports_external.string().describe("Config key: commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups"),
-    value: exports_external.union([exports_external.string(), exports_external.array(exports_external.string()), exports_external.record(exports_external.string(), exports_external.array(exports_external.string()))]).describe("Value. mission_authority and commit_notify accept string or string[]; window_groups accepts Record<string, string[]>; others accept strings")
-  } }, async ({ key, value }) => {
-    try {
-      const validKeys = new Set([
-        "commit_notify",
-        "merge_authority",
-        "deploy_authority",
-        "mission_authority",
-        "tmux_session",
-        "project_name",
-        "window_groups"
-      ]);
-      if (!validKeys.has(key)) {
-        return { content: [{ type: "text", text: `Invalid config key '${key}'. Valid: ${[...validKeys].join(", ")}` }], isError: true };
-      }
-      withRegistryLocked((registry2) => {
-        const config2 = registry2._config;
-        if (!isMissionAuthority(WORKER_NAME, config2) && WORKER_NAME !== "operator" && WORKER_NAME !== "user") {
-          throw new Error(`Only ${getMissionAuthorityLabel(config2)} (mission_authority) or operator can update _config`);
-        }
-        config2[key] = value;
-      });
-      return { content: [{ type: "text", text: `Updated _config.${key} = ${JSON.stringify(value)}` }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-    }
-  });
-  server.registerTool("update_worker_config", {
-    description: `Update a worker's per-worker config.json. Workers can update their OWN config only. For other workers, suggest changes via Fleet Mail.
-
-Self-writable keys: model, reasoning_effort, sleep_duration, window, mcp, worktree, branch
-Self-writable (add only): hooks (with owner:"self")
-NOT self-writable: permission_mode, meta.*
-Hook removal: workers can only remove hooks where owner === "self"`,
-    inputSchema: {
-      key: exports_external.string().describe("Config key to update. Writable: model, reasoning_effort, sleep_duration, window, mcp, worktree, branch. Hook ops: hooks.add (value=hook object), hooks.remove (value=hook ID)"),
-      value: exports_external.union([exports_external.string(), exports_external.number(), exports_external.boolean(), exports_external.null(), exports_external.record(exports_external.string(), exports_external.any())]).describe("Value to set. For hooks.add: JSON object with event, tool, condition, action, message fields. For hooks.remove: hook ID string"),
-      worker: exports_external.string().optional().describe("Target worker name. Omit for self. Only mission_authority can update others")
-    }
-  }, async ({ key, value, worker }) => {
-    try {
-      const targetName = worker || WORKER_NAME;
-      const isSelf = targetName === WORKER_NAME;
-      const fleetConfig = readFleetConfig();
-      if (!isSelf && !isMissionAuthority(WORKER_NAME, fleetConfig)) {
-        return { content: [{ type: "text", text: `Cannot update '${targetName}' config \u2014 only self or mission_authority. Suggest changes via Fleet Mail.` }], isError: true };
-      }
-      const config2 = readWorkerConfig(targetName);
-      if (!config2) {
-        return { content: [{ type: "text", text: `Worker '${targetName}' not found in fleet dir` }], isError: true };
-      }
-      const selfWritable = new Set(["model", "reasoning_effort", "sleep_duration", "window", "mcp", "worktree", "branch"]);
-      if (key === "hooks.add") {
-        const hookData = value;
-        if (!hookData || typeof hookData !== "object" || !hookData.event) {
-          return { content: [{ type: "text", text: "Hook must have at least an 'event' field" }], isError: true };
-        }
-        const newHook = {
-          ...hookData,
-          id: `self-${Date.now()}`,
-          owner: "self"
-        };
-        config2.hooks.push(newHook);
-        writeWorkerConfig(targetName, config2);
-        return withLint({ content: [{ type: "text", text: `Added hook [${newHook.id}] to ${targetName}/config.json` }] });
-      }
-      if (key === "hooks.remove") {
-        const hookId = String(value);
-        const hookIdx = config2.hooks.findIndex((h) => h.id === hookId);
-        if (hookIdx === -1) {
-          return { content: [{ type: "text", text: `Hook '${hookId}' not found` }], isError: true };
-        }
-        const hook = config2.hooks[hookIdx];
-        if (isSelf && hook.owner !== "self") {
-          return { content: [{ type: "text", text: `Cannot remove hook '${hookId}' \u2014 owner is '${hook.owner}', not 'self'` }], isError: true };
-        }
-        config2.hooks.splice(hookIdx, 1);
-        writeWorkerConfig(targetName, config2);
-        return withLint({ content: [{ type: "text", text: `Removed hook [${hookId}] from ${targetName}/config.json` }] });
-      }
-      if (isSelf && !selfWritable.has(key)) {
-        return { content: [{ type: "text", text: `Key '${key}' is not self-writable. Self-writable: ${[...selfWritable].join(", ")}` }], isError: true };
-      }
-      if (key.startsWith("meta.")) {
-        return { content: [{ type: "text", text: `meta.* fields are read-only` }], isError: true };
-      }
-      config2[key] = value;
-      writeWorkerConfig(targetName, config2);
-      if (["model", "reasoning_effort", "permission_mode", "worktree"].includes(key)) {
-        writeLaunchScript(targetName, config2);
-      }
-      return withLint({ content: [{ type: "text", text: `Updated ${targetName}/config.json: ${key} = ${JSON.stringify(value)}` }] });
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
     }
@@ -21360,26 +22219,28 @@ function getWorkerRuntime(workerName) {
 // mcp/worker-fleet/seed.ts
 import { readFileSync as readFileSync8, existsSync as existsSync7 } from "fs";
 import { join as join10 } from "path";
-function loadSeedContext(branch, missionAuthority) {
+function loadSeedContext(branch, missionAuthority, workerName) {
+  const name = workerName || WORKER_NAME;
   const tmplPath = join10(CLAUDE_OPS, "templates/seed-context.md");
   try {
-    return readFileSync8(tmplPath, "utf-8").replace(/\{\{WORKER_NAME\}\}/g, WORKER_NAME).replace(/\{\{BRANCH\}\}/g, branch).replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
+    return readFileSync8(tmplPath, "utf-8").replace(/\{\{WORKER_NAME\}\}/g, name).replace(/\{\{BRANCH\}\}/g, branch).replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
   } catch {
     return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;
   }
 }
-function generateSeedContent(handoff) {
-  const workerDir = join10(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
-  const fleetWorkerDir = join10(FLEET_DIR, WORKER_NAME);
+function generateSeedContent(handoff, workerName) {
+  const effectiveName = workerName || WORKER_NAME;
+  const workerDir = join10(PROJECT_ROOT, ".claude/workers", effectiveName);
+  const fleetWorkerDir = join10(FLEET_DIR, effectiveName);
   const worktreeDir = getWorktreeDir();
-  const branch = `worker/${WORKER_NAME}`;
+  const branch = `worker/${effectiveName}`;
   const _seedConfig = readRegistry()._config;
   const _missionAuth = getMissionAuthorityLabel(_seedConfig);
   let stateBlock = "";
   let proposalBlock = "";
   try {
     const reg = readRegistry();
-    const entry = reg[WORKER_NAME];
+    const entry = reg[effectiveName];
     if (entry?.custom && Object.keys(entry.custom).length > 0) {
       stateBlock = `
 
@@ -21394,7 +22255,7 @@ These values were saved by your previous instance via \`update_state()\`. Use th
       const tmplPath = join10(CLAUDE_OPS, "templates/proposal-template.html");
       try {
         let instrContent = readFileSync8(instrPath, "utf-8");
-        instrContent = instrContent.replace(/\{\{WORKER_NAME\}\}/g, WORKER_NAME).replace(/\{\{MISSION_AUTHORITY\}\}/g, _missionAuth).replace(/\{\{TEMPLATE_PATH\}\}/g, tmplPath);
+        instrContent = instrContent.replace(/\{\{WORKER_NAME\}\}/g, effectiveName).replace(/\{\{MISSION_AUTHORITY\}\}/g, _missionAuth).replace(/\{\{TEMPLATE_PATH\}\}/g, tmplPath);
         proposalBlock = `
 
 ` + instrContent;
@@ -21402,7 +22263,7 @@ These values were saved by your previous instance via \`update_state()\`. Use th
     }
   } catch {}
   const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
-  const workerMemoryDir = join10(HOME, ".claude", "projects", projectSlug, "memory", WORKER_NAME);
+  const workerMemoryDir = join10(HOME, ".claude", "projects", projectSlug, "memory", effectiveName);
   let handoffBlock = "";
   if (handoff) {
     handoffBlock = `
@@ -21410,7 +22271,7 @@ These values were saved by your previous instance via \`update_state()\`. Use th
 
 ${handoff}`;
   } else {
-    const checkpointLatest = join10(WORKERS_DIR, WORKER_NAME, "checkpoints", "latest.json");
+    const checkpointLatest = join10(WORKERS_DIR, effectiveName, "checkpoints", "latest.json");
     if (existsSync7(checkpointLatest)) {
       try {
         const cpRaw = readFileSync8(checkpointLatest, "utf-8").trim();
@@ -21444,7 +22305,7 @@ ${cp.key_facts.map((f) => `- ${f}`).join(`
         }
         handoffBlock = cpBlock;
       } catch {
-        const handoffPath = join10(WORKERS_DIR, WORKER_NAME, "handoff.md");
+        const handoffPath = join10(WORKERS_DIR, effectiveName, "handoff.md");
         if (existsSync7(handoffPath)) {
           try {
             const handoffContent = readFileSync8(handoffPath, "utf-8").trim();
@@ -21458,7 +22319,7 @@ ${handoffContent}`;
         }
       }
     } else {
-      const handoffPath = join10(WORKERS_DIR, WORKER_NAME, "handoff.md");
+      const handoffPath = join10(WORKERS_DIR, effectiveName, "handoff.md");
       if (existsSync7(handoffPath)) {
         try {
           const handoffContent = readFileSync8(handoffPath, "utf-8").trim();
@@ -21472,14 +22333,14 @@ ${handoffContent}`;
       }
     }
   }
-  let seed = `You are worker **${WORKER_NAME}**.
+  let seed = `You are worker **${effectiveName}**.
 Worktree: ${worktreeDir} (branch: ${branch})
 Worker config: ${workerDir}/
 ${handoffBlock}
 Read these files NOW in this order:
 1. ${existsSync7(join10(workerDir, "mission.md")) ? workerDir : fleetWorkerDir}/mission.md \u2014 your mission and goals (you own this file \u2014 update it as your mission evolves)
 2. Call \`mail_inbox()\` \u2014 check for messages before anything else
-3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
+3. Check \`.claude/scripts/${effectiveName}/\` for existing scripts
 
 **Your memory**: \`${workerMemoryDir}/MEMORY.md\`
 Use Edit/Write to update it directly. Create topic files in that same directory for detailed notes.
@@ -22025,15 +22886,15 @@ Facts: ${(key_facts || []).length} saved`
 }
 
 // mcp/worker-fleet/tools/fleet.ts
-import { readFileSync as readFileSync9, writeFileSync as writeFileSync8, appendFileSync as appendFileSync2, existsSync as existsSync9, mkdirSync as mkdirSync8, lstatSync, rmSync as rmSync4, unlinkSync as unlinkSync2, symlinkSync as symlinkSync3, copyFileSync as copyFileSync2, cpSync } from "fs";
-import { join as join12 } from "path";
+import { readFileSync as readFileSync12, writeFileSync as writeFileSync10, appendFileSync as appendFileSync2, existsSync as existsSync11, mkdirSync as mkdirSync10, lstatSync, rmSync as rmSync4, unlinkSync as unlinkSync2, symlinkSync as symlinkSync3, copyFileSync as copyFileSync3, cpSync } from "fs";
+import { join as join15 } from "path";
 import { execSync as execSync7, spawnSync as spawnSync3 } from "child_process";
-var TEMPLATE_TYPES_DIR = join12(CLAUDE_OPS, "templates/flat-worker/types");
+var TEMPLATE_TYPES_DIR = join15(CLAUDE_OPS, "templates/flat-worker/types");
 function loadTypeTemplate(type) {
-  const typeDir = join12(TEMPLATE_TYPES_DIR, type);
+  const typeDir = join15(TEMPLATE_TYPES_DIR, type);
   const result = {};
   try {
-    const perms = JSON.parse(readFileSync9(join12(typeDir, "permissions.json"), "utf-8"));
+    const perms = JSON.parse(readFileSync12(join15(typeDir, "permissions.json"), "utf-8"));
     if (perms.model)
       result.model = perms.model;
     if (perms.permission_mode)
@@ -22042,7 +22903,7 @@ function loadTypeTemplate(type) {
       result.disallowedTools = perms.denyList;
   } catch {}
   try {
-    const defaults = JSON.parse(readFileSync9(join12(typeDir, "defaults.json"), "utf-8"));
+    const defaults = JSON.parse(readFileSync12(join15(typeDir, "defaults.json"), "utf-8"));
     if ("sleep_duration" in defaults)
       result.sleep_duration = defaults.sleep_duration;
   } catch {}
@@ -22054,47 +22915,47 @@ function createWorkerFiles(input) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
     return { ok: false, error: `Name must be kebab-case (got '${name}')` };
   }
-  const workerDir = join12(WORKERS_DIR, name);
-  if (existsSync9(workerDir)) {
-    return { ok: false, error: `Worker '${name}' already exists at ${workerDir}` };
+  const workerDir2 = join15(WORKERS_DIR, name);
+  if (existsSync11(workerDir2)) {
+    return { ok: false, error: `Worker '${name}' already exists at ${workerDir2}` };
   }
   if (!mission.trim()) {
     return { ok: false, error: `Mission cannot be empty` };
   }
   const tpl = type ? loadTypeTemplate(type) : {};
-  mkdirSync8(workerDir, { recursive: true });
+  mkdirSync10(workerDir2, { recursive: true });
   const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
-  const autoMemoryDir = join12(HOME, ".claude", "projects", projectSlug, "memory", name);
-  mkdirSync8(autoMemoryDir, { recursive: true });
-  const autoMemoryPath = join12(autoMemoryDir, "MEMORY.md");
+  const autoMemoryDir = join15(HOME, ".claude", "projects", projectSlug, "memory", name);
+  mkdirSync10(autoMemoryDir, { recursive: true });
+  const autoMemoryPath = join15(autoMemoryDir, "MEMORY.md");
   try {
     if (lstatSync(autoMemoryPath).isSymbolicLink()) {
       rmSync4(autoMemoryPath);
     }
   } catch {}
-  if (!existsSync9(autoMemoryPath)) {
-    writeFileSync8(autoMemoryPath, `# ${name} Memory
+  if (!existsSync11(autoMemoryPath)) {
+    writeFileSync10(autoMemoryPath, `# ${name} Memory
 
 `);
   }
-  const perWorkerFleetDir = join12(FLEET_DIR, name);
-  mkdirSync8(perWorkerFleetDir, { recursive: true });
-  const perWorkerMission = join12(perWorkerFleetDir, "mission.md");
-  writeFileSync8(perWorkerMission, mission.trim() + `
+  const perWorkerFleetDir = join15(FLEET_DIR, name);
+  mkdirSync10(perWorkerFleetDir, { recursive: true });
+  const perWorkerMission = join15(perWorkerFleetDir, "mission.md");
+  writeFileSync10(perWorkerMission, mission.trim() + `
 `);
-  const centralMissionsDir = join12(FLEET_DIR, "missions");
-  mkdirSync8(centralMissionsDir, { recursive: true });
-  const centralMission = join12(centralMissionsDir, `${name}.md`);
-  writeFileSync8(centralMission, mission.trim() + `
+  const centralMissionsDir = join15(FLEET_DIR, "missions");
+  mkdirSync10(centralMissionsDir, { recursive: true });
+  const centralMission = join15(centralMissionsDir, `${name}.md`);
+  writeFileSync10(centralMission, mission.trim() + `
 `);
-  const worktreeMission = join12(workerDir, "mission.md");
+  const worktreeMission = join15(workerDir2, "mission.md");
   try {
     unlinkSync2(worktreeMission);
   } catch {}
   try {
     symlinkSync3(perWorkerMission, worktreeMission);
   } catch {
-    writeFileSync8(worktreeMission, mission.trim() + `
+    writeFileSync10(worktreeMission, mission.trim() + `
 `);
   }
   const defaultDisallowed = [
@@ -22125,29 +22986,7 @@ function createWorkerFiles(input) {
     status: "idle",
     sleep_duration: resolvedSleepDuration
   };
-  return { ok: true, workerDir, model: selectedModel, runtime: resolvedRuntime, perpetual: isPerpetual, state, permissions };
-}
-function moveWorkerPane(paneId, tmuxSession, targetWindow) {
-  try {
-    if (targetWindow === "stand-by")
-      targetWindow = "standby";
-    spawnSync3("tmux", ["rename-window", "-t", `${tmuxSession}:stand-by`, "standby"], { encoding: "utf-8" });
-    const windowCheck = spawnSync3("tmux", ["list-windows", "-t", tmuxSession, "-F", "#{window_name}"], { encoding: "utf-8" });
-    const windows = (windowCheck.stdout || "").split(`
-`).map((w) => w.trim());
-    if (!windows.includes(targetWindow)) {
-      spawnSync3("tmux", ["new-window", "-t", tmuxSession, "-n", targetWindow, "-d"], { encoding: "utf-8" });
-    }
-    const moveRes = spawnSync3("tmux", ["move-pane", "-s", paneId, "-t", `${tmuxSession}:${targetWindow}`], { encoding: "utf-8" });
-    if (moveRes.status === 0) {
-      spawnSync3("tmux", ["select-layout", "-t", `${tmuxSession}:${targetWindow}`, "tiled"], { encoding: "utf-8" });
-      return `Pane ${paneId}: moved to ${tmuxSession}:${targetWindow}`;
-    } else {
-      return `Pane ${paneId}: move failed \u2014 ${(moveRes.stderr || "").trim()}`;
-    }
-  } catch (e) {
-    return `Pane move error: ${e.message}`;
-  }
+  return { ok: true, workerDir: workerDir2, model: selectedModel, runtime: resolvedRuntime, perpetual: isPerpetual, state, permissions };
 }
 async function handleFleetCreate(params) {
   const { name, mission, type, runtime, model, reasoning_effort, sleep_duration, disallowed_tools: disallowedToolsJson, window: windowGroup, window_index: windowIndex, report_to, permission_mode, launch, proposal_required, fork_from_session, direct_report } = params;
@@ -22213,8 +23052,8 @@ async function handleFleetCreate(params) {
     const reportTo = direct_report ? WORKER_NAME : report_to || defaultReportTo;
     const { state, permissions, runtime: resolvedRuntime, model: selectedModel } = result;
     const isPerpetual = (state.sleep_duration ?? null) !== null && (state.sleep_duration ?? 0) > 0;
-    const workerFleetDir = join12(FLEET_DIR, name);
-    mkdirSync8(workerFleetDir, { recursive: true });
+    const workerFleetDir = join15(FLEET_DIR, name);
+    mkdirSync10(workerFleetDir, { recursive: true });
     const allHooks = [...getDefaultSystemHooks()];
     if (type) {
       const fleetCfg = readFleetConfig();
@@ -22280,11 +23119,11 @@ async function handleFleetCreate(params) {
       }
     });
     const projectName = PROJECT_ROOT.split("/").pop();
-    const worktreeDir = join12(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
+    const worktreeDir = join15(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
     const workerBranch = `worker/${name}`;
     let worktreeReady = false;
     try {
-      if (!existsSync9(worktreeDir)) {
+      if (!existsSync11(worktreeDir)) {
         try {
           execSync7(`git -C "${PROJECT_ROOT}" branch "${workerBranch}" HEAD 2>/dev/null`, { timeout: 5000 });
         } catch {}
@@ -22297,9 +23136,9 @@ async function handleFleetCreate(params) {
         writeWorkerConfig(name, latestConfig);
         writeLaunchScript(name, latestConfig);
       }
-      const wtMcp = join12(worktreeDir, ".mcp.json");
-      const baseMcp = join12(PROJECT_ROOT, ".mcp.json");
-      if (existsSync9(baseMcp)) {
+      const wtMcp = join15(worktreeDir, ".mcp.json");
+      const baseMcp = join15(PROJECT_ROOT, ".mcp.json");
+      if (existsSync11(baseMcp)) {
         try {
           unlinkSync2(wtMcp);
         } catch {}
@@ -22307,17 +23146,17 @@ async function handleFleetCreate(params) {
           symlinkSync3(baseMcp, wtMcp);
         } catch {}
       }
-      const setupScript = join12(PROJECT_ROOT, ".claude/scripts/worker/setup-worktree.sh");
-      if (existsSync9(setupScript)) {
+      const setupScript = join15(PROJECT_ROOT, ".claude/scripts/worker/setup-worktree.sh");
+      if (existsSync11(setupScript)) {
         try {
           execSync7(`bash "${setupScript}" "${worktreeDir}"`, { timeout: 5000 });
         } catch {}
       }
-      const wtWorkerDir = join12(worktreeDir, ".claude/workers", name);
-      mkdirSync8(wtWorkerDir, { recursive: true });
-      const wtMissionPath = join12(wtWorkerDir, "mission.md");
+      const wtWorkerDir = join15(worktreeDir, ".claude/workers", name);
+      mkdirSync10(wtWorkerDir, { recursive: true });
+      const wtMissionPath = join15(wtWorkerDir, "mission.md");
       try {
-        writeFileSync8(wtMissionPath, mission.trim() + `
+        writeFileSync10(wtMissionPath, mission.trim() + `
 `);
       } catch {}
     } catch {}
@@ -22338,15 +23177,15 @@ async function handleFleetCreate(params) {
               const callerCwd = process.cwd();
               const parentSlug = callerCwd.replace(/\//g, "-");
               const newSlug = worktreeDir.replace(/\//g, "-");
-              const parentProj = join12(HOME, ".claude/projects", parentSlug);
-              const newProj = join12(HOME, ".claude/projects", newSlug);
-              mkdirSync8(newProj, { recursive: true });
-              const jsonlSrc = join12(parentProj, `${sessionId}.jsonl`);
-              if (existsSync9(jsonlSrc))
-                copyFileSync2(jsonlSrc, join12(newProj, `${sessionId}.jsonl`));
-              const subdirSrc = join12(parentProj, sessionId);
-              if (existsSync9(subdirSrc))
-                cpSync(subdirSrc, join12(newProj, sessionId), { recursive: true });
+              const parentProj = join15(HOME, ".claude/projects", parentSlug);
+              const newProj = join15(HOME, ".claude/projects", newSlug);
+              mkdirSync10(newProj, { recursive: true });
+              const jsonlSrc = join15(parentProj, `${sessionId}.jsonl`);
+              if (existsSync11(jsonlSrc))
+                copyFileSync3(jsonlSrc, join15(newProj, `${sessionId}.jsonl`));
+              const subdirSrc = join15(parentProj, sessionId);
+              if (existsSync11(subdirSrc))
+                cpSync(subdirSrc, join15(newProj, sessionId), { recursive: true });
             } catch {}
           }
           try {
@@ -22356,19 +23195,19 @@ async function handleFleetCreate(params) {
   Launch: SKIPPED \u2014 pane creation failed. Run manually.`;
             } else {
               registerPane(childPaneId);
-              const forkScript = join12(CLAUDE_OPS, "scripts/fork-worker.sh");
+              const forkScript = join15(CLAUDE_OPS, "scripts/fork-worker.sh");
               const workerModel = selectedModel || "opus";
-              const workerDir = join12(PROJECT_ROOT, ".claude/workers", name);
+              const workerDir2 = join15(PROJECT_ROOT, ".claude/workers", name);
               const cwdFlag = worktreeReady ? `--cwd ${worktreeDir}` : "";
               const wrapperPath = `/tmp/fork-launch-${name}-${Date.now()}.sh`;
               const wrapperContent = [
                 `#!/bin/bash`,
                 `cd ${worktreeReady ? worktreeDir : PROJECT_ROOT}`,
-                `bash ${forkScript} ${ownPane.paneId} ${sessionId} --name ${name} --no-worktree ${cwdFlag} --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir}`,
+                `bash ${forkScript} ${ownPane.paneId} ${sessionId} --name ${name} --no-worktree ${cwdFlag} --model ${workerModel} --dangerously-skip-permissions --add-dir ${workerDir2}`,
                 `rm -f "${wrapperPath}"`
               ].join(`
 `);
-              writeFileSync8(wrapperPath, wrapperContent, { mode: 493 });
+              writeFileSync10(wrapperPath, wrapperContent, { mode: 493 });
               execSync7(`tmux send-keys -t "${childPaneId}" "bash ${wrapperPath}" && tmux send-keys -t "${childPaneId}" -H 0d`, { timeout: 5000 });
               launchInfo = `
   Launched (fork from ${sessionId}): pane ${childPaneId}`;
@@ -22379,35 +23218,23 @@ async function handleFleetCreate(params) {
           }
         }
       } else {
-        const launchScript = join12(CLAUDE_OPS, "scripts/launch-flat-worker.sh");
-        if (!existsSync9(launchScript)) {
+        try {
+          const { launchInTmux: launchInTmux2 } = await Promise.resolve().then(() => (init_launch(), exports_launch));
+          const projectName2 = resolveProjectName();
+          const fleetConfig = readFleetConfig();
+          const sess = fleetConfig?.tmux_session || "w";
+          const winGroup = windowGroup || permissions.window || name;
+          const launchedPaneId = await launchInTmux2(name, projectName2, sess, winGroup, windowIndex ?? undefined, { runtime: resolvedRuntime || "claude" });
           launchInfo = `
-  Launch: FAILED \u2014 script not found: ${launchScript}`;
-        } else {
-          const launchArgs = [launchScript, name, "--project", PROJECT_ROOT];
-          const winGroup = windowGroup || permissions.window;
-          if (winGroup)
-            launchArgs.push("--window", winGroup);
-          if (windowIndex != null)
-            launchArgs.push("--window-index", String(windowIndex));
-          const launchResult = spawnSync3("bash", launchArgs, {
-            encoding: "utf-8",
-            timeout: 120000,
-            env: { ...process.env, PROJECT_ROOT, WORKER_RUNTIME: resolvedRuntime || "claude" }
-          });
-          if (launchResult.status === 0) {
-            const paneMatch = launchResult.stdout.match(/pane\s+(%\d+)/);
-            launchInfo = `
-  Launched: pane ${paneMatch ? paneMatch[1] : "unknown"}`;
-          } else {
-            launchInfo = `
-  Launch: FAILED (exit ${launchResult.status}) \u2014 ${(launchResult.stderr || "").slice(0, 200)}`;
-          }
+  Launched: pane ${launchedPaneId}`;
+        } catch (e) {
+          launchInfo = `
+  Launch: FAILED \u2014 ${e.message}`;
         }
       }
     } else {
       launchInfo = `
-  Launch: manual \u2014 bash launch-flat-worker.sh ${name}`;
+  Launch: manual \u2014 fleet start ${name}`;
     }
     const summary = [
       `Created worker/${name}:`,
@@ -22427,475 +23254,55 @@ async function handleFleetCreate(params) {
     return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
   }
 }
-async function handleFleetTemplate(params) {
-  const { type } = params;
-  if (!type)
-    return { content: [{ type: "text", text: `Error: 'type' is required for template` }], isError: true };
-  const typeDir = join12(TEMPLATE_TYPES_DIR, type);
-  if (!existsSync9(typeDir)) {
-    return { content: [{ type: "text", text: `Error: template type '${type}' not found at ${typeDir}` }], isError: true };
-  }
-  const sections = [`# Template: ${type}
-`];
-  try {
-    sections.push("## mission.md (structure to follow)\n```markdown\n" + readFileSync9(join12(typeDir, "mission.md"), "utf-8").trim() + "\n```\n");
-  } catch {
-    sections.push(`## mission.md
-_Not found_
-`);
-  }
-  try {
-    const perms = JSON.parse(readFileSync9(join12(typeDir, "permissions.json"), "utf-8"));
-    sections.push(`## Defaults (from permissions.json)
-` + `- **model**: ${perms.model || "opus"}
-` + `- **permission_mode**: ${perms.permission_mode || "bypassPermissions"}
-` + `- **denyList** (${(perms.denyList || []).length} rules): ${(perms.denyList || []).map((r) => `\`${r}\``).join(", ") || "none"}
-`);
-  } catch {
-    sections.push(`## permissions.json
-_Not found_
-`);
-  }
-  try {
-    const defaults = JSON.parse(readFileSync9(join12(typeDir, "defaults.json"), "utf-8"));
-    const sdLabel = defaults.sleep_duration === null ? "null (one-shot)" : `${defaults.sleep_duration}s`;
-    sections.push(`## Defaults (from defaults.json)
-` + `- **sleep_duration**: ${sdLabel}
-`);
-  } catch {
-    sections.push(`## defaults.json
-_Not found_
-`);
-  }
-  sections.push('## Usage\n`create_worker(name="...", type="' + type + '", mission="# Your mission here\\n...")`\nThe `type` sets model/permissions/sleep defaults. You always write your own mission. Explicit params override type defaults.');
-  return { content: [{ type: "text", text: sections.join(`
-`) }] };
-}
-async function handleFleetMove(params) {
-  const { name, window: targetWindow, reason } = params;
-  if (!targetWindow)
-    return { content: [{ type: "text", text: `Error: 'window' is required for move` }], isError: true };
-  const targetName = name || WORKER_NAME;
-  const _mwRegistry = readRegistry();
-  const _mwConfig = _mwRegistry._config;
-  const _mwAuth = getMissionAuthorityLabel(_mwConfig);
-  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _mwConfig)) {
-    return {
-      content: [{
-        type: "text",
-        text: `Only ${_mwAuth} (mission_authority) can move other workers. Contact ${_mwAuth}.`
-      }],
-      isError: true
-    };
-  }
-  const existing = getWorkerEntry(targetName);
-  if (!existing) {
-    return {
-      content: [{ type: "text", text: `Worker '${targetName}' not found in registry.` }],
-      isError: true
-    };
-  }
-  const paneId = existing.pane_id;
-  const tmuxSession = existing.tmux_session || "w";
-  if (!paneId) {
-    return {
-      content: [{ type: "text", text: `Worker '${targetName}' has no pane_id \u2014 cannot move.` }],
-      isError: true
-    };
-  }
-  const moveResult = moveWorkerPane(paneId, tmuxSession, targetWindow);
-  const previousWindow = existing.window;
-  const isMovingToStandby = targetWindow === "standby";
-  const isMovingFromStandby = existing.status === "standby" && targetWindow !== "standby";
-  withRegistryLocked((registry2) => {
-    const entry = registry2[targetName];
-    if (entry) {
-      entry.window = targetWindow;
-      if (isMovingToStandby) {
-        entry.status = "standby";
-      } else if (isMovingFromStandby) {
-        entry.status = "active";
-      }
-    }
-  });
-  if (isMovingToStandby && reason) {
-    try {
-      const handoffPath = join12(WORKERS_DIR, targetName, "handoff.md");
-      const timestamp = new Date().toISOString();
-      writeFileSync8(handoffPath, `# Standby
-
-**At:** ${timestamp}
-**Reason:** ${reason}
-
-Worker is in standby \u2014 registered but not running. Call move_worker(name="${targetName}", window="${previousWindow || targetName}") to wake.
-`);
-    } catch {}
-  }
-  const statusChange = isMovingToStandby ? " status=standby (watchdog will ignore)" : isMovingFromStandby ? " status=active (woken from standby)" : "";
-  return {
-    content: [{
-      type: "text",
-      text: [
-        `Worker '${targetName}' moved: ${previousWindow || "?"} \u2192 ${targetWindow}.${statusChange}`,
-        `  ${moveResult}`,
-        reason ? `  Reason: ${reason}` : null
-      ].filter(Boolean).join(`
-`)
-    }]
-  };
-}
-async function handleFleetStandby(params) {
-  const { name, reason } = params;
-  const targetName = name || WORKER_NAME;
-  const _sbRegistry = readRegistry();
-  const _sbConfig = _sbRegistry._config;
-  const _sbAuth = getMissionAuthorityLabel(_sbConfig);
-  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _sbConfig)) {
-    return {
-      content: [{
-        type: "text",
-        text: `Only ${_sbAuth} (mission_authority) can toggle standby for other workers. Contact ${_sbAuth}.`
-      }],
-      isError: true
-    };
-  }
-  const existing = getWorkerEntry(targetName);
-  if (!existing) {
-    return {
-      content: [{ type: "text", text: `Worker '${targetName}' not found in registry.` }],
-      isError: true
-    };
-  }
-  const isStandby = existing.status === "standby";
-  const tmuxSession = existing.tmux_session || "w";
-  if (isStandby) {
-    const paneId2 = existing.pane_id;
-    const originalWindow = existing.window || targetName;
-    let moveResult2 = "";
-    if (paneId2) {
-      moveResult2 = moveWorkerPane(paneId2, tmuxSession, originalWindow);
-    } else {
-      moveResult2 = "No pane_id in registry \u2014 pane may have been killed";
-    }
-    withRegistryLocked((registry2) => {
-      const entry = registry2[targetName];
-      if (entry) {
-        entry.status = "active";
-        if (originalWindow !== "standby")
-          entry.window = originalWindow;
-      }
-    });
-    return {
-      content: [{
-        type: "text",
-        text: [
-          `Worker '${targetName}' \u2192 active (woken from standby).`,
-          `  Registry: status=active`,
-          reason ? `  Reason: ${reason}` : null,
-          moveResult2 ? `  ${moveResult2}` : null
-        ].filter(Boolean).join(`
-`)
-      }]
-    };
-  }
-  if (reason) {
-    try {
-      const handoffPath = join12(WORKERS_DIR, targetName, "handoff.md");
-      const timestamp = new Date().toISOString();
-      writeFileSync8(handoffPath, `# Standby
-
-**At:** ${timestamp}
-**Reason:** ${reason}
-
-Worker is in standby \u2014 registered but not running. Call standby_worker(name="${targetName}") again to wake.
-`);
-    } catch {}
-  }
-  let standbyPendingWarning = "";
-  try {
-    const targetEntry = getWorkerEntry(targetName);
-    const mailToken = targetEntry?.bms_token;
-    if (mailToken) {
-      const resp = await fetch(`${FLEET_MAIL_URL}/api/messages?label=UNREAD&maxResults=1`, {
-        headers: { Authorization: `Bearer ${mailToken}` },
-        signal: AbortSignal.timeout(3000)
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        const unread = data?._diagnostics?.unread_count || 0;
-        if (unread > 0) {
-          standbyPendingWarning = `
-  WARNING: ${unread} unread mail in ${targetName}'s inbox`;
-        }
-      }
-    }
-  } catch {}
-  const paneId = existing.pane_id;
-  let moveResult = "";
-  withRegistryLocked((registry2) => {
-    const entry = registry2[targetName];
-    if (entry) {
-      entry.status = "standby";
-    }
-  });
-  if (paneId) {
-    moveResult = moveWorkerPane(paneId, tmuxSession, "standby");
-  } else {
-    moveResult = "No active pane to move";
-  }
-  return {
-    content: [{
-      type: "text",
-      text: [
-        `Worker '${targetName}' \u2192 standby.`,
-        `  Registry: status=standby (watchdog will ignore it)`,
-        moveResult ? `  ${moveResult}` : null,
-        reason ? `  Handoff: written to .claude/workers/${targetName}/handoff.md` : null,
-        ``,
-        standbyPendingWarning || null,
-        ``,
-        `To resume: call standby_worker(name="${targetName}") again, or: bash ~/.claude-ops/scripts/launch-flat-worker.sh ${targetName}`
-      ].filter(Boolean).join(`
-`)
-    }]
-  };
-}
-async function handleFleetRegister(params) {
-  const { model, sleep_duration, report_to } = params;
-  try {
-    const ownPane = findOwnPane();
-    let paneTarget = "";
-    let tmuxSession = "w";
-    if (ownPane) {
-      paneTarget = ownPane.paneTarget || "";
-      tmuxSession = paneTarget.split(":")[0] || "w";
-    }
-    const fleetConfig = readFleetConfig();
-    const maVal = fleetConfig?.mission_authority;
-    const defaultReportTo = Array.isArray(maVal) ? maVal[0] : maVal || "chief-of-staff";
-    const workerDir = join12(FLEET_DIR, WORKER_NAME);
-    mkdirSync8(workerDir, { recursive: true });
-    let wConfig = readWorkerConfig(WORKER_NAME);
-    if (!wConfig) {
-      const projectName = resolveProjectName();
-      const worktreeDir = join12(PROJECT_ROOT, "..", `${projectName}-w-${WORKER_NAME}`);
-      wConfig = {
-        model: model || "opus",
-        reasoning_effort: "high",
-        permission_mode: "bypassPermissions",
-        sleep_duration: sleep_duration ?? null,
-        window: null,
-        worktree: existsSync9(worktreeDir) ? worktreeDir : null,
-        branch: `worker/${WORKER_NAME}`,
-        mcp: {},
-        hooks: [...getDefaultSystemHooks()],
-        meta: {
-          created_at: new Date().toISOString(),
-          created_by: "self-register",
-          forked_from: null,
-          project: FLEET_MAIL_PROJECT
-        }
-      };
-    } else {
-      if (model)
-        wConfig.model = model;
-      if (sleep_duration !== undefined)
-        wConfig.sleep_duration = sleep_duration;
-    }
-    writeWorkerConfig(WORKER_NAME, wConfig);
-    writeLaunchScript(WORKER_NAME, wConfig);
-    let wState = readWorkerState(WORKER_NAME);
-    const sessionId = ownPane ? getSessionId(ownPane.paneId) : null;
-    if (!wState) {
-      wState = {
-        status: "active",
-        pane_id: ownPane?.paneId || null,
-        pane_target: paneTarget || null,
-        tmux_session: tmuxSession,
-        session_id: sessionId || null,
-        past_sessions: [],
-        last_relaunch: null,
-        relaunch_count: 0,
-        cycles_completed: 0,
-        last_cycle_at: null,
-        custom: {}
-      };
-    } else {
-      wState.status = "active";
-      if (ownPane) {
-        wState.pane_id = ownPane.paneId;
-        wState.pane_target = paneTarget;
-        wState.tmux_session = tmuxSession;
-        if (sessionId)
-          wState.session_id = sessionId;
-      }
-    }
-    writeWorkerState(WORKER_NAME, wState);
-    withRegistryLocked((reg) => {
-      const entry = ensureWorkerInRegistry(reg, WORKER_NAME);
-      entry.status = "active";
-      entry.model = model || entry.model || "opus";
-      if (sleep_duration !== undefined) {
-        entry.sleep_duration = sleep_duration;
-        entry.perpetual = sleep_duration !== null && sleep_duration > 0;
-      }
-      entry.report_to = report_to || entry.report_to || defaultReportTo;
-      entry.custom = {
-        ...entry.custom || {},
-        runtime: entry.custom?.runtime || process.env.WORKER_RUNTIME || "claude"
-      };
-      if (ownPane) {
-        entry.pane_id = ownPane.paneId;
-        entry.pane_target = paneTarget;
-        entry.tmux_session = tmuxSession;
-        const sid = getSessionId(ownPane.paneId);
-        if (sid)
-          entry.session_id = sid;
-      }
-    });
-    const paneInfo = ownPane ? `pane ${ownPane.paneId} (${paneTarget})` : "no pane detected";
-    const sessionInfo = sessionId ? `, session: ${sessionId.slice(0, 8)}\u2026` : "";
-    return {
-      content: [{
-        type: "text",
-        text: `Registered '${WORKER_NAME}' \u2014 ${paneInfo}${sessionInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}
-  Fleet dir: ${workerDir}/`
-      }]
-    };
-  } catch (e) {
-    return { content: [{ type: "text", text: `Register failed: ${e.message}` }], isError: true };
-  }
-}
-async function handleFleetDeregister(params) {
-  const { name, reason } = params;
-  const targetName = name || WORKER_NAME;
-  const _drRegistry = readRegistry();
-  const _drConfig = _drRegistry._config;
-  const _drAuth = getMissionAuthorityLabel(_drConfig);
-  if (targetName !== WORKER_NAME && !isMissionAuthority(WORKER_NAME, _drConfig)) {
-    return {
-      content: [{
-        type: "text",
-        text: `Only ${_drAuth} (mission_authority) can deregister other workers. Contact ${_drAuth} to deregister '${targetName}'.`
-      }],
-      isError: true
-    };
-  }
-  const existing = getWorkerEntry(targetName);
-  if (!existing) {
-    return {
-      content: [{ type: "text", text: `Worker '${targetName}' not found in registry.` }],
-      isError: true
-    };
-  }
-  const handoffPath = join12(WORKERS_DIR, targetName, "HANDOFF.md");
-  let hasHandoff = false;
-  try {
-    hasHandoff = existsSync9(handoffPath) && readFileSync9(handoffPath, "utf-8").trim().length > 50;
-  } catch {}
-  if (!hasHandoff) {
-    return {
-      content: [{
-        type: "text",
-        text: [
-          `HANDOFF.md required before deregistering '${targetName}'.`,
-          ``,
-          `Before unregistering, write a HANDOFF.md at:`,
-          `  .claude/workers/${targetName}/HANDOFF.md`,
-          ``,
-          `Include:`,
-          `  - Generalizable learnings (patterns, gotchas, conventions discovered)`,
-          `  - Business process details specific to this domain`,
-          `  - Important repo/architecture details you learned`,
-          `  - Any unfinished work or known issues`,
-          `  - Recommendations for whoever picks this up next`,
-          ``,
-          `Then call deregister_worker() again.`
-        ].join(`
-`)
-      }],
-      isError: true
-    };
-  }
-  if (reason) {
-    try {
-      const timestamp = new Date().toISOString();
-      const appendix = `
-
----
-## Deregistered
-
-**By:** ${WORKER_NAME}
-**At:** ${timestamp}
-**Reason:** ${reason}
-`;
-      appendFileSync2(handoffPath, appendix);
-    } catch {}
-  }
-  const preservedWorktree = existing.worktree || "(none registered)";
-  withRegistryLocked((registry2) => {
-    delete registry2[targetName];
-  });
-  return {
-    content: [{
-      type: "text",
-      text: [
-        `Deregistered '${targetName}' from registry.`,
-        ``,
-        `Preserved (not deleted):`,
-        `  Worker files: .claude/workers/${targetName}/`,
-        `  Git worktree: ${preservedWorktree}`,
-        ``,
-        `To fully clean up when ready:`,
-        `  git worktree remove ${preservedWorktree}`,
-        `  rm -rf .claude/workers/${targetName}/`
-      ].join(`
-`)
-    }]
-  };
-}
 function handleFleetHelp() {
   return {
     content: [{
       type: "text",
       text: [
-        `# Fleet Management Tools`,
+        `# Fleet Management`,
         ``,
-        `## Available Tools`,
+        `## MCP Tools (core)`,
         ``,
-        `### create_worker \u2014 Create a new autonomous worker`,
-        `Required: name (string), mission (string)`,
-        `Optional: type, runtime, model, reasoning_effort, sleep_duration,`,
-        `  disallowed_tools (JSON string array), window, window_index, report_to,`,
-        `  permission_mode, launch, tasks (JSON array), proposal_required,`,
-        `  fork_from_session, direct_report`,
+        `### create_worker(name, mission, ...) \u2014 Spawn a new worker`,
+        `Required: name, mission. Optional: type, runtime, model, reasoning_effort,`,
+        `sleep_duration, window, report_to, permission_mode, launch, direct_report.`,
         ``,
-        `### register_worker \u2014 Register yourself in the fleet registry`,
-        `Optional: model, sleep_duration, report_to`,
-        `Auto-detects tmux pane, session, runtime. Call when lint warns you're not in registry.`,
+        `### fleet_help() \u2014 This reference`,
         ``,
-        `### deregister_worker \u2014 Remove a worker from the registry`,
-        `Optional: name (default=self), reason`,
-        `Requires HANDOFF.md (>50 chars) in worker directory. Files/worktree preserved.`,
-        `Authorization: self or mission_authority.`,
+        `## Fleet CLI (from bash)`,
         ``,
-        `### move_worker \u2014 Move a worker's tmux pane to a different window`,
-        `Required: window`,
-        `Optional: name (default=self), reason`,
-        `Moving to 'standby' sets status=standby. Moving out restores active.`,
-        `Authorization: self or mission_authority.`,
+        `The fleet CLI covers everything beyond the core MCP tools:`,
         ``,
-        `### standby_worker \u2014 Toggle worker between active and standby`,
-        `Optional: name (default=self), reason`,
-        `If active \u2192 standby (moves pane, stops watchdog). If standby \u2192 active (restores).`,
-        `USER-ONLY \u2014 workers must never call this proactively.`,
-        `Authorization: self or mission_authority.`,
+        `\`\`\`bash`,
+        `fleet ls                          # List all workers with status`,
+        `fleet start <name>                # Start/restart a worker`,
+        `fleet stop <name> [--all]         # Graceful stop`,
+        `fleet attach <name>               # Focus worker's tmux pane`,
+        `fleet config <name> [key] [value] # Get/set per-worker config`,
+        `fleet defaults [key] [value]      # Get/set fleet-wide defaults`,
+        `fleet log <name>                  # Tail worker output`,
+        `fleet mail <name>                 # Check worker's inbox`,
+        `fleet fork <parent> <child>       # Fork from existing session`,
+        `fleet doctor                      # Health check`,
+        `\`\`\``,
         ``,
-        `### fleet_template \u2014 Preview worker archetype defaults`,
-        `Required: type (implementer|monitor|coordinator|optimizer|verifier)`,
-        `Returns template mission.md, permissions, and state config.`,
+        `## Deep Review (from bash)`,
         ``,
-        `### fleet_help \u2014 Show this help text`
+        `\`\`\`bash`,
+        `bash ~/.deep-review/scripts/deep-review.sh --scope main --spec "verify changes"`,
+        `# Options: --passes N, --focus "security,logic", --verify, --no-judge, --no-context`,
+        `\`\`\``,
+        ``,
+        `## Common Operations (CLI equivalents)`,
+        ``,
+        `| Operation | How |`,
+        `|-----------|-----|`,
+        `| Move pane to window | \`tmux move-pane -t w:window-name\` |`,
+        `| Toggle standby | \`fleet stop <name>\` / \`fleet start <name>\` |`,
+        `| Update worker config | \`fleet config <name> key value\` |`,
+        `| Update fleet defaults | \`fleet defaults key value\` |`,
+        `| Preview archetype | \`fleet config <name>\` (shows full config) |`,
+        `| Deregister worker | \`fleet stop <name>\` + remove worker dir |`
       ].join(`
 `)
     }]
@@ -22923,42 +23330,6 @@ function registerFleetTools(server) {
       direct_report: exports_external.boolean().optional().describe("Set report_to to calling worker")
     }
   }, async (params) => handleFleetCreate(params));
-  server.registerTool("register_worker", {
-    description: "Register yourself in the fleet registry. Auto-detects tmux pane, session, runtime.",
-    inputSchema: {
-      model: exports_external.string().optional().describe("LLM model override"),
-      sleep_duration: exports_external.number().nullable().optional().describe("Seconds between cycles. null = one-shot, N > 0 = perpetual"),
-      report_to: exports_external.string().optional().describe("Who this worker reports to")
-    }
-  }, async (params) => handleFleetRegister(params));
-  server.registerTool("deregister_worker", {
-    description: "Remove a worker from the registry. Requires HANDOFF.md (>50 chars). Files/worktree preserved.",
-    inputSchema: {
-      name: exports_external.string().optional().describe("Worker name (default: self)"),
-      reason: exports_external.string().optional().describe("Reason for deregistration")
-    }
-  }, async (params) => handleFleetDeregister(params));
-  server.registerTool("move_worker", {
-    description: "Move a worker's tmux pane to a different window. Moving to 'standby' sets status=standby.",
-    inputSchema: {
-      window: exports_external.string().describe("Target tmux window name"),
-      name: exports_external.string().optional().describe("Worker name (default: self)"),
-      reason: exports_external.string().optional().describe("Reason for the move")
-    }
-  }, async (params) => handleFleetMove(params));
-  server.registerTool("standby_worker", {
-    description: "Toggle worker between active and standby. If active \u2192 standby (moves pane, stops watchdog). If standby \u2192 active (restores).",
-    inputSchema: {
-      name: exports_external.string().optional().describe("Worker name (default: self)"),
-      reason: exports_external.string().optional().describe("Reason for standby/wake")
-    }
-  }, async (params) => handleFleetStandby(params));
-  server.registerTool("fleet_template", {
-    description: "Preview worker archetype defaults (mission.md template, permissions, state config).",
-    inputSchema: {
-      type: exports_external.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).describe("Worker archetype")
-    }
-  }, async (params) => handleFleetTemplate(params));
   server.registerTool("fleet_help", {
     description: "Show fleet management documentation and available operations.",
     inputSchema: {}
@@ -23271,199 +23642,16 @@ Your token: ${token}
   });
 }
 
-// mcp/worker-fleet/tools/review.ts
-import { existsSync as existsSync10 } from "fs";
-import { join as join13 } from "path";
-import { spawnSync as spawnSync4 } from "child_process";
-function registerReviewTools(server) {
-  server.registerTool("deep_review", {
-    description: "Launch a multi-pass deep review pipeline (v4). NEW in v2: dynamic role designer (Sonnet designs optimal team composition), worktree isolation (fixes on separate branch), inter-worker communication (file-based comms), post-exit output validation (JSON schema enforcement), multi-verifier dispatch (chrome/curl/test/script verifiers in parallel), lightweight static analysis (oxlint/biome/tsc auto-detect). Workers follow investigation protocols with structured attack vectors, confidence scoring, chain-of-thought evidence, and self-verification via subagents. Context pre-pass gathers static analysis, dependency graphs, test coverage, and git blame context. Judge agent does adversarial validation. Material is ADDITIVE. Use --v1 for legacy static focus areas. RECOMMENDATION: launch deep review then continue working on other tasks \u2014 it runs in the background and catches gnarly bugs while you handle generic issues.",
-    inputSchema: {
-      scope: exports_external.string().optional().describe("Git diff scope. Auto-detects: branch name (e.g. 'main'), commit SHA, 'uncommitted', 'pr:42'. Default: HEAD if no content. Additive with content."),
-      content: exports_external.union([exports_external.string(), exports_external.array(exports_external.string())]).optional().describe("File path(s) to review. Comma-separated string or array. Additive with scope."),
-      spec: exports_external.string().optional().describe("What to review for \u2014 guides all workers. E.g., 'verify implementation matches the plan'."),
-      passes: exports_external.number().optional().describe("Passes PER focus area (default: 2). Total workers = passes \xD7 focus areas."),
-      session_name: exports_external.string().optional().describe("Custom tmux session name (overrides auto-naming)"),
-      notify: exports_external.string().optional().describe("Worker name or 'user' to notify on completion."),
-      focus: exports_external.array(exports_external.string()).optional().describe("Custom focus areas. Overrides auto-detect. Diff: 8 areas, content: 4 areas, mixed: 6 areas. Extra specializations: 'silent-failure' (error swallowing), 'claude-md' (CLAUDE.md compliance). Smart focus auto-includes these when patterns detected."),
-      no_judge: exports_external.boolean().optional().describe("Skip the adversarial judge validation stage (faster but less precise). Default: false."),
-      no_context: exports_external.boolean().optional().describe("Skip context pre-pass (static analysis, dependency graph, test coverage). Default: false."),
-      force: exports_external.boolean().optional().describe("Force review even if auto-skip would trigger (lockfile-only changes, <5 substantive lines). Default: false."),
-      verify: exports_external.boolean().optional().describe("Enable verification phase after review. Spawns a verifier worker that deploys to a test slot, walks the verification checklist, writes scripts/tests, and tests all enumerated paths. Default: false."),
-      verify_roles: exports_external.array(exports_external.string()).optional().describe("User roles to test as during verification (e.g. ['admin', 'shenlan-pm']). Only used when verify=true."),
-      v1: exports_external.boolean().optional().describe("Use v1 mode: static focus areas, no role designer, no worktree isolation. Default: false."),
-      max_workers: exports_external.number().optional().describe("Max worker budget for the role designer. Default: passes \xD7 8."),
-      no_worktree: exports_external.boolean().optional().describe("Skip worktree isolation \u2014 run workers directly in PROJECT_ROOT. Default: false.")
-    }
-  }, async ({
-    scope,
-    content,
-    spec,
-    passes,
-    session_name,
-    notify,
-    focus,
-    no_judge,
-    no_context,
-    force,
-    verify,
-    verify_roles,
-    v1,
-    max_workers,
-    no_worktree
-  }) => {
-    try {
-      const deepReviewDir = process.env.DEEP_REVIEW_DIR || (existsSync10(join13(HOME, ".deep-review", "scripts", "deep-review.sh")) ? join13(HOME, ".deep-review") : null) || process.env.CLAUDE_OPS_DIR || join13(HOME, ".claude-ops");
-      const scriptPath = join13(deepReviewDir, "scripts", "deep-review.sh");
-      if (!existsSync10(scriptPath)) {
-        throw new Error(`deep-review.sh not found at ${scriptPath}. Install deep-review to ~/.deep-review/ or set DEEP_REVIEW_DIR.`);
-      }
-      const args = [];
-      if (scope) {
-        args.push("--scope", scope);
-      }
-      if (content) {
-        const contentPaths = Array.isArray(content) ? content.join(",") : content;
-        args.push("--content", contentPaths);
-      }
-      if (spec) {
-        args.push("--spec", spec);
-      }
-      if (passes) {
-        args.push("--passes", String(passes));
-      }
-      if (session_name) {
-        args.push("--session-name", session_name);
-      }
-      if (notify) {
-        args.push("--notify", notify);
-      }
-      if (focus?.length) {
-        args.push("--focus", focus.join(","));
-      }
-      if (no_judge) {
-        args.push("--no-judge");
-      }
-      if (no_context) {
-        args.push("--no-context");
-      }
-      if (force) {
-        args.push("--force");
-      }
-      if (verify) {
-        args.push("--verify");
-      }
-      if (verify_roles?.length) {
-        args.push("--verify-roles", verify_roles.join(","));
-      }
-      if (v1) {
-        args.push("--v1");
-      }
-      if (max_workers) {
-        args.push("--max-workers", String(max_workers));
-      }
-      if (no_worktree) {
-        args.push("--no-worktree");
-      }
-      if (content) {
-        const paths = Array.isArray(content) ? content : content.split(",");
-        for (const p of paths) {
-          const resolved = p.trim().replace(/^~/, HOME);
-          const abs = resolved.startsWith("/") ? resolved : join13(PROJECT_ROOT, resolved);
-          if (!existsSync10(abs)) {
-            throw new Error(`Content file not found: ${p.trim()} (resolved: ${abs})`);
-          }
-        }
-      }
-      const launchResult = spawnSync4("bash", [scriptPath, ...args], {
-        encoding: "utf-8",
-        cwd: PROJECT_ROOT,
-        env: { ...process.env, PROJECT_ROOT, DEEP_REVIEW_DIR: deepReviewDir },
-        timeout: 120000
-      });
-      if (launchResult.status !== 0 && launchResult.status !== null) {
-        const stderr = launchResult.stderr?.slice(0, 1000) || "";
-        throw new Error(`deep-review.sh failed (exit ${launchResult.status}): ${stderr}`);
-      }
-      if (launchResult.status === null) {
-        const signal = launchResult.signal || "unknown";
-        const stderr = launchResult.stderr?.slice(0, 500) || "";
-        throw new Error(`deep-review.sh killed by ${signal} (likely timeout \u2014 try --no-context to skip static analysis, or reduce scope). ${stderr}`);
-      }
-      const stdout = launchResult.stdout || "";
-      const tmuxSessionMatch = stdout.match(/Session:\s+(\S+)/);
-      const sessionDir = tmuxSessionMatch ? tmuxSessionMatch[1] : "unknown";
-      const reviewSessionMatch = stdout.match(/tmux switch-client -t (\S+)/);
-      const reviewSession = reviewSessionMatch ? reviewSessionMatch[1] : session_name || "dr-unknown";
-      const passesPerFocus = passes || 2;
-      const hasContent = !!content;
-      const hasScope = !!scope;
-      const defaultFocus = hasContent && !hasScope ? 4 : hasContent && hasScope ? 6 : 8;
-      const numFocus = focus?.length || defaultFocus;
-      const totalWorkers = passesPerFocus * numFocus;
-      const numWorkerWindows = Math.ceil(totalWorkers / 4);
-      const windowLines = [];
-      windowLines.push(`  Window 0: coordinator (1 pane, ${process.env.DEEP_REVIEW_COORD_MODEL || "sonnet"})`);
-      for (let w = 1;w <= numWorkerWindows; w++) {
-        const first = (w - 1) * 4 + 1;
-        const last = Math.min(w * 4, totalWorkers);
-        const count = last - first + 1;
-        windowLines.push(`  Window ${w}: workers-${w} (${count} panes tiled, ${process.env.DEEP_REVIEW_WORKER_MODEL || "opus"})`);
-      }
-      return {
-        content: [{
-          type: "text",
-          text: [
-            `Deep review pipeline launched.`,
-            ``,
-            `tmux session: ${reviewSession}`,
-            ...windowLines,
-            ``,
-            `Session dir: ${sessionDir}`,
-            `Workers: ${totalWorkers} (${numFocus} focus \xD7 ${passesPerFocus} passes)`,
-            `Focus: ${focus?.length ? focus.join(", ") : "security, logic, error-handling, data-integrity, architecture, performance, ux-impact, completeness"}`,
-            `Completion: sentinel files at ${sessionDir}/pass-{1..${totalWorkers}}.done`,
-            notify ? `Notify: ${notify} (on completion)` : `Notify: desktop only`,
-            ``,
-            `Attach: tmux switch-client -t ${reviewSession}`,
-            `        tmux a -t ${reviewSession}`,
-            ``,
-            `Pipeline: ${totalWorkers} workers -> bucket -> majority vote (>=2/${passesPerFocus} per focus group) -> validate -> dedup -> autofix -> report + notify`,
-            v1 ? `Mode: v1 (static focus areas)` : `Mode: v2 (dynamic roles, worktree isolation, output validation)`,
-            verify ? `Verify: enabled (4 specialized verifiers: chrome, curl, test, script)` : `Verify: disabled`,
-            `Report: ${sessionDir}/report.md`,
-            verify ? `Verification: ${sessionDir}/verification-*-results.json` : "",
-            ``,
-            `RECOMMENDATION: Deep review takes 15-25 min. While it runs:`,
-            `\u2022 Work on generic/simple issues from your task list`,
-            `\u2022 Launch targeted quick reviews on specific files`,
-            `\u2022 Continue development \u2014 deep review catches gnarly bugs in the background`,
-            `You'll be notified when results are ready.`
-          ].join(`
-`)
-        }]
-      };
-    } catch (e) {
-      const msg = `Deep review launch failed: ${e.message?.slice(0, 500) || String(e)}`;
-      return {
-        content: [{ type: "text", text: msg }],
-        isError: true
-      };
-    }
-  });
-}
-
 // mcp/worker-fleet/index.ts
 var server = new McpServer({
   name: "worker-fleet",
-  version: "2.0.0"
+  version: "3.0.0"
 });
 registerStateTools(server);
 registerHookTools(server);
 registerLifecycleTools(server);
 registerFleetTools(server);
 registerMailTools(server);
-registerReviewTools(server);
 async function main() {
   const transport = new StdioServerTransport;
   await server.connect(transport);
