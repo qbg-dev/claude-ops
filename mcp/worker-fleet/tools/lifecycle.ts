@@ -23,17 +23,17 @@ server.registerTool(
   { description: `Restart yourself in the same tmux pane to get a fresh context window.
 
 Four modes:
-  (1) soft=true (preferred for cycle boundaries): saves checkpoint + cycle report but does NOT exit. You stay alive and keep working. Use this to mark cycle boundaries without restarting. Context refreshes naturally via pre-compact hook.
-  (2) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session.
+  (1) Default (soft recycle): saves checkpoint + cycle report but does NOT exit. You stay alive and keep working. Use this to mark cycle boundaries without restarting. Context refreshes naturally via pre-compact hook.
+  (2) soft=false (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session.
   (3) resume=true (hot restart): resume same session ID — preserves full conversation history but reloads MCP config.
-  (4) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds. Use sleep_seconds to override.
+  (4) Perpetual workers with sleep_seconds: exits session and lets the watchdog respawn after sleep_duration seconds. Use sleep_seconds to override.
 
 When to use which:
-  - Finished a task, have more work or mail to handle → soft=true. Stay alive, log the cycle.
-  - Context window getting very long (compacted 2+ times) → cold restart (default). Handoff carries state.
-  - MCP config or .mcp.json changed → hot restart (resume=true). Keeps conversation, reloads MCP.
-  - No more work AND no pending mail → default recycle. Let watchdog handle respawn timer.
-  - Stuck or corrupted state → cold restart with minimal handoff.
+  - Finished a task, have more work or mail to handle → recycle() (default soft). Stay alive, log the cycle.
+  - Context window getting very long (compacted 2+ times) → recycle(soft=false). Cold restart, handoff carries state.
+  - MCP config or .mcp.json changed → recycle(resume=true). Keeps conversation, reloads MCP.
+  - No more work AND no pending mail → recycle(soft=false). Let watchdog handle respawn timer.
+  - Stuck or corrupted state → recycle(soft=false) with minimal handoff.
 
 Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
     message: z.string().optional().describe("Handoff context for the next instance. Include: what was accomplished, what remains, any blockers or decisions needed. Written to handoff.md and injected into the next session's seed"),
@@ -41,9 +41,12 @@ Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
     force: z.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle"),
     sleep_seconds: z.number().optional().describe("Override sleep_duration for this recycle only. The watchdog will respawn after this many seconds. 0 = immediate restart (no sleep). Only applies to perpetual workers"),
     cancel: z.boolean().optional().describe("If true, cancel a pending sleep timer (clears status=sleeping). Use when you realize you have more work and don't need to restart yet"),
-    soft: z.boolean().optional().describe("If true, soft recycle: save checkpoint, send cycle report, log the cycle — but do NOT exit Claude or kill the pane. You stay alive and keep working. Use this to mark cycle boundaries without restarting. The pre-compact hook will re-inject your seed when context compacts naturally"),
+    soft: z.boolean().optional().describe("Soft recycle (DEFAULT): save checkpoint, send cycle report, log the cycle — but do NOT exit Claude or kill the pane. You stay alive and keep working. Set soft=false to force a cold restart instead"),
   } },
-  async ({ message, resume, force, sleep_seconds, cancel, soft }) => {
+  async ({ message, resume, force, sleep_seconds, cancel, soft: softParam }) => {
+    // Default soft=true unless explicitly set to false, or resume/sleep_seconds are specified
+    const soft = softParam ?? (resume || sleep_seconds !== undefined ? false : true);
+
     // 0a. Cancel mode — abort a pending sleep timer
     if (cancel) {
       withRegistryLocked((registry) => {

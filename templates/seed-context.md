@@ -9,7 +9,7 @@ Core tools for worker operation. Use `fleet_help()` or `mail_help()` for full re
 | `mail_send(to, subject, body)` | Message a worker, "user", "all", or mailing list. Supports `cc`, `in_reply_to`, `thread_id`, `labels`. |
 | `mail_inbox(label?)` | Read YOUR inbox. Default label=UNREAD. label="INBOX" for all, "TASK" for tasks. |
 | `mail_read(id)` | Read full message body by ID (auto-marks as read). Only works for YOUR messages — Fleet Mail enforces account isolation. |
-| `recycle(message?)` | End cycle. `soft=true`: log + stay alive. Default: cold restart. `sleep_seconds=N`: override timer. **Blocked if stop checks pending.** |
+| `recycle(message?)` | End cycle. Default: soft recycle (log + stay alive). `soft=false`: cold restart. `sleep_seconds=N`: override timer. **Blocked if stop checks pending.** |
 | `create_worker(name, mission, ...)` | Spawn a new worker with worktree, branch, registry entry. |
 | `save_checkpoint(summary, key_facts?)` | Snapshot working state. Auto-saved on compaction/recycle. |
 | `update_state(key, value)` | Persist state across recycles. |
