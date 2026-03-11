@@ -80,8 +80,8 @@ export interface DynamicHook {
   added_at: string;
   /** Relative path to script file in the worker's hooks/ dir (e.g. "dh-1-notify-validator.sh") */
   script_path?: string;
-  /** Hook status — "active" hooks fire, "archived" hooks are preserved but inert */
-  status?: "active" | "archived";
+  /** Hook status — "active" hooks fire, "done" = check passed/completed, "archived" = preserved but inert */
+  status?: "active" | "done" | "archived";
   /** Lifetime — "cycle" hooks are archived on recycle, "persistent" survive recycles.
    *  Default: "persistent" for Stop hooks, "cycle" for all others. */
   lifetime?: "cycle" | "persistent";

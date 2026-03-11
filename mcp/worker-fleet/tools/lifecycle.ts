@@ -151,6 +151,20 @@ Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
     try { writeFileSync(`/tmp/claude-fleet-recycle-${WORKER_NAME}`, new Date().toISOString()); } catch {}
 
     // 0. Gate on blocking hooks (unified: stop checks + any blocking gates)
+    // First, evaluate check commands inline — auto-complete hooks whose checks pass
+    for (const h of dynamicHooks.values()) {
+      if (h.blocking && !h.completed && h.check) {
+        try {
+          execSync(h.check, { stdio: "pipe", timeout: 10_000 });
+          // Check passed (exit 0) — auto-complete
+          h.completed = true;
+          h.status = "done";
+          _persistHooks();
+        } catch {
+          // Check failed — remains blocking
+        }
+      }
+    }
     const pendingChecks = [...dynamicHooks.values()].filter(h => h.blocking && !h.completed);
     if (pendingChecks.length > 0 && !force) {
       const checkList = pendingChecks.map(h => `  [${h.id}] ${h.event}/${h.blocking ? "gate" : "inject"} — ${h.description}`).join("\n");
