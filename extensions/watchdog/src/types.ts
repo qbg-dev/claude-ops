@@ -51,6 +51,9 @@ export interface WatchdogEffects {
   /** Check if worker has unread Fleet Mail */
   workerHasUnreadMail(worker: string): Promise<boolean>;
 
+  /** Get number of unread Fleet Mail messages for a worker */
+  getWorkerUnreadCount(worker: string): Promise<number>;
+
   /** Get current epoch seconds */
   nowEpoch(): number;
 }

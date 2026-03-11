@@ -97,15 +97,19 @@ export function createProductionEffects(projectName: string): WatchdogEffects {
     },
 
     async workerHasUnreadMail(worker: string): Promise<boolean> {
+      return (await this.getWorkerUnreadCount(worker)) > 0;
+    },
+
+    async getWorkerUnreadCount(worker: string): Promise<number> {
       const fleetMailUrl = process.env.FLEET_MAIL_URL || "http://127.0.0.1:8025";
       const tokenPath = join(FLEET_DATA, projectName, worker, "token");
       let token: string;
       try {
         token = readFileSync(tokenPath, "utf-8").trim();
       } catch {
-        return false;
+        return 0;
       }
-      if (!token) return false;
+      if (!token) return 0;
 
       try {
         const resp = await fetch(
@@ -115,13 +119,12 @@ export function createProductionEffects(projectName: string): WatchdogEffects {
             signal: AbortSignal.timeout(3000),
           },
         );
-        if (!resp.ok) return false;
+        if (!resp.ok) return 0;
         const data = await resp.json() as any;
-        const count = data?._diagnostics?.unread_count ?? data?.messages?.length ?? 0;
-        return count > 0;
+        return data?._diagnostics?.unread_count ?? data?.messages?.length ?? 0;
       } catch (e) {
         logWarn("MAIL-CHECK", `Fleet Mail check failed for ${worker}: ${e instanceof Error ? e.message : e}`, worker);
-        return false;
+        return 0;
       }
     },
 

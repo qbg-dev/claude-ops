@@ -63,6 +63,29 @@ export function clearCosNotified(worker: string): void {
   try { unlinkSync(flag); } catch {}
 }
 
+/** Debounced desktop notification for unread Fleet Mail (5-min cooldown per worker) */
+export function notifyUnreadMail(worker: string, count: number): void {
+  const rDir = join(RUNTIME_DIR, worker);
+  mkdirSync(rDir, { recursive: true });
+  const flag = join(rDir, "unread-notified");
+  const now = Math.floor(Date.now() / 1000);
+
+  // Debounce: only notify once per 5 minutes per worker
+  if (existsSync(flag)) {
+    try {
+      const lastTs = parseInt(readFileSync(flag, "utf-8").trim(), 10);
+      if (now - lastTs < 300) return;
+    } catch {}
+  }
+
+  const msg = count === 1
+    ? `${worker} has 1 unread message`
+    : `${worker} has ${count} unread messages`;
+  desktopNotify(msg, "Fleet Mail");
+  logInfo("UNREAD-MAIL", `${count} unread message(s)`, worker);
+  writeFileSync(flag, String(now));
+}
+
 /** Check stale input (unsubmitted Fleet Mail in tmux input buffer) */
 export function checkStaleInput(paneId: string, worker: string): boolean {
   const runtimeDir = join(RUNTIME_DIR, worker);

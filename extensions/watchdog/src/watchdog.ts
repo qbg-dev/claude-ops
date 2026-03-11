@@ -17,7 +17,7 @@ import { checkWorkerAsync } from "./worker-checker";
 import { markCrashLoop } from "./crash-tracker";
 import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow } from "./pane-manager";
 import { resumeInPane, relaunchInPane, killAgentInPane } from "./process-manager";
-import { desktopNotify, notifyDeadWorker, clearCosNotified, checkStaleInput } from "./notifications";
+import { desktopNotify, notifyDeadWorker, clearCosNotified, checkStaleInput, notifyUnreadMail } from "./notifications";
 import { buildAllSnapshots } from "./snapshot";
 import { printStatus } from "./status-display";
 import { createProductionEffects } from "./effects";
@@ -162,6 +162,14 @@ async function runOnce(): Promise<void> {
 
           // Check stale input
           checkStaleInput(snap.paneId, snap.name);
+
+          // Notify about unread Fleet Mail for active workers running Claude
+          if (action.type === "ok") {
+            const unreadCount = await effects.getWorkerUnreadCount(snap.name);
+            if (unreadCount > 0) {
+              notifyUnreadMail(snap.name, unreadCount);
+            }
+          }
         }
       }
     } catch (err: any) {
