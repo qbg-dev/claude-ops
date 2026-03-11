@@ -31,7 +31,7 @@ Core tools for worker operation. Use `fleet_help()` or `mail_help()` for full re
 | `fleet_help()` | Full fleet management docs — worker lifecycle, config, advanced operations. |
 | `mail_help()` | Fleet Mail reference — search, threads, labels, mailing lists, curl examples. |
 
-Additional tools (`register_worker`, `deregister_worker`, `move_worker`, `standby_worker`, `fleet_template`, `deep_review`) are available — run `fleet_help()` for details.
+For operations beyond these (move panes, standby, deep review, config updates), use the **fleet CLI** from bash — run `fleet_help()` for the full reference.
 
 Every tool response includes lint warnings if issues are detected — fix them immediately.
 

@@ -334,7 +334,7 @@ export function register(parent: Command): void {
       info("Detecting optional plugins...");
 
       // Watchdog plugin
-      const watchdogPlugin = join(fleetDir, "extensions/watchdog/watchdog.sh");
+      const watchdogPlugin = join(fleetDir, "extensions/watchdog/src/watchdog.ts");
       if (existsSync(watchdogPlugin)) {
         const watchdogPlist = join(HOME, "Library/LaunchAgents/com.tmux-agents.watchdog.plist");
         const legacyPlist = join(HOME, "Library/LaunchAgents/com.claude-ops.harness-watchdog.plist");

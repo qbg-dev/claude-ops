@@ -1,5 +1,9 @@
 /**
- * State tools — get_worker_state, update_state, update_config, update_worker_config
+ * State tools — get_worker_state, update_state
+ *
+ * Removed tools (use fleet CLI instead):
+ *   update_config → fleet defaults <key> <value>
+ *   update_worker_config → fleet config <name> <key> <value>
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -8,7 +12,7 @@ import { writeFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { join, basename } from "path";
 import { execSync } from "child_process";
 import { PROJECT_ROOT, CLAUDE_OPS, WORKERS_DIR, FLEET_DIR, WORKER_NAME } from "../config";
-import { getWorkerEntry, withRegistryLocked, ensureWorkerInRegistry, readFleetConfig, readWorkerConfig, writeWorkerConfig, writeLaunchScript, isMissionAuthority, getMissionAuthorityLabel, canUpdateWorker, type RegistryConfig, type RegistryWorkerEntry } from "../registry";
+import { getWorkerEntry, withRegistryLocked, ensureWorkerInRegistry, canUpdateWorker, type RegistryWorkerEntry } from "../registry";
 import { isPaneAlive } from "../tmux";
 import { withLint } from "../diagnostics";
 
@@ -179,129 +183,7 @@ server.registerTool(
   }
 );
 
-// fleet_status removed — merged into get_worker_state(name="all")
-
-server.registerTool(
-  "update_config",
-  { description: "Update fleet-wide _config fields in the registry (commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups). Only mission_authority or operator can call this.", inputSchema: {
-    key: z.string().describe("Config key: commit_notify, merge_authority, deploy_authority, mission_authority, tmux_session, project_name, window_groups"),
-    value: z.union([z.string(), z.array(z.string()), z.record(z.string(), z.array(z.string()))]).describe("Value. mission_authority and commit_notify accept string or string[]; window_groups accepts Record<string, string[]>; others accept strings"),
-  } },
-  async ({ key, value }) => {
-    try {
-      const validKeys = new Set(["commit_notify", "merge_authority", "deploy_authority",
-        "mission_authority", "tmux_session", "project_name", "window_groups"]);
-      if (!validKeys.has(key)) {
-        return { content: [{ type: "text" as const, text: `Invalid config key '${key}'. Valid: ${[...validKeys].join(", ")}` }], isError: true };
-      }
-
-      withRegistryLocked((registry) => {
-        const config = registry._config as RegistryConfig;
-        // Authorization: only mission_authority or operator
-        if (!isMissionAuthority(WORKER_NAME, config) && WORKER_NAME !== "operator" && WORKER_NAME !== "user") {
-          throw new Error(`Only ${getMissionAuthorityLabel(config)} (mission_authority) or operator can update _config`);
-        }
-        (config as any)[key] = value;
-      });
-
-      return { content: [{ type: "text" as const, text: `Updated _config.${key} = ${JSON.stringify(value)}` }] };
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
-
-// ═══════════════════════════════════════════════════════════════════
-// WORKER CONFIG TOOL — per-worker config.json updates
-// ═══════════════════════════════════════════════════════════════════
-
-server.registerTool(
-  "update_worker_config",
-  {
-    description: `Update a worker's per-worker config.json. Workers can update their OWN config only. For other workers, suggest changes via Fleet Mail.
-
-Self-writable keys: model, reasoning_effort, sleep_duration, window, mcp, worktree, branch
-Self-writable (add only): hooks (with owner:"self")
-NOT self-writable: permission_mode, meta.*
-Hook removal: workers can only remove hooks where owner === "self"`,
-    inputSchema: {
-      key: z.string().describe('Config key to update. Writable: model, reasoning_effort, sleep_duration, window, mcp, worktree, branch. Hook ops: hooks.add (value=hook object), hooks.remove (value=hook ID)'),
-      value: z.union([z.string(), z.number(), z.boolean(), z.null(), z.record(z.string(), z.any())]).describe("Value to set. For hooks.add: JSON object with event, tool, condition, action, message fields. For hooks.remove: hook ID string"),
-      worker: z.string().optional().describe("Target worker name. Omit for self. Only mission_authority can update others"),
-    },
-  },
-  async ({ key, value, worker }) => {
-    try {
-      const targetName = worker || WORKER_NAME;
-      const isSelf = targetName === WORKER_NAME;
-      const fleetConfig = readFleetConfig();
-
-      // Authorization: self or mission_authority
-      if (!isSelf && !isMissionAuthority(WORKER_NAME, fleetConfig)) {
-        return { content: [{ type: "text" as const, text: `Cannot update '${targetName}' config — only self or mission_authority. Suggest changes via Fleet Mail.` }], isError: true };
-      }
-
-      const config = readWorkerConfig(targetName);
-      if (!config) {
-        return { content: [{ type: "text" as const, text: `Worker '${targetName}' not found in fleet dir` }], isError: true };
-      }
-
-      // Self-writable keys
-      const selfWritable = new Set(["model", "reasoning_effort", "sleep_duration", "window", "mcp", "worktree", "branch"]);
-
-      if (key === "hooks.add") {
-        // Add a hook with owner:"self"
-        const hookData = value as any;
-        if (!hookData || typeof hookData !== "object" || !hookData.event) {
-          return { content: [{ type: "text" as const, text: "Hook must have at least an 'event' field" }], isError: true };
-        }
-        const newHook = {
-          ...hookData,
-          id: `self-${Date.now()}`,
-          owner: "self",
-        };
-        config.hooks.push(newHook);
-        writeWorkerConfig(targetName, config);
-        return withLint({ content: [{ type: "text" as const, text: `Added hook [${newHook.id}] to ${targetName}/config.json` }] });
-      }
-
-      if (key === "hooks.remove") {
-        const hookId = String(value);
-        const hookIdx = config.hooks.findIndex((h: any) => h.id === hookId);
-        if (hookIdx === -1) {
-          return { content: [{ type: "text" as const, text: `Hook '${hookId}' not found` }], isError: true };
-        }
-        const hook = config.hooks[hookIdx] as any;
-        if (isSelf && hook.owner !== "self") {
-          return { content: [{ type: "text" as const, text: `Cannot remove hook '${hookId}' — owner is '${hook.owner}', not 'self'` }], isError: true };
-        }
-        config.hooks.splice(hookIdx, 1);
-        writeWorkerConfig(targetName, config);
-        return withLint({ content: [{ type: "text" as const, text: `Removed hook [${hookId}] from ${targetName}/config.json` }] });
-      }
-
-      // Reject non-self-writable keys for self-updates
-      if (isSelf && !selfWritable.has(key)) {
-        return { content: [{ type: "text" as const, text: `Key '${key}' is not self-writable. Self-writable: ${[...selfWritable].join(", ")}` }], isError: true };
-      }
-      if (key.startsWith("meta.")) {
-        return { content: [{ type: "text" as const, text: `meta.* fields are read-only` }], isError: true };
-      }
-
-      // Update the config
-      (config as any)[key] = value;
-      writeWorkerConfig(targetName, config);
-
-      // Regenerate launch.sh if relevant keys changed
-      if (["model", "reasoning_effort", "permission_mode", "worktree"].includes(key)) {
-        writeLaunchScript(targetName, config);
-      }
-
-      return withLint({ content: [{ type: "text" as const, text: `Updated ${targetName}/config.json: ${key} = ${JSON.stringify(value)}` }] });
-    } catch (e: any) {
-      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
+// Removed tools: update_config, update_worker_config
+// Use fleet CLI: `fleet defaults <key> <value>` and `fleet config <name> <key> <value>`
 
 } // end registerStateTools

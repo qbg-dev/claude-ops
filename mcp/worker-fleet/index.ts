@@ -1,19 +1,20 @@
 #!/usr/bin/env bun
 /**
- * worker-fleet MCP server — Tools for worker fleet coordination.
+ * worker-fleet MCP server — Core tools for worker fleet coordination.
  *
- * 20 tools (fine-grained, one action per tool):
- *   Tasks:          REMOVED — use LKML (mail threads with TASK labels)
- *   State (4):      get_worker_state, update_state, update_config, update_worker_config
- *   Hooks (4):      add_hook, complete_hook, remove_hook, list_hooks
- *   Lifecycle (2):  recycle, save_checkpoint
- *   Fleet (7):      create_worker, register_worker, deregister_worker, move_worker, standby_worker, fleet_template, fleet_help
- *   Review (1):     deep_review
+ * 14 tools (fundamentals only — use fleet CLI for everything else):
  *   Mail (4):       mail_send, mail_inbox, mail_read, mail_help
+ *   Lifecycle (2):  recycle, save_checkpoint
+ *   State (2):      get_worker_state, update_state
+ *   Hooks (4):      add_hook, complete_hook, remove_hook, list_hooks
+ *   Fleet (2):      create_worker, fleet_help
  *
- * All messaging via Fleet Mail (formerly BMS). Tasks tracked as TASK-labeled mail threads (LKML model).
+ * Removed (use fleet CLI):
+ *   register_worker, deregister_worker, move_worker, standby_worker, fleet_template
+ *   update_config → fleet defaults, update_worker_config → fleet config
+ *   deep_review → bash ~/.deep-review/scripts/deep-review.sh
  *
- * Runtime: bun run ~/.claude-ops/mcp/worker-fleet/index.ts (stdio transport)
+ * Runtime: bun run ~/.tmux-agents/mcp/worker-fleet/index.ts (stdio transport)
  * Identity: auto-detected from WORKER_NAME env or git branch (worker/* → name)
  */
 
@@ -26,13 +27,12 @@ import { registerHookTools } from "./tools/hooks";
 import { registerLifecycleTools } from "./tools/lifecycle";
 import { registerFleetTools } from "./tools/fleet";
 import { registerMailTools } from "./tools/mail";
-import { registerReviewTools } from "./tools/review";
 
 // ── Server ───────────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: "worker-fleet",
-  version: "2.0.0",
+  version: "3.0.0",
 });
 
 registerStateTools(server);
@@ -40,7 +40,6 @@ registerHookTools(server);
 registerLifecycleTools(server);
 registerFleetTools(server);
 registerMailTools(server);
-registerReviewTools(server);
 
 // ── Start ────────────────────────────────────────────────────────────
 

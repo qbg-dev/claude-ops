@@ -167,51 +167,22 @@ if [ -n "$cost_raw" ] && [ "$cost_raw" != "null" ]; then
 	# ============================================================================
 	# SELF-CONTAINED SPENDING TRACKER
 	# ============================================================================
-	# JSONL at ~/.claude/spending.jsonl — one line per session, upserted atomically.
-	# Concurrency: flock serializes read-modify-write; mv is atomic on same fs.
+	# Append-only JSONL at ~/.claude/spending.jsonl. No locks needed.
+	# printf >> file is atomic for lines < PIPE_BUF (512 bytes). Ours are ~81 bytes.
+	# Duplicates per session are expected — aggregation deduplicates by max cost per sid.
 	# Format: {"sid":"...","cost":N.NN,"ts":EPOCH}
 	# ============================================================================
 	SPENDING_FILE="$HOME/.claude/spending.jsonl"
-	LOCK_FILE="$HOME/.claude/.spending.lock"
 
 	if [ -n "$session_id" ] && [ "$session_id" != "null" ] && (($(echo "$cost_dollars > 0" | bc -l))); then
-		now_epoch=$(date +%s)
-
-		# Atomic upsert: flock ensures only one writer at a time
-		(
-			flock -w 1 200 2>/dev/null || true  # Best-effort lock (1s timeout, skip if can't acquire)
-
-			# Create file if missing
-			touch "$SPENDING_FILE"
-
-			# Check if this session already exists and needs updating
-			tmp_file="${SPENDING_FILE}.tmp.$$"
-			updated=0
-
-			# Rewrite file: update existing session or append new one
-			# Use jq for reliable JSON parsing (awk match() 3-arg is gawk-only)
-			jq -c -s --arg sid "$session_id" --argjson cost "$cost_dollars" --argjson ts "$now_epoch" '
-				(map(select(.sid == $sid)) | length > 0) as $exists |
-				if $exists then
-					map(if .sid == $sid then {sid: $sid, cost: $cost, ts: $ts} else . end)
-				else
-					. + [{sid: $sid, cost: $cost, ts: $ts}]
-				end | .[]
-			' "$SPENDING_FILE" > "$tmp_file" 2>/dev/null || {
-				# Fallback: if jq fails (malformed lines), just append
-				cp "$SPENDING_FILE" "$tmp_file"
-				printf '{"sid":"%s","cost":%s,"ts":%s}\n' "$session_id" "$cost_dollars" "$now_epoch" >> "$tmp_file"
-			}
-
-			mv "$tmp_file" "$SPENDING_FILE"
-		) 200>"$LOCK_FILE"
+		printf '{"sid":"%s","cost":%s,"ts":%s}\n' "$session_id" "$cost_dollars" "$(date +%s)" >> "$SPENDING_FILE"
 	fi
 fi
 
 # ============================================================================
 # COMPUTE SPENDING TOTALS (hourly / daily / weekly)
 # ============================================================================
-# Pure awk — reads JSONL once, sums by time window. Fast even with thousands of sessions.
+# Dedup by max cost per sid, then sum by time window. Tolerates malformed lines.
 # ============================================================================
 spending_totals=""
 SPENDING_FILE="$HOME/.claude/spending.jsonl"
@@ -219,10 +190,12 @@ SPENDING_FILE="$HOME/.claude/spending.jsonl"
 if [ -f "$SPENDING_FILE" ] && [ -s "$SPENDING_FILE" ]; then
 	now_epoch=$(date +%s)
 
-	# Single jq pass: compute hourly, daily, weekly sums (jq handles JSON properly)
+	# Single jq pass: dedup by max cost per sid, then compute hourly/daily/weekly sums.
+	# Uses jq -R (raw line input) + fromjson? to tolerate truncated/malformed lines.
 	read -r hourly_total daily_total weekly_total < <(
-		jq -r -s --argjson now "$now_epoch" '
-			map(select(.ts and .cost)) |
+		jq -R -r -s --argjson now "$now_epoch" '
+			[split("\n")[] | select(length > 0) | fromjson? | select(.ts and .cost)] |
+			group_by(.sid) | map(max_by(.cost)) |
 			reduce .[] as $e ({h:0,d:0,w:0};
 				($now - $e.ts) as $age |
 				(if $age <= 3600   then .h += $e.cost else . end) |
@@ -232,6 +205,21 @@ if [ -f "$SPENDING_FILE" ] && [ -s "$SPENDING_FILE" ]; then
 			"\(.h | . * 100 | round / 100) \(.d | . * 100 | round / 100) \(.w | . * 100 | round / 100)"
 		' "$SPENDING_FILE" 2>/dev/null || echo "0 0 0"
 	)
+
+	# Probabilistic rotation: 1% chance, only if file > 3000 lines. Prunes > 30 days.
+	if [ $((RANDOM % 100)) -eq 0 ]; then
+		_lc=$(wc -l < "$SPENDING_FILE" 2>/dev/null || echo 0)
+		if [ "${_lc}" -gt 3000 ]; then
+			_cutoff=$((now_epoch - 2592000))
+			jq -R -s --argjson cutoff "$_cutoff" '
+				[split("\n")[] | select(length > 0) | fromjson? |
+				 select(.ts and .cost and .ts >= $cutoff)] |
+				group_by(.sid) | map(max_by(.cost)) | .[]
+			' "$SPENDING_FILE" > "${SPENDING_FILE}.rot.$$" 2>/dev/null && \
+			mv "${SPENDING_FILE}.rot.$$" "$SPENDING_FILE" || \
+			rm -f "${SPENDING_FILE}.rot.$$"
+		fi
+	fi
 
 	# Color helper: green < threshold1 < yellow < threshold2 < red
 	color_tier() {
@@ -245,22 +233,22 @@ if [ -f "$SPENDING_FILE" ] && [ -s "$SPENDING_FILE" ]; then
 		fi
 	}
 
-	# Hourly
+	# Hourly (actual spend in last 60 min)
 	if [ -n "$hourly_total" ] && [ "$hourly_total" != "0.00" ]; then
 		hc=$(color_tier "$hourly_total" 2.00 10.00)
-		spending_totals=$(printf " ⏰ %b\$%s%b/hr" "$hc" "$hourly_total" "\033[0m")
+		spending_totals=$(printf " ⏰ %b\$%s%b (1h)" "$hc" "$hourly_total" "\033[0m")
 	fi
 
-	# Daily
+	# Daily (actual spend in last 24h)
 	if [ -n "$daily_total" ] && [ "$daily_total" != "0.00" ]; then
 		dc=$(color_tier "$daily_total" 5.00 20.00)
-		spending_totals="${spending_totals}$(printf "  📅 %b\$%s%b/day" "$dc" "$daily_total" "\033[0m")"
+		spending_totals="${spending_totals}$(printf "  📅 %b\$%s%b (24h)" "$dc" "$daily_total" "\033[0m")"
 	fi
 
-	# Weekly
+	# Weekly (actual spend in last 7d)
 	if [ -n "$weekly_total" ] && [ "$weekly_total" != "0.00" ]; then
 		wc=$(color_tier "$weekly_total" 30.00 100.00)
-		spending_totals="${spending_totals}$(printf "  💰 %b\$%s%b/wk" "$wc" "$weekly_total" "\033[0m")"
+		spending_totals="${spending_totals}$(printf "  💰 %b\$%s%b (7d)" "$wc" "$weekly_total" "\033[0m")"
 	fi
 fi
 

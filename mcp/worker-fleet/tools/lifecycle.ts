@@ -22,16 +22,18 @@ server.registerTool(
   "recycle",
   { description: `Restart yourself in the same tmux pane to get a fresh context window.
 
-Three modes:
-  (1) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session.
-  (2) resume=true (hot restart): resume same session ID — preserves full conversation history but reloads MCP config.
-  (3) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds (no immediate relaunch). Use sleep_seconds to override sleep_duration for this cycle.
+Four modes:
+  (1) soft=true (preferred for cycle boundaries): saves checkpoint + cycle report but does NOT exit. You stay alive and keep working. Use this to mark cycle boundaries without restarting. Context refreshes naturally via pre-compact hook.
+  (2) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session.
+  (3) resume=true (hot restart): resume same session ID — preserves full conversation history but reloads MCP config.
+  (4) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds. Use sleep_seconds to override.
 
 When to use which:
-  - Context window getting long, task ongoing → cold restart (default). Handoff message carries state forward.
-  - MCP config or .mcp.json changed, need to reload tools/env → hot restart (resume=true). Keeps conversation, just reloads MCP.
-  - Perpetual cycle complete, nothing urgent → let sleep/watchdog handle it (just call recycle with a handoff message).
-  - Stuck or corrupted state, need clean slate → cold restart with minimal handoff.
+  - Finished a task, have more work or mail to handle → soft=true. Stay alive, log the cycle.
+  - Context window getting very long (compacted 2+ times) → cold restart (default). Handoff carries state.
+  - MCP config or .mcp.json changed → hot restart (resume=true). Keeps conversation, reloads MCP.
+  - No more work AND no pending mail → default recycle. Let watchdog handle respawn timer.
+  - Stuck or corrupted state → cold restart with minimal handoff.
 
 Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
     message: z.string().optional().describe("Handoff context for the next instance. Include: what was accomplished, what remains, any blockers or decisions needed. Written to handoff.md and injected into the next session's seed"),
@@ -39,8 +41,9 @@ Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
     force: z.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle"),
     sleep_seconds: z.number().optional().describe("Override sleep_duration for this recycle only. The watchdog will respawn after this many seconds. 0 = immediate restart (no sleep). Only applies to perpetual workers"),
     cancel: z.boolean().optional().describe("If true, cancel a pending sleep timer (clears status=sleeping). Use when you realize you have more work and don't need to restart yet"),
+    soft: z.boolean().optional().describe("If true, soft recycle: save checkpoint, send cycle report, log the cycle — but do NOT exit Claude or kill the pane. You stay alive and keep working. Use this to mark cycle boundaries without restarting. The pre-compact hook will re-inject your seed when context compacts naturally"),
   } },
-  async ({ message, resume, force, sleep_seconds, cancel }) => {
+  async ({ message, resume, force, sleep_seconds, cancel, soft }) => {
     // 0a. Cancel mode — abort a pending sleep timer
     if (cancel) {
       withRegistryLocked((registry) => {
@@ -51,6 +54,79 @@ Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
         }
       });
       return { content: [{ type: "text" as const, text: "Sleep timer cancelled. Status restored to active." }] };
+    }
+
+    // 0-soft. Soft recycle — save state + report cycle, but stay alive
+    if (soft) {
+      // Save checkpoint
+      try {
+        const checkpointDir = join(WORKERS_DIR, WORKER_NAME, "checkpoints");
+        const gitState = _captureGitState();
+        const hooks = _captureHooksSnapshot();
+        _writeCheckpoint(checkpointDir, {
+          timestamp: new Date().toISOString(),
+          type: "soft-recycle" as const,
+          summary: message || "Soft recycle — cycle boundary",
+          git_state: gitState,
+          dynamic_hooks: hooks,
+          key_facts: [] as string[],
+          transcript_ref: "",
+        });
+      } catch {}
+
+      // Update registry cycle marker
+      withRegistryLocked((registry) => {
+        const w = registry[WORKER_NAME] as RegistryWorkerEntry;
+        if (w) {
+          w.custom = w.custom || {};
+          w.custom.last_recycle_at = new Date().toISOString();
+          w.custom.last_recycle_reason = "soft";
+        }
+      });
+
+      // Write handoff.md (for seed re-injection on next hard recycle or pre-compact)
+      if (message) {
+        try {
+          const handoffPath = join(WORKERS_DIR, WORKER_NAME, "handoff.md");
+          writeFileSync(handoffPath, message.trim() + "\n");
+        } catch {}
+      }
+
+      // Notify mission_authority (best-effort, same as full recycle)
+      try {
+        const registry = readRegistry();
+        const config = registry._config as RegistryConfig;
+        const cycleReport = message
+          ? `[${WORKER_NAME}] Soft cycle complete: ${message}`
+          : `[${WORKER_NAME}] Soft cycle complete (no summary)`;
+        const maList = config?.mission_authority;
+        const operatorNames: string[] = !maList ? [] : Array.isArray(maList) ? maList : [maList];
+        const filteredOps = operatorNames.filter(n => n !== WORKER_NAME);
+        if (filteredOps.length > 0) {
+          getFleetMailToken().then(async () => {
+            const toIds = await resolveFleetMailRecipients(filteredOps);
+            await fleetMailRequest("POST", "/api/messages/send", {
+              to: toIds, subject: `${WORKER_NAME} soft cycle done`,
+              body: cycleReport, cc: [], thread_id: null, in_reply_to: null,
+              reply_by: null, labels: ["CYCLE-REPORT"], attachments: [],
+            });
+          }).catch(() => {});
+        }
+      } catch {}
+
+      // Clear completed dynamic hooks (they belong to the finished cycle)
+      for (const [id, hook] of dynamicHooks.entries()) {
+        if (hook.completed) dynamicHooks.delete(id);
+      }
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Soft recycle complete — cycle logged, checkpoint saved. You are still alive.\n` +
+            `${message ? `Handoff: "${message.slice(0, 100)}${message.length > 100 ? "..." : ""}"` : "No handoff message."}\n` +
+            `Completed hooks cleared. Keep working — check mail_inbox() for new tasks.`,
+        }],
+      };
     }
 
     // 0. Gate on blocking hooks (unified: stop checks + any blocking gates)

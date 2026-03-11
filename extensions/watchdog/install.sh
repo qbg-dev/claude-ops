@@ -4,14 +4,16 @@
 set -euo pipefail
 
 FLEET_DIR="${TMUX_AGENTS_DIR:-${CLAUDE_OPS_DIR:-$HOME/.tmux-agents}}"
-WATCHDOG_SCRIPT="$FLEET_DIR/extensions/watchdog/watchdog.sh"
+WATCHDOG_SCRIPT="$FLEET_DIR/extensions/watchdog/src/watchdog.ts"
 STATE_DIR="$FLEET_DIR/state"
 PLIST_NAME="com.tmux-agents.watchdog"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 
+BUN_PATH="$(which bun 2>/dev/null || echo /opt/homebrew/bin/bun)"
+
 if [ ! -f "$WATCHDOG_SCRIPT" ]; then
-  echo "ERROR: watchdog.sh not found at $WATCHDOG_SCRIPT"
+  echo "ERROR: watchdog.ts not found at $WATCHDOG_SCRIPT"
   echo "Install tmux-agents first: git clone ... ~/.tmux-agents"
   exit 1
 fi
@@ -33,9 +35,9 @@ cat > "$PLIST_PATH" <<EOPLIST
   <string>$PLIST_NAME</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
-    <string>-c</string>
-    <string>while true; do /bin/bash $WATCHDOG_SCRIPT; sleep 5; done</string>
+    <string>$BUN_PATH</string>
+    <string>run</string>
+    <string>$WATCHDOG_SCRIPT</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

@@ -461,7 +461,7 @@ function checkDeepReview(): CheckResult {
 }
 
 function checkWatchdog(): CheckResult {
-  const watchdogScript = join(FLEET_DIR, "extensions/watchdog/watchdog.sh");
+  const watchdogScript = join(FLEET_DIR, "extensions/watchdog/src/watchdog.ts");
   if (!existsSync(watchdogScript)) {
     return {
       name: "Watchdog",

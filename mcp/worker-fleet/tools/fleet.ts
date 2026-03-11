@@ -1,6 +1,12 @@
 /**
- * Fleet tools — create_worker, register_worker, deregister_worker,
- *                move_worker, standby_worker, fleet_template, fleet_help
+ * Fleet tools — create_worker, fleet_help
+ *
+ * Removed tools (use fleet CLI instead):
+ *   register_worker → fleet create / auto-detected
+ *   deregister_worker → fleet stop + manual cleanup
+ *   move_worker → tmux move-pane / fleet attach
+ *   standby_worker → fleet stop / update_state
+ *   fleet_template → fleet config / fleet_help docs
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -963,43 +969,50 @@ function handleFleetHelp(): McpResult {
     content: [{
       type: "text" as const,
       text: [
-        `# Fleet Management Tools`,
+        `# Fleet Management`,
         ``,
-        `## Available Tools`,
+        `## MCP Tools (core)`,
         ``,
-        `### create_worker — Create a new autonomous worker`,
-        `Required: name (string), mission (string)`,
-        `Optional: type, runtime, model, reasoning_effort, sleep_duration,`,
-        `  disallowed_tools (JSON string array), window, window_index, report_to,`,
-        `  permission_mode, launch, tasks (JSON array), proposal_required,`,
-        `  fork_from_session, direct_report`,
+        `### create_worker(name, mission, ...) — Spawn a new worker`,
+        `Required: name, mission. Optional: type, runtime, model, reasoning_effort,`,
+        `sleep_duration, window, report_to, permission_mode, launch, direct_report.`,
         ``,
-        `### register_worker — Register yourself in the fleet registry`,
-        `Optional: model, sleep_duration, report_to`,
-        `Auto-detects tmux pane, session, runtime. Call when lint warns you're not in registry.`,
+        `### fleet_help() — This reference`,
         ``,
-        `### deregister_worker — Remove a worker from the registry`,
-        `Optional: name (default=self), reason`,
-        `Requires HANDOFF.md (>50 chars) in worker directory. Files/worktree preserved.`,
-        `Authorization: self or mission_authority.`,
+        `## Fleet CLI (from bash)`,
         ``,
-        `### move_worker — Move a worker's tmux pane to a different window`,
-        `Required: window`,
-        `Optional: name (default=self), reason`,
-        `Moving to 'standby' sets status=standby. Moving out restores active.`,
-        `Authorization: self or mission_authority.`,
+        `The fleet CLI covers everything beyond the core MCP tools:`,
         ``,
-        `### standby_worker — Toggle worker between active and standby`,
-        `Optional: name (default=self), reason`,
-        `If active → standby (moves pane, stops watchdog). If standby → active (restores).`,
-        `USER-ONLY — workers must never call this proactively.`,
-        `Authorization: self or mission_authority.`,
+        `\`\`\`bash`,
+        `fleet ls                          # List all workers with status`,
+        `fleet start <name>                # Start/restart a worker`,
+        `fleet stop <name> [--all]         # Graceful stop`,
+        `fleet attach <name>               # Focus worker's tmux pane`,
+        `fleet config <name> [key] [value] # Get/set per-worker config`,
+        `fleet defaults [key] [value]      # Get/set fleet-wide defaults`,
+        `fleet log <name>                  # Tail worker output`,
+        `fleet mail <name>                 # Check worker's inbox`,
+        `fleet fork <parent> <child>       # Fork from existing session`,
+        `fleet doctor                      # Health check`,
+        `\`\`\``,
         ``,
-        `### fleet_template — Preview worker archetype defaults`,
-        `Required: type (implementer|monitor|coordinator|optimizer|verifier)`,
-        `Returns template mission.md, permissions, and state config.`,
+        `## Deep Review (from bash)`,
         ``,
-        `### fleet_help — Show this help text`,
+        `\`\`\`bash`,
+        `bash ~/.deep-review/scripts/deep-review.sh --scope main --spec "verify changes"`,
+        `# Options: --passes N, --focus "security,logic", --verify, --no-judge, --no-context`,
+        `\`\`\``,
+        ``,
+        `## Common Operations (CLI equivalents)`,
+        ``,
+        `| Operation | How |`,
+        `|-----------|-----|`,
+        `| Move pane to window | \`tmux move-pane -t w:window-name\` |`,
+        `| Toggle standby | \`fleet stop <name>\` / \`fleet start <name>\` |`,
+        `| Update worker config | \`fleet config <name> key value\` |`,
+        `| Update fleet defaults | \`fleet defaults key value\` |`,
+        `| Preview archetype | \`fleet config <name>\` (shows full config) |`,
+        `| Deregister worker | \`fleet stop <name>\` + remove worker dir |`,
       ].join("\n"),
     }],
   };
@@ -1037,66 +1050,8 @@ server.registerTool(
   async (params: Record<string, any>) => handleFleetCreate(params)
 );
 
-server.registerTool(
-  "register_worker",
-  {
-    description: "Register yourself in the fleet registry. Auto-detects tmux pane, session, runtime.",
-    inputSchema: {
-      model: z.string().optional().describe("LLM model override"),
-      sleep_duration: z.number().nullable().optional().describe("Seconds between cycles. null = one-shot, N > 0 = perpetual"),
-      report_to: z.string().optional().describe("Who this worker reports to"),
-    },
-  },
-  async (params: Record<string, any>) => handleFleetRegister(params)
-);
-
-server.registerTool(
-  "deregister_worker",
-  {
-    description: "Remove a worker from the registry. Requires HANDOFF.md (>50 chars). Files/worktree preserved.",
-    inputSchema: {
-      name: z.string().optional().describe("Worker name (default: self)"),
-      reason: z.string().optional().describe("Reason for deregistration"),
-    },
-  },
-  async (params: Record<string, any>) => handleFleetDeregister(params)
-);
-
-server.registerTool(
-  "move_worker",
-  {
-    description: "Move a worker's tmux pane to a different window. Moving to 'standby' sets status=standby.",
-    inputSchema: {
-      window: z.string().describe("Target tmux window name"),
-      name: z.string().optional().describe("Worker name (default: self)"),
-      reason: z.string().optional().describe("Reason for the move"),
-    },
-  },
-  async (params: Record<string, any>) => handleFleetMove(params)
-);
-
-server.registerTool(
-  "standby_worker",
-  {
-    description: "Toggle worker between active and standby. If active → standby (moves pane, stops watchdog). If standby → active (restores).",
-    inputSchema: {
-      name: z.string().optional().describe("Worker name (default: self)"),
-      reason: z.string().optional().describe("Reason for standby/wake"),
-    },
-  },
-  async (params: Record<string, any>) => handleFleetStandby(params)
-);
-
-server.registerTool(
-  "fleet_template",
-  {
-    description: "Preview worker archetype defaults (mission.md template, permissions, state config).",
-    inputSchema: {
-      type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).describe("Worker archetype"),
-    },
-  },
-  async (params: Record<string, any>) => handleFleetTemplate(params)
-);
+// Removed tools: register_worker, deregister_worker, move_worker, standby_worker, fleet_template
+// Use fleet CLI equivalents (see fleet_help output)
 
 server.registerTool(
   "fleet_help",

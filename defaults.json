@@ -11,5 +11,7 @@
   },
   "harness_api": {
     "port": 7777
-  }
+  },
+  "fleet_mail_url": "http://localhost:8025",
+  "fleet_mail_token": "2699efa4-c5be-41ff-b38b-8247703cbfac"
 }
