@@ -142,32 +142,62 @@ export async function getFleetMailToken(): Promise<string> {
 
 // ── HTTP Request Helper ──────────────────────────────────────────────
 
-/** HTTP helper for Fleet Mail API calls */
+/** Retry transient errors (5xx, connection refused, timeout) with exponential backoff.
+ *  Delays: 2s, 4s, 8s. Does NOT retry 4xx client errors. */
+async function withRetry<T>(fn: () => Promise<T>, context: string, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const status = err.status ?? err.statusCode;
+      const isTransient =
+        (typeof status === "number" && status >= 500) ||
+        err.code === "ECONNREFUSED" ||
+        err.code === "UND_ERR_CONNECT_TIMEOUT" ||
+        err.code === "ETIMEDOUT" ||
+        err.name === "TimeoutError" ||
+        err.message?.includes("timeout") ||
+        err.message?.includes("abort");
+      if (!isTransient || attempt === maxRetries) throw err;
+      const delay = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s
+      console.error(`[mail-client] ${context} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${err.message ?? err}. Retrying in ${delay / 1000}s...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error("unreachable");
+}
+
+/** HTTP helper for Fleet Mail API calls (with retry on transient errors) */
 export async function fleetMailRequest(method: string, path: string, body?: any): Promise<any> {
   const token = await getFleetMailToken();
   const url = `${FLEET_MAIL_URL}${path}`;
-  const opts: RequestInit = {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(15_000), // 15s timeout — prevent hanging
-  };
 
-  const resp = await fetch(url, opts);
-  const text = await resp.text();
+  return withRetry(async () => {
+    const opts: RequestInit = {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(15_000), // 15s timeout — prevent hanging
+    };
 
-  if (!resp.ok) {
-    throw new Error(`Fleet Mail ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
-  }
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
 
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+    if (!resp.ok) {
+      const err = new Error(`Fleet Mail ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
+      (err as any).status = resp.status;
+      throw err;
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }, `${method} ${path}`);
 }
 
 // ── Response Formatting ──────────────────────────────────────────────
