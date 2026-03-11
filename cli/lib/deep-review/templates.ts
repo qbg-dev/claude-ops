@@ -217,9 +217,10 @@ export function generateLaunchWrappers(
       ? buildMailEnvExport(workerName, project)
       : "";
 
+    const projectRootExport = fleetEnv ? `\nexport PROJECT_ROOT="${ctx.workDir}"` : "";
     const script = `#!/usr/bin/env bash
 cd "${ctx.workDir}"
-${fleetEnv ? fleetEnv + "\nexport PROJECT_ROOT=\"${ctx.workDir}\"" : ""}
+${fleetEnv ? fleetEnv + projectRootExport : ""}
 
 # Run the review worker
 claude --model ${config.workerModel} --dangerously-skip-permissions "$(cat '${ctx.sessionDir}/worker-${i}-seed.md')"
@@ -252,9 +253,10 @@ fi
     ? buildMailEnvExport(ctx.coordinatorName, project)
     : "";
 
+  const coordPrExport = coordFleetEnv ? `\nexport PROJECT_ROOT="${ctx.workDir}"` : "";
   const coordScript = `#!/usr/bin/env bash
 cd "${ctx.workDir}"
-${coordFleetEnv ? coordFleetEnv + "\nexport PROJECT_ROOT=\"${ctx.workDir}\"" : ""}
+${coordFleetEnv ? coordFleetEnv + coordPrExport : ""}
 exec claude --model ${config.coordModel} --dangerously-skip-permissions "$(cat '${ctx.sessionDir}/coordinator-seed.md')"
 `;
   writeFileSync(join(ctx.sessionDir, "run-coordinator.sh"), coordScript, { mode: 0o755 });
@@ -266,9 +268,10 @@ exec claude --model ${config.coordModel} --dangerously-skip-permissions "$(cat '
       ? buildMailEnvExport(judgeName, project)
       : "";
 
+    const judgePrExport = judgeFleetEnv ? `\nexport PROJECT_ROOT="${ctx.workDir}"` : "";
     const judgeScript = `#!/usr/bin/env bash
 cd "${ctx.workDir}"
-${judgeFleetEnv ? judgeFleetEnv + "\nexport PROJECT_ROOT=\"${ctx.workDir}\"" : ""}
+${judgeFleetEnv ? judgeFleetEnv + judgePrExport : ""}
 exec claude --model ${config.workerModel} --dangerously-skip-permissions "$(cat '${ctx.sessionDir}/judge-seed.md')"
 `;
     writeFileSync(join(ctx.sessionDir, "run-judge.sh"), judgeScript, { mode: 0o755 });
@@ -286,9 +289,10 @@ exec claude --model ${config.workerModel} --dangerously-skip-permissions "$(cat 
         ? buildMailEnvExport(verifierName, project)
         : "";
 
+      const vPrExport = vFleetEnv ? `\nexport PROJECT_ROOT="${ctx.workDir}"` : "";
       const script = `#!/usr/bin/env bash
 cd "${ctx.workDir}"
-${vFleetEnv ? vFleetEnv + "\nexport PROJECT_ROOT=\"${ctx.workDir}\"" : ""}
+${vFleetEnv ? vFleetEnv + vPrExport : ""}
 
 # Wait for coordinator to finish
 echo "Verifier (${vtype}) waiting for coordinator to complete..."
