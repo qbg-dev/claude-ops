@@ -11,7 +11,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, copyFileSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { HOME, WORKER_NAME, FLEET_DIR, PROJECT_ROOT } from "./config";
 import type { DynamicHook } from "../../shared/types";
 
@@ -104,6 +104,12 @@ export function writeScriptFile(id: string, description: string, script: string)
   if (script.startsWith("@")) {
     // Copy from file
     const srcPath = script.slice(1);
+    const resolvedSrc = resolve(srcPath);
+    const projectRootResolved = resolve(PROJECT_ROOT);
+    const fleetDirResolved = resolve(FLEET_DIR);
+    if (!resolvedSrc.startsWith(projectRootResolved) && !resolvedSrc.startsWith(fleetDirResolved)) {
+      throw new Error(`Script source path must be within project or fleet directory: ${srcPath}`);
+    }
     if (!existsSync(srcPath)) {
       throw new Error(`Script source file not found: ${srcPath}`);
     }
