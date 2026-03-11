@@ -155,14 +155,14 @@ export function register(parent: Command): void {
           console.log(`  ${chalk.red("✗")} Fleet Mail: ${FLEET_MAIL_URL} (unreachable)`);
         }
         if (!mailOk) {
-          fail("Fleet Mail is configured but unreachable. Check the server and re-run: fleet setup");
+          fail(`Fleet Mail at ${FLEET_MAIL_URL} is unreachable. Is the server running?\n\n  Check status:  fleet mail-server status\n  Reconnect:     fleet mail-server connect <url>\n  Start local:   fleet mail-server start`);
         }
         if (FLEET_MAIL_TOKEN) {
           ok(`Admin token: ${FLEET_MAIL_TOKEN.slice(0, 8)}...`);
         }
       } else {
-        // Not configured — auto-start local server
-        info("No Fleet Mail configured — starting local server...");
+        // Not configured — try to auto-start local server
+        info("No Fleet Mail configured — attempting to auto-start local server...");
         try {
           const result = await startLocalServer({ quiet: true });
           resolvedMailUrl = result.url;
@@ -170,13 +170,18 @@ export function register(parent: Command): void {
           ok(`Admin token: ${result.token.slice(0, 8)}...`);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          console.log(`  ${chalk.red("✗")} ${msg}`);
+          console.log(`  ${chalk.red("✗")} Auto-start failed: ${msg}`);
           console.log("");
-          console.log(`  Fleet Mail is required for worker coordination.`);
-          console.log(`  ${chalk.cyan("Install boring-mail:")}  cargo install --git https://github.com/qbg-dev/boring-mail-server boring-mail`);
-          console.log(`  ${chalk.cyan("Or connect remote:")}    fleet mail-server connect http://your-server:8025`);
+          console.log(`  Fleet Mail is required for worker coordination. Two paths:`);
           console.log("");
-          fail("Install boring-mail or connect to a remote server, then re-run: fleet setup");
+          console.log(`  ${chalk.cyan("Path 1 — Install Rust + build locally:")}`);
+          console.log(`    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`);
+          console.log(`    Then re-run: fleet setup`);
+          console.log("");
+          console.log(`  ${chalk.cyan("Path 2 — Connect to a remote server:")}`);
+          console.log(`    fleet mail-server connect http://your-server:8026`);
+          console.log("");
+          fail("Set up Fleet Mail via one of the paths above, then re-run: fleet setup");
         }
       }
 
