@@ -45,9 +45,24 @@ export function register(parent: Command): void {
         : "";
 
       if (mission) {
-        // Combine: parent context + new directive
+        // Combine: parent context + new directive with synthesis instructions
         mission = parentMission
-          ? `# Forked from ${parentName}\n\n## Original mission\n${parentMission}\n\n## Your directive\n${mission}`
+          ? [
+              `# Forked from ${parentName}`,
+              ``,
+              `You were forked from worker \`${parentName}\`. Your job is to synthesize their original mission with your new directive into a coherent plan.`,
+              ``,
+              `## Original mission (from ${parentName})`,
+              parentMission,
+              ``,
+              `## New directive`,
+              mission,
+              ``,
+              `## Instructions`,
+              `- Synthesize the original mission and new directive into a single coherent understanding of what you need to do.`,
+              `- If the directive is clear and unambiguous, proceed immediately.`,
+              `- If it's unclear, conflicts with the original mission, or could be interpreted multiple ways, ask the user to clarify before starting work.`,
+            ].join("\n")
           : mission;
       } else {
         mission = parentMission || `Forked from ${parentName}`;
