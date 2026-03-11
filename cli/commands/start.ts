@@ -15,13 +15,22 @@ import { addGlobalOpts } from "../index";
 /** Start a single worker with optional overrides */
 async function startOne(
   name: string, project: string,
-  opts: { model?: string; effort?: string; permissionMode?: string; window?: string; windowIndex?: string; save?: boolean },
+  opts: { model?: string; effort?: string; permissionMode?: string; window?: string; windowIndex?: string; save?: boolean; force?: boolean },
 ): Promise<boolean> {
   const dir = workerDir(project, name);
   const configPath = join(dir, "config.json");
 
   if (!existsSync(dir)) { warn(`Worker '${name}' not found`); return false; }
   if (!existsSync(configPath)) { warn(`No config.json for '${name}'`); return false; }
+
+  // Safety: skip if worker already has a live pane (prevents seed injection into active sessions)
+  if (!opts.force) {
+    const state = getState(project, name);
+    if (state?.pane_id && listPaneIds().has(state.pane_id)) {
+      info(`Worker '${name}' already running in pane ${state.pane_id} (use --force to restart)`);
+      return true;
+    }
+  }
 
   const overrides: Record<string, string> = {};
   if (opts.model) overrides.model = opts.model;
@@ -157,12 +166,13 @@ export function register(parent: Command): void {
     .option("--permission-mode <mode>", "Override permission mode")
     .option("--window <name>", "tmux window group")
     .option("--window-index <index>", "Explicit window position")
-    .option("--save", "Persist flag overrides to config");
+    .option("--save", "Persist flag overrides to config")
+    .option("-f, --force", "Force restart even if worker is already running");
   addGlobalOpts(sub)
     .action(async (name: string | undefined, opts: {
       all?: boolean; concurrency?: string;
       model?: string; effort?: string; permissionMode?: string;
-      window?: string; windowIndex?: string; save?: boolean;
+      window?: string; windowIndex?: string; save?: boolean; force?: boolean;
     }, cmd: Command) => {
       const project = cmd.optsWithGlobals().project as string || resolveProject();
 
