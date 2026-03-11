@@ -32,6 +32,14 @@ export async function runCreate(
 ): Promise<void> {
   if (!NAME_RE.test(name)) fail(`Name must be kebab-case: ${name}`);
 
+  // Support @filename syntax: read mission from file
+  if (mission.startsWith("@")) {
+    const missionPath = mission.slice(1);
+    if (!existsSync(missionPath)) fail(`Mission file not found: ${missionPath}`);
+    mission = readFileSync(missionPath, "utf-8").trim();
+    if (!mission) fail(`Mission file is empty: ${missionPath}`);
+  }
+
   const projectRoot = resolveProjectRoot();
   const project = (globalOpts.project as string) || resolveProject(projectRoot);
   const dir = workerDir(project, name);
