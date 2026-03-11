@@ -43,7 +43,7 @@ else
 fi
 chmod -R +x "$INSTALL_DIR/bin" "$INSTALL_DIR/hooks" "$INSTALL_DIR/scripts" 2>/dev/null || true
 
-# ── Run fleet setup (does everything else) ───────────────────────
-ok "Running fleet setup..."
+# ── Run fleet onboard (single entry point — calls setup internally) ──
+ok "Running fleet onboard..."
 echo ""
-exec bun run "$INSTALL_DIR/cli/index.ts" setup
+exec bun run "$INSTALL_DIR/cli/index.ts" onboard

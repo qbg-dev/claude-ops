@@ -6,11 +6,11 @@ Persistent, parallel AI agents on Claude Code.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/qbg-dev/claude-fleet/main/install.sh | bash
-fleet setup
-fleet onboard
 ```
 
-`fleet onboard` launches an interactive agent that walks you through everything: project setup, worker design, safety hooks, mail, watchdog, and verification. Ask it anything about the fleet.
+This runs `fleet onboard` — an interactive agent that sets up your infrastructure, designs your fleet, writes worker missions, configures safety hooks, and verifies everything works. It's the only entry point you need.
+
+Everything you need to know about the fleet, ask the onboard agent.
 
 ## After onboarding
 
