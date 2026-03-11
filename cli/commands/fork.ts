@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEFAULT_SESSION, workerDir, resolveProject,
@@ -16,11 +16,11 @@ import { addGlobalOpts } from "../index";
 
 export function register(parent: Command): void {
   const sub = parent
-    .command("fork <parent> <child> <mission>")
-    .description("Fork from existing session")
+    .command("fork <parent> <child> [mission]")
+    .description("Fork from existing session (inherits parent mission if omitted)")
     .option("--model <model>", "Override model");
   addGlobalOpts(sub)
-    .action(async (parentName: string, childName: string, mission: string, opts: { model?: string }, cmd: Command) => {
+    .action(async (parentName: string, childName: string, mission: string | undefined, opts: { model?: string }, cmd: Command) => {
       const project = cmd.optsWithGlobals().project as string || resolveProject();
       const parentDir = workerDir(project, parentName);
       const parentState = getState(project, parentName);
@@ -37,6 +37,17 @@ export function register(parent: Command): void {
 
       const childDir = workerDir(project, childName);
       if (existsSync(childDir)) fail(`Worker '${childName}' already exists`);
+
+      // Inherit parent mission if none provided
+      if (!mission) {
+        const parentMissionPath = join(parentDir, "mission.md");
+        if (existsSync(parentMissionPath)) {
+          mission = readFileSync(parentMissionPath, "utf-8").trim();
+          info(`Inheriting mission from '${parentName}'`);
+        } else {
+          mission = `Forked from ${parentName}`;
+        }
+      }
 
       info(`Forking '${childName}' from '${parentName}'`);
 
