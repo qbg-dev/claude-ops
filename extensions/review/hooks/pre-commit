@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Pre-commit hook: require AI-verified doc sync proof for CLI/doc changes.
+#
+# Flow:
+#   1. Claude reads REVIEW.md § "Doc Sync" + § "Pre-commit Verification"
+#   2. Claude inspects the staged changes against the checklist
+#   3. Claude writes proof XML to the path from: bash scripts/verification-hash.sh
+#   4. git commit → this hook validates the proof exists and all checks pass
+#
+# The proof is tied to the exact staged diff hash — any staging change invalidates it.
+# Proof files are ephemeral (.git/verification/) and not committed.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only gate commits that touch CLI code, docs, completions, or tests
+CHANGED=$(git diff --cached --name-only)
+if ! echo "$CHANGED" | grep -qE '(cli/|CLAUDE\.md|README\.md|completions/)'; then
+  exit 0
+fi
+
+# Compute the proof path for this exact staged content
+PROOF_PATH="$("$REPO_ROOT/scripts/verification-hash.sh")"
+
+if [ ! -f "$PROOF_PATH" ]; then
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "  DOC SYNC VERIFICATION REQUIRED"
+  echo "═══════════════════════════════════════════════════════════════"
+  echo ""
+  echo "  This commit touches CLI/doc files. Before committing:"
+  echo ""
+  echo "  1. Read REVIEW.md §Doc Sync + §Pre-commit Verification"
+  echo "  2. Run:  bash scripts/check-docs.sh  (quick first pass)"
+  echo "  3. Get proof path:  bash scripts/verification-hash.sh"
+  echo "  4. Verify checks 1-5, write proof XML to that path"
+  echo "  5. Re-run:  git commit"
+  echo ""
+  echo "  Expected proof at: $PROOF_PATH"
+  echo "═══════════════════════════════════════════════════════════════"
+  exit 1
+fi
+
+# Validate proof structure — must have <verification> root and no "fail" checks
+if ! grep -q '<verification>' "$PROOF_PATH"; then
+  echo "ERROR: Proof file exists but is not valid XML. Re-run the checklist."
+  rm -f "$PROOF_PATH"
+  exit 1
+fi
+
+if grep -q 'status="fail"' "$PROOF_PATH"; then
+  echo ""
+  echo "DOC SYNC VERIFICATION FAILED — proof contains failing checks:"
+  grep 'status="fail"' "$PROOF_PATH" | sed 's/^/  /'
+  echo ""
+  echo "Fix the issues, re-verify, and write a new proof."
+  rm -f "$PROOF_PATH"
+  exit 1
+fi
+
+# Proof valid
+echo "✓ Doc sync verified (proof: $(basename "$PROOF_PATH"))"
+
+# Clean up stale proofs (older than 1 hour)
+find "$REPO_ROOT/.git/verification" -name "*.xml" -mmin +60 -delete 2>/dev/null || true
+
+exit 0

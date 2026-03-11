@@ -132,7 +132,8 @@ Install: `bash extensions/watchdog/install.sh`
 | `hooks/gates/` | Safety gates |
 | `hooks/interceptors/` | Context injection |
 | `hooks/publishers/` | Event publishing |
-| `extensions/watchdog/` | Watchdog daemon |
+| `extensions/watchdog/` | Watchdog daemon (extension) |
+| `extensions/review/` | Deep review rules + pre-commit verification (extension) |
 | `templates/flat-worker/types/` | Worker archetypes |
 | `templates/seed-context.md` | Worker seed context |
 | `cli/commands/tui.ts` | Fleet Mail TUI launcher |
@@ -140,9 +141,7 @@ Install: `bash extensions/watchdog/install.sh`
 | `cli/commands/deep-review.ts` | Adversarial code review launcher |
 | `scripts/setup-hooks.sh` | Hook installer |
 | `scripts/lint-hooks.sh` | Hook verifier |
-| `scripts/check-docs.sh` | Quick deterministic doc sync scan |
-| `scripts/verification-hash.sh` | Compute proof path from staged diff hash |
-| `REVIEW.md` | Deep review rules + pre-commit doc sync checklist |
+| `REVIEW.md` | Symlink → `extensions/review/REVIEW.md` |
 
 ## Conventions
 
@@ -152,3 +151,4 @@ Install: `bash extensions/watchdog/install.sh`
 - tmux: never literal Enter (`send-keys -H 0d`), never `display-message -p '#{pane_id}'`
 - All shared types in `shared/types.ts`
 - `sleep_duration: null` = one-shot, `N > 0` = perpetual
+- Extensions live in `extensions/{name}/` with a `manifest.json` (name, version, description, what it provides)

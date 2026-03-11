@@ -1,0 +1,14 @@
+{
+  "name": "review",
+  "version": "1.0.0",
+  "description": "Deep review rules + pre-commit verification for claude-fleet",
+  "scripts": {
+    "review": "scripts/review.sh",
+    "check-docs": "scripts/check-docs.sh",
+    "verification-hash": "scripts/verification-hash.sh"
+  },
+  "hooks": {
+    "pre-commit": "hooks/pre-commit"
+  },
+  "root_files": ["REVIEW.md"]
+}

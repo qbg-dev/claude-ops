@@ -1,0 +1,9 @@
+{
+  "name": "watchdog",
+  "version": "1.0.0",
+  "description": "Launchd daemon for worker crash recovery and stuck detection",
+  "scripts": {
+    "liveness-heartbeat": "liveness-heartbeat.sh"
+  },
+  "install": "install.sh"
+}
