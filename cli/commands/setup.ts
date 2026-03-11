@@ -267,32 +267,27 @@ export function register(parent: Command): void {
           hooks: [{ type: "command" as const, command: `bash ${fleetBase}/${script}`, ...(timeout ? { timeout } : {}) }],
         });
         const engine = h("engine/hook-engine.sh");
-        const logger = h("engine/session-logger.sh");
 
         const fleetHooks: Record<string, HookEntry[]> = {
           UserPromptSubmit: [
             h("hooks/publishers/worker-session-register.sh"),
             h("hooks/publishers/prompt-echo-deferred.sh"),
             engine,
-            logger,
           ],
           PreToolUse: [
             h("hooks/gates/tool-policy-gate.sh"),
             h("hooks/interceptors/pre-tool-context-injector.sh"),
             engine,
-            logger,
           ],
           PreCompact: [
             h("scripts/pre-compact.sh", 5000),
             engine,
-            logger,
           ],
           Stop: [
             h("hooks/gates/stop-worker-dispatch.sh"),
             h("hooks/gates/stop-inbox-drain.sh"),
             h("hooks/publishers/stop-echo.sh"),
             engine,
-            logger,
           ],
         };
 
@@ -356,6 +351,17 @@ export function register(parent: Command): void {
         ok("Deep review: bundled (in fleet repo)");
       } else {
         info("Deep review: not found (optional — multi-pass adversarial code review)");
+      }
+
+      // Fleet Mail TUI
+      {
+        const { findTuiBinary } = await import("./tui");
+        const tuiBinary = findTuiBinary();
+        if (tuiBinary) {
+          ok(`Fleet Mail TUI: ${tuiBinary}`);
+        } else {
+          info("Fleet Mail TUI: not found (optional — cargo install boring-mail-tui)");
+        }
       }
 
       console.log("");
