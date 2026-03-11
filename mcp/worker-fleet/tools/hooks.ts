@@ -49,8 +49,9 @@ function scanScriptAgainstDenyList(scriptContent: string): string | null {
     // Convert glob to regex
     const regex = argPattern
       .replace(/[.[\]^$+{}|\\]/g, "\\$&")
-      .replace(/\*\*/g, ".*")
+      .replace(/\*\*/g, "GLOB_STAR_STAR")
       .replace(/\*/g, ".*")
+      .replace(/GLOB_STAR_STAR/g, ".*")
       .replace(/\?/g, ".");
 
     try {
@@ -459,7 +460,7 @@ server.registerTool(
             for (const pattern of denyList) {
               const m = pattern.match(/^(\w+)\((.+)\)$/);
               if (!m || m[1] !== "Bash") continue;
-              const regex = m[2].replace(/[.[\]^$+{}|\\]/g, "\\$&").replace(/\*\*/g, ".*").replace(/\*/g, ".*").replace(/\?/g, ".");
+              const regex = m[2].replace(/[.[\]^$+{}|\\]/g, "\\$&").replace(/\*\*/g, "GLOB_STAR_STAR").replace(/\*/g, ".*").replace(/GLOB_STAR_STAR/g, ".*").replace(/\?/g, ".");
               try {
                 if (new RegExp(regex).test(scriptContent)) {
                   return { content: [{ type: "text" as const, text: `Hook rejected: script blocked by target's policy (matches Bash(${m[2]}))` }], isError: true };
