@@ -242,6 +242,10 @@ export async function runCreate(
 
   ok("Worktree configured");
 
+  // 8b. Create per-worker script directory
+  const scriptDir = join(worktreeDir, ".claude", "scripts", name);
+  mkdirSync(scriptDir, { recursive: true });
+
   // 9. Provision Fleet Mail
   let mailToken = "";
   if (FLEET_MAIL_URL) {
