@@ -139,7 +139,9 @@ Install: `bash extensions/watchdog/install.sh`
 | `cli/commands/deep-review.ts` | Adversarial code review launcher |
 | `scripts/setup-hooks.sh` | Hook installer |
 | `scripts/lint-hooks.sh` | Hook verifier |
-| `scripts/check-docs.sh` | Doc sync validation |
+| `scripts/check-docs.sh` | Quick deterministic doc sync scan |
+| `scripts/doc-sync-checklist.md` | AI verification checklist (pre-commit gate) |
+| `scripts/verification-hash.sh` | Compute proof path from staged diff hash |
 
 ## Conventions
 
