@@ -214,12 +214,15 @@ _restoreHooks();
 
 /** Register the default sys-recycle-gate Stop hook if not already present */
 function _ensureRecycleGate(): void {
+  // Clean up stale sentinel from previous hard recycle (prevents auto-pass)
+  try { rmSync(`/tmp/claude-fleet-recycle-${WORKER_NAME}`); } catch {}
+
   if (dynamicHooks.has("sys-recycle-gate")) return;
   // Also check if it's archived in the file — don't re-register if explicitly archived
   try {
     if (existsSync(HOOKS_FILE)) {
       const data = JSON.parse(readFileSync(HOOKS_FILE, "utf-8"));
-      if (Array.isArray(data.hooks) && data.hooks.some((h: DynamicHook) => h.id === "sys-recycle-gate")) return;
+      if (Array.isArray(data.hooks) && data.hooks.some((h: DynamicHook) => h.id === "sys-recycle-gate" && h.status !== "archived")) return;
     }
   } catch {}
 
