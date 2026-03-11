@@ -38,15 +38,19 @@ export function register(parent: Command): void {
       const childDir = workerDir(project, childName);
       if (existsSync(childDir)) fail(`Worker '${childName}' already exists`);
 
-      // Inherit parent mission if none provided
-      if (!mission) {
-        const parentMissionPath = join(parentDir, "mission.md");
-        if (existsSync(parentMissionPath)) {
-          mission = readFileSync(parentMissionPath, "utf-8").trim();
-          info(`Inheriting mission from '${parentName}'`);
-        } else {
-          mission = `Forked from ${parentName}`;
-        }
+      // Always include parent mission as context; combine with inline directive if provided
+      const parentMissionPath = join(parentDir, "mission.md");
+      const parentMission = existsSync(parentMissionPath)
+        ? readFileSync(parentMissionPath, "utf-8").trim()
+        : "";
+
+      if (mission) {
+        // Combine: parent context + new directive
+        mission = parentMission
+          ? `# Forked from ${parentName}\n\n## Original mission\n${parentMission}\n\n## Your directive\n${mission}`
+          : mission;
+      } else {
+        mission = parentMission || `Forked from ${parentName}`;
       }
 
       info(`Forking '${childName}' from '${parentName}'`);
