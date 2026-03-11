@@ -96,7 +96,10 @@ fi
 # v3 flat worker fallback: pane-registry.json doesn't store session_id for v3 workers.
 # If identity wasn't resolved above, scan $PROJECT_ROOT/.claude/workers/registry.json.
 if [ -n "$SESSION_ID" ] && [[ "$BRANCH" != worker/* ]]; then
-  _V3_REG="$PROJECT_ROOT/.claude/workers/registry.json"
+  _V3_PROJECT=$(basename "$PROJECT_ROOT")
+  _V3_REG="$HOME/.claude/fleet/${_V3_PROJECT}/registry.json"
+  # Fallback to legacy path
+  [ ! -f "$_V3_REG" ] && _V3_REG="$PROJECT_ROOT/.claude/workers/registry.json"
   if [ -f "$_V3_REG" ]; then
     _V3_NAME=$(jq -r --arg sid "$SESSION_ID" \
       'to_entries[] | select(.value.session_id == $sid) | .key' \
@@ -122,7 +125,19 @@ fi
 
 WORKER_NAME="${BRANCH#worker/}"
 MAIN_ROOT=$(resolve_main_root)
-WORKER_DIR="$MAIN_ROOT/.claude/workers/$WORKER_NAME"
+
+# Fleet v2 path resolution: ~/.claude/fleet/{project}/{worker}/
+# Project name = basename of main repo root (e.g., "Wechat")
+_PROJECT_NAME=$(basename "$MAIN_ROOT")
+_FLEET_DIR="$HOME/.claude/fleet/${_PROJECT_NAME}/${WORKER_NAME}"
+_LEGACY_DIR="$MAIN_ROOT/.claude/workers/$WORKER_NAME"
+
+# Prefer fleet v2 dir, fallback to legacy
+if [ -d "$_FLEET_DIR" ]; then
+  WORKER_DIR="$_FLEET_DIR"
+else
+  WORKER_DIR="$_LEGACY_DIR"
+fi
 
 # ── Auto-checkpoint before compaction ──────────────────────────────────────
 CHECKPOINT_DIR="$WORKER_DIR/checkpoints"
@@ -134,8 +149,10 @@ _CP_FILE="$CHECKPOINT_DIR/checkpoint-${_CP_TS}.json"
 _CP_BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 _CP_SHA=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")
 _CP_PORCELAIN=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null || echo "")
-_CP_DIRTY=$(echo "$_CP_PORCELAIN" | grep -c '^.[MADRC?]' 2>/dev/null || echo "0")
-_CP_STAGED=$(echo "$_CP_PORCELAIN" | grep -c '^[MADRC]' 2>/dev/null || echo "0")
+# grep -c outputs "0" even on no match (exit code 1), so || echo "0" would
+# produce "0\n0". Use a subshell to suppress the error exit code instead.
+_CP_DIRTY=$(echo "$_CP_PORCELAIN" | grep -c '^.[MADRC?]' 2>/dev/null; true)
+_CP_STAGED=$(echo "$_CP_PORCELAIN" | grep -c '^[MADRC]' 2>/dev/null; true)
 
 # Read dynamic hooks if available
 _CP_HOOKS="[]"
@@ -170,7 +187,7 @@ ln -sf "checkpoint-${_CP_TS}.json" "$CHECKPOINT_DIR/latest.json" 2>/dev/null || 
 # GC: keep last 5 checkpoints
 # Note: latest.json is a symlink and does not match checkpoint-*.json glob — no filter needed.
 _CP_ALL=$(ls -1 "$CHECKPOINT_DIR"/checkpoint-*.json 2>/dev/null | sort)
-_CP_COUNT=$(echo "$_CP_ALL" | grep -c . 2>/dev/null || echo "0")
+_CP_COUNT=$(echo "$_CP_ALL" | grep -c . 2>/dev/null; true)
 if [ "$_CP_COUNT" -gt 5 ]; then
   echo "$_CP_ALL" | head -n $((_CP_COUNT - 5)) | while read -r f; do rm -f "$f" 2>/dev/null; done
 fi
@@ -208,8 +225,17 @@ if [ -f "$_LATEST_CP" ]; then
 fi
 
 # State — registry.json only (state.json is deprecated)
-REGISTRY_FILE="$MAIN_ROOT/.claude/workers/registry.json"
-if [ -f "$REGISTRY_FILE" ]; then
+# Fleet v2 registry at ~/.claude/fleet/{project}/registry.json, fallback to legacy
+_FLEET_REGISTRY="$HOME/.claude/fleet/${_PROJECT_NAME}/registry.json"
+_LEGACY_REGISTRY="$MAIN_ROOT/.claude/workers/registry.json"
+if [ -f "$_FLEET_REGISTRY" ]; then
+  REGISTRY_FILE="$_FLEET_REGISTRY"
+elif [ -f "$_LEGACY_REGISTRY" ]; then
+  REGISTRY_FILE="$_LEGACY_REGISTRY"
+else
+  REGISTRY_FILE=""
+fi
+if [ -n "$REGISTRY_FILE" ] && [ -f "$REGISTRY_FILE" ]; then
   REGISTRY_ENTRY=$(jq -r --arg name "$WORKER_NAME" '.[$name] // empty' "$REGISTRY_FILE" 2>/dev/null || true)
 fi
 if [ -n "${REGISTRY_ENTRY:-}" ] && [ "$REGISTRY_ENTRY" != "null" ]; then
@@ -236,7 +262,15 @@ if [ -f "$MEMORY_FILE" ] && [ -s "$MEMORY_FILE" ]; then
 fi
 
 # Resolve mission authority for template interpolation
-_CONFIG_AUTH=$(jq -r '._config.mission_authority // "chief-of-staff"' "$REGISTRY_FILE" 2>/dev/null || echo "chief-of-staff")
+# Try fleet.json first (v2), then registry _config (v1)
+_FLEET_JSON="$HOME/.claude/fleet/${_PROJECT_NAME}/fleet.json"
+if [ -f "$_FLEET_JSON" ]; then
+  _CONFIG_AUTH=$(jq -r '.mission_authority // "chief-of-staff"' "$_FLEET_JSON" 2>/dev/null || echo "chief-of-staff")
+elif [ -n "$REGISTRY_FILE" ] && [ -f "$REGISTRY_FILE" ]; then
+  _CONFIG_AUTH=$(jq -r '._config.mission_authority // "chief-of-staff"' "$REGISTRY_FILE" 2>/dev/null || echo "chief-of-staff")
+else
+  _CONFIG_AUTH="chief-of-staff"
+fi
 
 # Shared seed context (tool table + stop checks + rules) — single source of truth
 _TMPL="${HOME}/.claude-ops/templates/seed-context.md"

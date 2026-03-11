@@ -107,18 +107,25 @@ export async function launchInTmux(
   if (!pasted) {
     warn("Failed to load seed buffer — worker launched without seed");
   } else {
-    await Bun.sleep(4000); // large seed pastes need settle time
+    // Scale settle time by seed size: 2s base + 1s per 4KB
+    const settleMs = Math.min(8000, 2000 + Math.floor(seedContent.length / 4096) * 1000);
+    await Bun.sleep(settleMs);
     sendEnter(paneId);
 
-    // Retry Enter if TUI absorbed it during paste
+    // Verify seed wasn't garbled: check pane output for shell errors
+    // that indicate seed text leaked into zsh instead of Claude's TUI
     await Bun.sleep(3000);
-    const output = capturePane(paneId, 5);
+    const output = capturePane(paneId, 10);
+    if (/command not found|bad pattern|zsh:|bash:/.test(output) && !/❯.*command not found/.test(output)) {
+      warn("Detected garbled seed (shell errors) — seed may have leaked into shell");
+    }
     if (/❯/.test(output)) sendEnter(paneId);
   }
 
   // Update state.json
   const paneTarget = getPaneTarget(paneId);
-  const now = new Date().toISOString();
+  // Strip milliseconds from ISO string so watchdog's macOS `date -j -f` can parse it
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
   // Preserve past_sessions
   const oldState = getState(project, name);

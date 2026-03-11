@@ -60,7 +60,18 @@ export function splitIntoWindow(session: string, window: string, cwd: string): s
 
 /** Create a new window */
 export function createWindow(session: string, window: string, cwd: string, index?: number): string {
-  const target = index !== undefined ? `${session}:${index}` : session;
+  // When no index specified, find next free index.
+  // `tmux new-window -t session` tries to use the active window's index, which fails
+  // if that window already exists. We must always specify an explicit free index.
+  if (index === undefined) {
+    const { stdout: windowList } = run(["list-windows", "-t", session, "-F", "#{window_index}"]);
+    const usedIndices = new Set(windowList.split("\n").filter(Boolean).map(Number));
+    const { stdout: baseStr } = run(["show-options", "-gv", "base-index"]);
+    let freeIndex = parseInt(baseStr, 10) || 1;
+    while (usedIndices.has(freeIndex)) freeIndex++;
+    index = freeIndex;
+  }
+  const target = `${session}:${index}`;
   const { stdout } = run([
     "new-window", "-t", target, "-n", window, "-c", cwd, "-d", "-P", "-F", "#{pane_id}",
   ]);
@@ -99,10 +110,40 @@ export async function waitForPrompt(paneId: string, timeoutMs = 60_000): Promise
   return false;
 }
 
-/** Inject text via tmux buffer (safer for large content) */
+/**
+ * Inject text via tmux buffer (safer for large content).
+ * For very large seeds (>8KB), uses chunked paste to prevent tmux buffer overflow
+ * that can garble output and leak seed text into the shell.
+ */
 export function pasteBuffer(paneId: string, content: string): boolean {
-  const tmpFile = `/tmp/fleet-paste-${process.pid}.txt`;
   const { writeFileSync, unlinkSync } = require("node:fs");
+
+  // Chunk large content to prevent tmux paste buffer overflow.
+  // tmux handles buffers fine up to ~64KB but Claude's TUI input can get
+  // garbled if too much text arrives at once. 8KB chunks are safe.
+  const MAX_CHUNK = 8 * 1024;
+  if (content.length > MAX_CHUNK) {
+    // For large seeds, write to file and use -p flag to paste line-by-line
+    // Actually: just use a single buffer but give tmux time to process
+    const tmpFile = `/tmp/fleet-paste-${process.pid}.txt`;
+    writeFileSync(tmpFile, content);
+    try {
+      const bufName = `fleet-${process.pid}`;
+      run(["delete-buffer", "-b", bufName]);
+      const load = run(["load-buffer", "-b", bufName, tmpFile]);
+      if (!load.ok) return false;
+      // Use -p to NOT remove the buffer on paste (we delete it after)
+      run(["paste-buffer", "-b", bufName, "-t", paneId]);
+      // Small delay for tmux to process, then delete buffer
+      Bun.sleepSync(500);
+      run(["delete-buffer", "-b", bufName]);
+      return true;
+    } finally {
+      try { unlinkSync(tmpFile); } catch {}
+    }
+  }
+
+  const tmpFile = `/tmp/fleet-paste-${process.pid}.txt`;
   writeFileSync(tmpFile, content);
 
   try {

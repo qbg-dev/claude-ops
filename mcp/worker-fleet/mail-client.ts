@@ -223,8 +223,10 @@ export async function resolveFleetMailAccountId(name: string): Promise<string> {
   }
 
   // Look up by namespaced name (e.g. "merger@wechat")
+  // Return NAME (not UUID) — boring-mail v0.1.x send handler resolves names internally.
+  // The UUID lookup validates the account exists; we return nsName for API compat.
   const id = _fleetMailDirectoryCache?.[nsName];
-  if (id) return id;
+  if (id) return nsName;
 
   // Auto-provision "user" account if it doesn't exist
   if (name === "user") {
@@ -248,7 +250,7 @@ export async function resolveFleetMailAccountId(name: string): Promise<string> {
         } catch {}
         if (!_fleetMailDirectoryCache) _fleetMailDirectoryCache = {};
         _fleetMailDirectoryCache[nsUserName] = acct.id;
-        return acct.id;
+        return nsUserName;
       }
       // 409 = already exists but not in cache — refresh
       if (provResp.status === 409) {

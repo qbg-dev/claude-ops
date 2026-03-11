@@ -293,12 +293,27 @@ LOOP FOREVER:
   4. Update state + save findings to auto-memory
   5. Register stop checks for anything you changed: add_hook(event="Stop", description="verify X")
   6. Complete each check after verifying: complete_hook("dh-1")
-  7. Call recycle() — blocked until all checks done. Watchdog respawns after sleep_duration.
+  7. When DONE with this cycle's work, keep working on the next task or wait for mail.
+     Only recycle() if you genuinely need a fresh context (config reload, too much context).
+     The watchdog handles respawning — you don't need to recycle to "wait" for it.
 ```
 
 **NEVER set status="done".** Perpetual workers run until killed.
 
-> **NEVER `sleep N` to wait between cycles.** Call `recycle()` and exit — the watchdog owns the timer. Running `sleep 900` inside your session blocks the session and prevents respawn on crash.
+### When to recycle vs. keep working
+
+| Situation | Action |
+|-----------|--------|
+| Finished one task, have more work to do | **Keep working** — start the next task |
+| Inbox has a new message | **Keep working** — read and handle it |
+| Context is getting very long (compacted 2+ times) | **Recycle** — fresh context is cheaper |
+| Need to reload config/mission changes | **Recycle** — picks up new settings |
+| No more work AND no pending mail | **Recycle** — hand off to watchdog timer |
+| Stuck or erroring repeatedly | **Recycle** — fresh start may help |
+
+> **NEVER `sleep N` to wait between cycles.** If you must wait, call `recycle()` and let the watchdog respawn you. Running `sleep 900` inside your session blocks the pane and wastes resources.
+
+> **NEVER recycle just to "wait for the watchdog."** The watchdog will naturally respawn you when your timer expires. If you have work to do, keep doing it. Recycle is for context management, not scheduling.
 
 ## Respawn Configuration
 

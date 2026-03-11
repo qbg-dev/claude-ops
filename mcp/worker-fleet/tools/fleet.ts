@@ -351,6 +351,12 @@ async function handleFleetCreate(params: Record<string, any>): Promise<McpResult
       if (existsSync(setupScript)) {
         try { execSync(`bash "${setupScript}" "${worktreeDir}"`, { timeout: 5000 }); } catch {}
       }
+      // Copy mission.md into the worktree's .claude/workers/{name}/ dir
+      // so seed.ts can find it when PROJECT_ROOT is the worktree
+      const wtWorkerDir = join(worktreeDir, ".claude/workers", name);
+      mkdirSync(wtWorkerDir, { recursive: true });
+      const wtMissionPath = join(wtWorkerDir, "mission.md");
+      try { writeFileSync(wtMissionPath, mission.trim() + "\n"); } catch {}
     } catch {}
 
     // ── Launch helpers (shared by all placement modes) ──

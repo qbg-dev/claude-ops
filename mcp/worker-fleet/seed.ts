@@ -5,7 +5,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { HOME, PROJECT_ROOT, CLAUDE_OPS, WORKERS_DIR, WORKER_NAME, getWorktreeDir } from "./config";
+import { HOME, PROJECT_ROOT, CLAUDE_OPS, WORKERS_DIR, WORKER_NAME, FLEET_DIR, getWorktreeDir } from "./config";
 import { readRegistry, getMissionAuthorityLabel, type RegistryConfig, type RegistryWorkerEntry } from "./registry";
 
 // ── Seed Context Template ────────────────────────────────────────────
@@ -29,6 +29,7 @@ export function loadSeedContext(branch: string, missionAuthority: string): strin
 /** Generate the seed prompt content for a worker (same template as launch-flat-worker.sh) */
 export function generateSeedContent(handoff?: string): string {
   const workerDir = join(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
+  const fleetWorkerDir = join(FLEET_DIR, WORKER_NAME);
   const worktreeDir = getWorktreeDir();
   const branch = `worker/${WORKER_NAME}`;
   const _seedConfig = readRegistry()._config as RegistryConfig | undefined;
@@ -123,7 +124,7 @@ Worktree: ${worktreeDir} (branch: ${branch})
 Worker config: ${workerDir}/
 ${handoffBlock}
 Read these files NOW in this order:
-1. ${workerDir}/mission.md — your mission and goals (you own this file — update it as your mission evolves)
+1. ${existsSync(join(workerDir, "mission.md")) ? workerDir : fleetWorkerDir}/mission.md — your mission and goals (you own this file — update it as your mission evolves)
 2. Call \`mail_inbox()\` — check for messages before anything else
 3. Check \`.claude/scripts/${WORKER_NAME}/\` for existing scripts
 

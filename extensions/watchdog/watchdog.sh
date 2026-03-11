@@ -36,10 +36,13 @@ MAX_CYCLE_SEC="${WATCHDOG_MAX_CYCLE:-7200}"  # 2hr max — Claude Code leaks mem
 LOG_FILE="${WATCHDOG_LOG:-${CLAUDE_OPS_DIR}/state/watchdog.log}"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || { echo "ERROR: PROJECT_ROOT not set and not in a git repo" >&2; exit 1; })}"
-REGISTRY="$PROJECT_ROOT/.claude/workers/registry.json"
+# Fleet v2: registry lives at ~/.claude/fleet/{project}/registry.json
+_project_name=$(basename "$PROJECT_ROOT")
+REGISTRY="${HOME}/.claude/fleet/${_project_name}/registry.json"
 CRASH_DIR="${CLAUDE_OPS_DIR}/state/watchdog-crashes"
 RUNTIME_DIR="${CLAUDE_OPS_DIR}/state/watchdog-runtime"
 LAUNCH_SCRIPT="${CLAUDE_OPS_DIR}/scripts/launch-flat-worker.sh"
+FLEET_CLI="${CLAUDE_OPS_DIR}/bin/fleet"
 
 MODE="daemon"
 [ "${1:-}" = "--once" ]   && MODE="once"
@@ -196,7 +199,7 @@ _notify_chief_of_staff_dead_worker() {
   # Debounce — only notify once per incident
   [ -f "$flag" ] && return
 
-  local cos_inbox="$PROJECT_ROOT/.claude/workers/chief-of-staff/inbox.jsonl"
+  local cos_inbox="${HOME}/.claude/fleet/${_project_name}/chief-of-staff/inbox.jsonl"
   [ ! -d "$(dirname "$cos_inbox")" ] && { _log "NOTIFY-COS-ERR: chief-of-staff inbox dir not found"; return; }
 
   local ts; ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -337,7 +340,7 @@ _build_agent_cmd() {
   local effort; effort=$(jq -r --arg n "$worker" '.[$n].custom.reasoning_effort // ""' "$REGISTRY" 2>/dev/null)
   [ "$effort" = "null" ] && effort=""
 
-  local worker_dir="$PROJECT_ROOT/.claude/workers/$worker"
+  local worker_dir="${HOME}/.claude/fleet/${_project_name}/${worker}"
 
   if [ "$runtime" = "codex" ]; then
     # Codex CLI
@@ -386,7 +389,7 @@ _record_relaunch() {
 # ── Resume a worker in its existing pane (unstick or sleep-respawn) ─
 _resume_in_pane() {
   local worker="$1" pane_id="$2" reason="$3"
-  local worker_dir="$PROJECT_ROOT/.claude/workers/$worker"
+  local worker_dir="${HOME}/.claude/fleet/${_project_name}/${worker}"
 
   # 1. Get session ID before killing
   local prev_session_id
@@ -567,6 +570,45 @@ _relaunch_claude() {
   ) &
 }
 
+# ── Stale input detection ──────────────────────────────────────────
+# Detect unsubmitted Fleet Mail notifications stuck in tmux input buffer.
+# When tmux paste-buffer delivers mail but Enter doesn't go through,
+# the text sits after the ❯ prompt. We detect "mail from" and re-submit.
+_check_stale_input() {
+  local worker="$1" pane_id="$2"
+  local runtime; runtime=$(_worker_runtime "$worker")
+  local stale_marker="$runtime/stale-input-checked"
+
+  # Debounce: only check once per 60s
+  if [ -f "$stale_marker" ]; then
+    local marker_ts; marker_ts=$(cat "$stale_marker" 2>/dev/null || echo 0)
+    local now_ts; now_ts=$(date -u +%s)
+    if [ $(( now_ts - marker_ts )) -lt 60 ]; then
+      return
+    fi
+  fi
+
+  # Capture the last few lines of pane content
+  local pane_tail
+  pane_tail=$(tmux capture-pane -t "$pane_id" -p 2>/dev/null | tail -5)
+
+  # Look for pattern: ❯ followed by text containing "mail from" on the same or next line
+  # This means Fleet Mail was pasted but Enter wasn't pressed
+  if echo "$pane_tail" | grep -q '❯' && echo "$pane_tail" | grep -qi 'mail from'; then
+    # Check that the prompt is at the end (text is in the input buffer, not in output)
+    local last_prompt_line
+    last_prompt_line=$(echo "$pane_tail" | grep -n '❯' | tail -1 | cut -d: -f1)
+    if [ -n "$last_prompt_line" ]; then
+      _log "STALE-INPUT: $worker (pane $pane_id) — detected unsubmitted Fleet Mail, pressing Enter"
+      tmux send-keys -t "$pane_id" -H 0d 2>/dev/null || true
+    fi
+  fi
+
+  # Update debounce marker
+  mkdir -p "$runtime" 2>/dev/null
+  date -u +%s > "$stale_marker"
+}
+
 # ── Check a single worker ──────────────────────────────────────────
 check_worker() {
   local worker="$1"
@@ -588,6 +630,14 @@ check_worker() {
 
   local pane_id perpetual status sleep_dur window session worktree
   IFS=$'\t' read -r pane_id perpetual status sleep_dur window session worktree <<< "$_fields"
+
+  # Sanitize pane_id — reject invalid values (string booleans, "None", "null", etc.)
+  # Valid tmux pane IDs always start with %
+  if [ -n "$pane_id" ] && [[ ! "$pane_id" =~ ^% ]]; then
+    # Fix in registry and treat as empty
+    _registry_jq_update '.[$n].pane_id = ""' --arg n "$worker"
+    pane_id=""
+  fi
   # sleep_duration is the sole source of truth: null/0 = one-shot, N > 0 = perpetual
   [ "$sleep_dur" = "null" ] && sleep_dur=0
   # Derive perpetual from sleep_duration (ignore registry perpetual field)
@@ -603,7 +653,7 @@ check_worker() {
 
   # Skip workers in standby mode — they're intentionally dormant
   if [ "$status" = "standby" ]; then
-    return
+    return 0
   fi
 
   # ── Sleeping workers: deferred recycle — watchdog owns the respawn timer ──
@@ -627,7 +677,7 @@ check_worker() {
           _registry_jq_update '.[$n].status = "active" | .[$n].custom.sleep_until = null' --arg n "$worker"
           # Fall through to normal pane checks — the worker needs relaunching
         else
-          return  # No triggers — stay sleeping
+          return 0  # No triggers — stay sleeping
         fi
       else
         # Sleep timer expired — clear sleeping status and relaunch
@@ -641,7 +691,7 @@ check_worker() {
         if [ -n "$calc_wake" ]; then
           _log "SLEEP-CALC: $worker — no sleep_until, calculated from sleep_duration=${sleep_dur}s → $calc_wake"
           _registry_jq_update '.[$n].custom.sleep_until = $t' --arg n "$worker" --arg t "$calc_wake"
-          return  # Come back next tick to check the timer
+          return 0  # Come back next tick to check the timer
         fi
       fi
       # No sleep_duration either — just wake up
@@ -650,16 +700,73 @@ check_worker() {
     # Fall through to normal pane checks — the worker needs relaunching
   fi
 
+  # Check for sleep_until even when status is not "sleeping" (race: registry
+  # was manually reset to "active" but custom.sleep_until is still in the future)
+  if [ "$perpetual" = "true" ]; then
+    local _sleep_until
+    _sleep_until=$(jq -r --arg n "$worker" '.[$n].custom.sleep_until // empty' "$REGISTRY" 2>/dev/null)
+    if [ -n "$_sleep_until" ] && [ "$_sleep_until" != "null" ]; then
+      local _now_chk; _now_chk=$(date -u +%s)
+      local _wake_chk
+      _wake_chk=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "${_sleep_until%%.*}" +%s 2>/dev/null || echo 0)
+      if [ "$_wake_chk" -gt 0 ] && [ "$_now_chk" -lt "$_wake_chk" ]; then
+        # Still sleeping — check for early wake (unread mail)
+        if ! _worker_has_unread_mail "$worker"; then
+          return 0  # Genuinely sleeping, skip
+        fi
+        _log "EARLY-WAKE: $worker — unread Fleet Mail, waking before sleep_until"
+        _registry_jq_update '.[$n].custom.sleep_until = null' --arg n "$worker"
+        # Fall through to launch
+      fi
+    fi
+  fi
+
   # No pane registered: launch perpetual workers, skip non-perpetual
+  # But first check grace periods — during fleet launches, pane_id may not be registered yet
   if [ -z "$pane_id" ]; then
     if [ "$perpetual" = "true" ]; then
       _is_crash_looped "$worker" && return
-      _log "NO-PANE: $worker — perpetual worker has no pane_id, launching via launch-flat-worker.sh"
+
+      # Grace period: skip if worker was recently created (< 180s ago)
+      local _created_at
+      _created_at=$(jq -r --arg n "$worker" '.[$n].meta.created_at // empty' "$REGISTRY" 2>/dev/null || echo "")
+      if [ -n "$_created_at" ] && [ "$_created_at" != "null" ]; then
+        local _create_epoch
+        # Strip milliseconds before parsing (TypeScript writes .NNNZ)
+        local _clean_created="${_created_at%%.*}Z"
+        _create_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_clean_created" +%s 2>/dev/null || echo 0)
+        local _now_ts; _now_ts=$(date -u +%s)
+        local _since_create=$(( _now_ts - _create_epoch ))
+        if [ "$_since_create" -lt 180 ]; then
+          return 0  # recently created, still launching
+        fi
+      fi
+
+      # Grace period: skip if last relaunch was < 120s ago
+      local _last_rl
+      _last_rl=$(jq -r --arg n "$worker" '.[$n].last_relaunch.at // empty' "$REGISTRY" 2>/dev/null || echo "")
+      if [ -n "$_last_rl" ] && [ "$_last_rl" != "null" ]; then
+        local _rl_epoch
+        # Strip milliseconds before parsing
+        local _clean_rl="${_last_rl%%.*}Z"
+        _rl_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_clean_rl" +%s 2>/dev/null || echo 0)
+        local _now_ts2; _now_ts2=$(date -u +%s)
+        if [ $(( _now_ts2 - _rl_epoch )) -lt 120 ]; then
+          return 0  # recently relaunched, still starting up
+        fi
+      fi
+
+      # Grace period: skip if fleet launch is actively running
+      if pgrep -f "fleet.*start" >/dev/null 2>&1 || pgrep -f "launch-flat-worker.*$worker" >/dev/null 2>&1; then
+        return 0  # active launch in progress
+      fi
+
+      _log "NO-PANE: $worker — perpetual worker has no pane_id, launching via fleet start"
       _record_relaunch "$worker" "no-pane"
-      PROJECT_ROOT="$PROJECT_ROOT" bash "$LAUNCH_SCRIPT" "$worker" &
+      "$FLEET_CLI" start "$worker" -p "$_project_name" &
       return 1  # signal respawn happened (for stagger)
     fi
-    return  # non-perpetual with no pane — skip
+    return 0  # non-perpetual with no pane — skip
   fi
 
   # Skip crash-looped workers
@@ -677,6 +784,9 @@ check_worker() {
     # ── Pane alive — enforce correct window placement ──
     _enforce_window "$worker" "$pane_id"
 
+    # ── Pane alive — check for stale input (unsubmitted Fleet Mail) ──
+    _check_stale_input "$worker" "$pane_id"
+
     # ── Pane alive — check for graceful sleep or stuck ──
 
     # Quick check: liveness heartbeat file (touched by PostToolUse + UserPromptSubmit hooks)
@@ -689,10 +799,13 @@ check_worker() {
     _last_relaunch_ts=$(jq -r --arg n "$worker" '.[$n].last_relaunch.at // empty' "$REGISTRY" 2>/dev/null || echo "")
     if [ -n "$_last_relaunch_ts" ] && [ "$_last_relaunch_ts" != "null" ]; then
       local _relaunch_epoch
-      _relaunch_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_last_relaunch_ts" +%s 2>/dev/null || echo 0)
+      # Strip milliseconds (.NNN) from ISO timestamp before parsing — TypeScript writes
+      # "2026-03-11T01:48:02.242Z" but macOS date -j only handles "%Y-%m-%dT%H:%M:%SZ"
+      local _clean_ts="${_last_relaunch_ts%%.*}Z"
+      _relaunch_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_clean_ts" +%s 2>/dev/null || echo 0)
       local _since_relaunch=$(( now_ts - _relaunch_epoch ))
       if [ "$_since_relaunch" -lt 120 ]; then
-        return  # within relaunch cooldown
+        return 0  # within relaunch cooldown
       fi
 
       # Forced memory-leak recycle: if session has been alive > MAX_CYCLE_SEC, recycle it
@@ -854,9 +967,9 @@ check_worker() {
 
   # Check if tmux session exists at all
   if ! tmux has-session -t "$session" 2>/dev/null; then
-    _log "RESPAWN-FULL: $worker — session '$session' gone, using launch-flat-worker.sh"
+    _log "RESPAWN-FULL: $worker — session '$session' gone, using fleet start"
     _record_relaunch "$worker" "session-gone"
-    PROJECT_ROOT="$PROJECT_ROOT" bash "$LAUNCH_SCRIPT" "$worker" &
+    "$FLEET_CLI" start "$worker" -p "$_project_name" &
     return 1  # signal respawn happened (for stagger)
   fi
 
@@ -882,9 +995,9 @@ check_worker() {
     return 1  # signal respawn happened (for stagger)
   else
     # Window gone — full relaunch via launch-flat-worker.sh
-    _log "RESPAWN-FULL: $worker — window '$window' gone, using launch-flat-worker.sh"
+    _log "RESPAWN-FULL: $worker — window '$window' gone, using fleet start"
     _record_relaunch "$worker" "window-gone"
-    PROJECT_ROOT="$PROJECT_ROOT" bash "$LAUNCH_SCRIPT" "$worker" &
+    "$FLEET_CLI" start "$worker" -p "$_project_name" &
     return 1  # signal respawn happened (for stagger)
   fi
 }
