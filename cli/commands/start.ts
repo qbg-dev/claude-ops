@@ -132,22 +132,22 @@ async function startAllWorkers(
     const batchNum = Math.floor(i / concurrency) + 1;
     info(`Batch ${batchNum}: ${batch.join(", ")}`);
 
-    // Launch batch sequentially (each waits for TUI) but with stagger delay
+    // Launch batch sequentially with stagger delay to prevent Fleet Mail thundering herd
     for (const name of batch) {
       const success = await startOne(name, project, opts);
       if (success) launched++;
       else failed++;
 
-      // Stagger between workers in same batch to reduce API queuing
+      // 2s stagger between every worker launch to avoid all hitting Fleet Mail at once
       if (batch.indexOf(name) < batch.length - 1) {
-        await Bun.sleep(5000);
+        await Bun.sleep(2000);
       }
     }
 
-    // Inter-batch delay: give the API breathing room
+    // Inter-batch delay: give Fleet Mail breathing room between batches
     if (i + concurrency < needLaunch.length) {
-      info("Waiting 10s before next batch...");
-      await Bun.sleep(10_000);
+      info("Waiting 5s before next batch...");
+      await Bun.sleep(5000);
     }
   }
 
