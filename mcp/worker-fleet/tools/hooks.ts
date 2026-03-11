@@ -187,7 +187,11 @@ server.registerTool(
   },
   async ({ id, result }) => {
     if (id === "all") {
-      const pending = [...dynamicHooks.values()].filter(h => h.blocking && !h.completed);
+      const pending = [...dynamicHooks.values()].filter(h =>
+        h.blocking && !h.completed &&
+        h.ownership !== "system" &&
+        !(h.ownership === "creator" && h.registered_by !== WORKER_NAME)
+      );
       if (pending.length === 0) {
         return { content: [{ type: "text" as const, text: "No pending blocking hooks to complete." }] };
       }
@@ -201,13 +205,16 @@ server.registerTool(
       return {
         content: [{
           type: "text" as const,
-          text: `Completed ${pending.length} hook(s). All blocking hooks cleared.`,
+          text: `Completed ${pending.length} hook(s). System/creator hooks preserved.`,
         }],
       };
     }
     const hook = dynamicHooks.get(id);
     if (!hook) {
       return { content: [{ type: "text" as const, text: `No hook with ID '${id}'.` }], isError: true };
+    }
+    if (hook.ownership === "system" || (hook.ownership === "creator" && hook.registered_by !== WORKER_NAME)) {
+      return { content: [{ type: "text" as const, text: `Cannot complete hook [${id}] — owned by ${hook.registered_by || "system"}. Use the check command mechanism or ask the owner.` }], isError: true };
     }
     hook.completed = true;
     hook.completed_at = new Date().toISOString();
@@ -352,20 +359,31 @@ server.registerTool(
   },
   async ({ id }) => {
     if (id === "all") {
-      const count = dynamicHooks.size;
-      for (const [hookId] of dynamicHooks) {
+      let count = 0;
+      for (const [hookId, hook] of dynamicHooks) {
+        if (hook.ownership === "system") continue;
+        if (hook.ownership === "creator" && hook.registered_by !== WORKER_NAME) continue;
         _archiveHook(hookId, "removed");
+        count++;
       }
-      return { content: [{ type: "text" as const, text: `Archived all ${count} hook(s). They remain in hooks.json for history.` }] };
+      return { content: [{ type: "text" as const, text: `Archived ${count} removable hook(s). System/creator hooks preserved.` }] };
     }
-    const archived = _archiveHook(id, "removed");
-    if (!archived) {
+    // Check ownership before archiving
+    const hook = dynamicHooks.get(id);
+    if (!hook) {
       return { content: [{ type: "text" as const, text: `No active hook with ID '${id}'.` }], isError: true };
     }
+    if (hook.ownership === "system") {
+      return { content: [{ type: "text" as const, text: `Cannot remove system hook [${id}]. System hooks are irremovable.` }], isError: true };
+    }
+    if (hook.ownership === "creator" && hook.registered_by !== WORKER_NAME) {
+      return { content: [{ type: "text" as const, text: `Cannot remove creator-owned hook [${id}] (owned by ${hook.registered_by}). Only the creator or mission_authority can remove it.` }], isError: true };
+    }
+    const archived = _archiveHook(id, "removed");
     return {
       content: [{
         type: "text" as const,
-        text: `Archived: [${id}] ${archived.description}\nRemaining active hooks: ${_pendingHooksSummary()}.`,
+        text: `Archived: [${id}] ${archived!.description}\nRemaining active hooks: ${_pendingHooksSummary()}.`,
       }],
     };
   }
@@ -537,13 +555,24 @@ server.registerTool(
       if (!params.id) return { content: [{ type: "text" as const, text: "Error: 'id' required for remove" }], isError: true };
       const { hooks } = readTargetHooks();
       if (params.id === "all") {
-        const count = hooks.length;
-        for (const h of hooks) h.status = "archived";
+        let count = 0;
+        const now = new Date().toISOString();
+        for (const h of hooks) {
+          if (h.status === "archived") continue;
+          if (h.ownership === "system") continue;
+          h.status = "archived";
+          h.archived_at = now;
+          h.archive_reason = `removed by ${WORKER_NAME}`;
+          count++;
+        }
         writeTargetHooks(hooks);
-        return { content: [{ type: "text" as const, text: `Archived all ${count} hook(s) on ${target}.` }] };
+        return { content: [{ type: "text" as const, text: `Archived ${count} hook(s) on ${target}. System hooks preserved.` }] };
       }
       const hook = hooks.find(h => h.id === params.id);
       if (!hook) return { content: [{ type: "text" as const, text: `No hook '${params.id}' on ${target}.` }], isError: true };
+      if (hook.ownership === "system") {
+        return { content: [{ type: "text" as const, text: `Cannot remove system hook [${params.id}] on ${target}.` }], isError: true };
+      }
       hook.status = "archived";
       hook.archived_at = new Date().toISOString();
       hook.archive_reason = `removed by ${WORKER_NAME}`;
