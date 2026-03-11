@@ -1,7 +1,6 @@
 import type { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import chalk from "chalk";
 import { FLEET_DATA, FLEET_MAIL_URL } from "../lib/paths";
 import { ok, info, fail } from "../lib/fmt";
 import { addGlobalOpts } from "../index";
