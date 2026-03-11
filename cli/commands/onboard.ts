@@ -126,7 +126,14 @@ export function register(parent: Command): void {
           { stdout: "inherit", stderr: "inherit" },
         );
         if (setupResult.exitCode !== 0) {
-          warn("Fleet setup had issues — continuing with onboard anyway");
+          warn("Fleet setup had issues — details above. Common fixes:");
+          console.log("");
+          console.log("  Fleet Mail not available? Two paths:");
+          console.log("    1. Install Rust:  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh");
+          console.log("       Then re-run:   fleet onboard");
+          console.log("    2. Use remote:    fleet mail-server connect http://your-server:8026");
+          console.log("");
+          warn("Continuing with onboard anyway — some features may not work without Fleet Mail");
         }
         console.log("");
       }
@@ -222,5 +229,6 @@ export function register(parent: Command): void {
 
       ok(`Fleet architect launched in ${session}:${WINDOW_NAME} (pane ${paneId})`);
       info("Switch to it with: fleet attach fleet-onboard");
+      info("After onboarding completes, run 'fleet doctor' to verify your installation.");
     });
 }
