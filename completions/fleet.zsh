@@ -57,6 +57,7 @@ _fleet() {
     'deep-review:Adversarial code review'
     'dr:Adversarial code review'
     'hook:Manage dynamic hooks'
+    'recycle:Restart worker with fresh context'
   )
 
   _arguments -C \
@@ -147,6 +148,11 @@ _fleet() {
             '--content[Content to inject]:content:' \
             '--condition[Condition JSON]:condition:' \
             '--result[Outcome text]:result:'
+          ;;
+        recycle)
+          _arguments \
+            '--all[Recycle all workers]' \
+            '1:worker:_fleet_workers'
           ;;
         ls|list)
           _arguments '--json[JSON output]'

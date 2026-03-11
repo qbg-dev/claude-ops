@@ -6,6 +6,14 @@ Orchestration for Claude Code agents. Workers run in tmux panes on git worktrees
 
 `fleet onboard` is the only entry point. It runs `fleet setup` internally, then launches a fleet architect agent that walks you through everything. Ask it anything.
 
+## Dependencies
+
+```
+Required:  bun (>=1.0), tmux, git, claude (Claude Code CLI >=1.0)
+Auto-installed:  Fleet Mail (boring-mail server — requires Rust/cargo if building locally)
+Optional:  boring-mail-tui (Fleet Mail TUI client), oxlint/biome (deep review linting)
+```
+
 ## Architecture
 
 | Package | Purpose |
@@ -27,6 +35,7 @@ fleet status                            # fleet overview dashboard
 fleet config <name> [key] [value]       # get/set config
 fleet defaults [key] [value]            # global defaults
 fleet fork <parent> <child> "<mission>" # fork from existing
+fleet recycle [name]                    # restart with fresh context
 fleet log <name>                        # tail output
 fleet attach <name>                     # attach tmux pane
 fleet mail <name>                       # check inbox
@@ -45,7 +54,7 @@ Flags: `--model opus|sonnet|haiku`, `--effort high|max`, `--save`, `--json`, `-p
 
 Resolution: CLI flag > worker `config.json` > `defaults.json` > hardcoded
 
-## MCP tools (20)
+## MCP tools (16)
 
 Available inside every worker session via `mcp__worker-fleet__*`:
 
@@ -54,23 +63,19 @@ Available inside every worker session via `mcp__worker-fleet__*`:
 | `mail_send(to, subject, body)` | Message workers, coordinators, operator |
 | `mail_inbox(label?)` | Read inbox (UNREAD, TASK, INBOX) |
 | `mail_read(id)` | Read specific message |
-| `mail_help()` | Mail reference |
-| `get_worker_state(name?)` | Single worker or fleet overview |
+| `mail_help()` | Mail reference + curl examples for search, threads, labels |
+| `get_worker_state(name?)` | Single worker or fleet overview (name='all') |
 | `update_state(key, value)` | Persist state across recycles |
-| `add_hook(event, desc, ...)` | Register dynamic hook |
-| `complete_hook(id, result?)` | Mark gate as done |
-| `remove_hook(id)` | Remove hook |
-| `list_hooks(scope?)` | List active hooks |
-| `recycle(message?)` | Clean restart (blocked until gates pass) |
+| `add_hook(event, desc, ...)` | Register dynamic hook (gate, inject, or script) |
+| `complete_hook(id, result?)` | Mark gate as done (unblocks event) |
+| `remove_hook(id)` | Archive a dynamic hook |
+| `list_hooks(scope?)` | List active hooks (static + dynamic) |
+| `manage_worker_hooks(action, target)` | Cross-worker hook management (add/remove/complete/list) |
+| `round_stop(message)` | End work round: checkpoint + handoff + cycle report |
 | `save_checkpoint(summary)` | Snapshot state for crash recovery |
-| `create_worker(name, type, mission)` | Spawn worker |
-| `register_worker(name, config)` | Register existing |
-| `deregister_worker(name)` | Remove from registry |
-| `move_worker(name, project)` | Move to project |
-| `standby_worker(name)` | Toggle standby |
-| `fleet_template(type)` | Preview archetype |
-| `fleet_help()` | Fleet reference |
-| `deep_review(scope, spec)` | Adversarial review |
+| `create_worker(name, mission, type?)` | Spawn worker from within a session |
+| `fleet_help()` | Fleet reference docs |
+| `deep_review(scope, spec)` | Adversarial multi-pass code review |
 
 ## Worker types
 
@@ -82,6 +87,7 @@ Available inside every worker session via `mcp__worker-fleet__*`:
 | merger | perpetual | Cherry-pick to main, deploy |
 | chief-of-staff | perpetual | Relay messages, monitor fleet |
 | verifier | one-shot | Exhaustive testing |
+| reviewer | one-shot | Code review |
 
 Templates: `templates/flat-worker/types/{type}/mission.md`
 
@@ -102,7 +108,7 @@ Templates: `templates/flat-worker/types/{type}/mission.md`
 
 ## Hooks
 
-40+ hooks across 18 Claude Code events. Installed by `setup-hooks.sh` from `hooks/manifest.json`.
+29 hooks across 18 Claude Code events. Installed by `setup-hooks.sh` from `hooks/manifest.json`.
 
 Three ownership tiers: system (irremovable) > creator (worker can't remove) > self (worker manages).
 
@@ -115,7 +121,7 @@ complete_hook("dh-1", result="PASS")
 
 ## Watchdog
 
-launchd daemon (`com.tmux-agents.watchdog`), 30s poll. Respawns dead workers, kills stuck (10min timeout), crash-loop protection (3/hr max). Perpetual workers call `recycle()` — watchdog respawns after `sleep_duration`.
+launchd daemon (`com.tmux-agents.watchdog`), 30s poll. Respawns dead workers, kills stuck (10min timeout), crash-loop protection (3/hr max). Perpetual workers call `round_stop()` — watchdog respawns after `sleep_duration`.
 
 Install: `bash extensions/watchdog/install.sh`
 
@@ -142,6 +148,16 @@ Install: `bash extensions/watchdog/install.sh`
 | `scripts/setup-hooks.sh` | Hook installer |
 | `scripts/lint-hooks.sh` | Hook verifier |
 | `REVIEW.md` | Symlink → `extensions/review/REVIEW.md` |
+
+## Troubleshooting
+
+**Fleet Mail contention**: If `mail_send` fails under load, fleet-server uses SQLite WAL mode with 30s `busy_timeout`. The MCP client retries 3x with exponential backoff.
+
+**Token issues**: Run `fleet doctor` to verify tokens. Reset with `fleet mail-server connect <url> --token <token>`.
+
+**Worker stuck**: Check `fleet ls` for pane health. Kill with `fleet stop <name>`. Watchdog auto-restarts perpetual workers (those with `sleep_duration > 0`).
+
+**Fleet Mail unreachable**: Run `fleet mail-server status` to check connectivity. If using a remote server, verify the URL with `fleet mail-server connect <url>`. If building locally, ensure Rust/cargo is installed.
 
 ## Conventions
 
