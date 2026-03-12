@@ -10,6 +10,7 @@ import {
 } from "../lib/config";
 import { info, ok, warn, fail } from "../lib/fmt";
 import { launchInTmux } from "../lib/launch";
+import { syncWorktree } from "../lib/worktree";
 import { addGlobalOpts } from "../index";
 
 const NAME_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -208,15 +209,8 @@ export async function runCreate(
     Bun.spawnSync(["ln", "-sf", mcpSrc, join(worktreeDir, ".mcp.json")]);
   }
 
-  // 7. Symlink untracked files (.env, users.json)
-  for (const f of [".env", "data/users.json"]) {
-    const src = join(projectRoot, f);
-    const dst = join(worktreeDir, f);
-    if (existsSync(src) && !existsSync(dst)) {
-      mkdirSync(dirname(dst), { recursive: true });
-      Bun.spawnSync(["ln", "-sf", src, dst]);
-    }
-  }
+  // 7. Sync all worktree files (mission, .mcp.json, .env, scripts, permissions)
+  syncWorktree({ name, project, projectRoot, worktreeDir });
 
   // 8. Install git hooks in worktree
   try {
@@ -241,10 +235,6 @@ export async function runCreate(
   } catch { /* non-fatal */ }
 
   ok("Worktree configured");
-
-  // 8b. Create per-worker script directory
-  const scriptDir = join(worktreeDir, ".claude", "scripts", name);
-  mkdirSync(scriptDir, { recursive: true });
 
   // 9. Provision Fleet Mail
   let mailToken = "";

@@ -32,6 +32,7 @@ fleet start <name>                      # restart worker
 fleet stop <name> [--all]               # graceful stop
 fleet ls [--json]                       # list with liveness
 fleet status                            # fleet overview dashboard
+fleet completion                        # output shell completion script
 fleet config <name> [key] [value]       # get/set config
 fleet defaults [key] [value]            # global defaults
 fleet fork <parent> <child> "<mission>" # fork from existing

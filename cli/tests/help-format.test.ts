@@ -21,6 +21,7 @@ const ALL_COMMANDS = [
   "list",
   "status",
   "attach",
+  "completion",
   "config",
   "defaults",
   "log",
@@ -52,7 +53,7 @@ describe("fleet --help", () => {
     expect(help.stdout).toContain("persistent Claude Code agents");
   });
 
-  test("contains all 24 commands", () => {
+  test("contains all 25 commands", () => {
     for (const cmd of ALL_COMMANDS) {
       expect(help.stdout).toContain(cmd);
     }
