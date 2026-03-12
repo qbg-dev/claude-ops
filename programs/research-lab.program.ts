@@ -129,6 +129,45 @@ export default function researchLab(opts: ResearchLabOpts): Program {
 function buildPISeed(opts: ResearchLabOpts): string {
   const spec = opts.spec || "Analyze this material thoroughly for issues, patterns, and insights.";
 
+  // If an existing mission.md exists in the fleet directory, embed it
+  let existingMission = "";
+  try {
+    const { existsSync, readFileSync } = require("node:fs");
+    const { join } = require("node:path");
+    const missionPaths = [
+      join(process.env.HOME || "/tmp", ".claude/fleet/harness-bench/ht-kung/mission.md"),
+      join(process.env.HOME || "/tmp", ".claude/fleet/boring/ht-kung/mission.md"),
+    ];
+    for (const p of missionPaths) {
+      if (existsSync(p)) {
+        existingMission = readFileSync(p, "utf-8");
+        break;
+      }
+    }
+  } catch {}
+
+  // If we found an existing mission, use it as the seed (enhanced with cycle instructions)
+  if (existingMission) {
+    return `${existingMission}
+
+---
+
+## Perpetual Worker Instructions (Program API)
+
+You are a **perpetual worker** managed by the watchdog. Each cycle (20 min):
+
+1. \`mail_inbox()\` — read student reports from last cycle
+2. Review notebooks/ and results/
+3. Analyze findings, decide next steps
+4. Spawn students via \`create_worker()\` with precise missions
+5. Update observation notebook in notebooks/
+6. Call \`round_stop()\` to checkpoint and end cycle
+
+The watchdog will respawn you after the sleep interval. Your state persists
+across cycles via checkpoints and Fleet Mail.
+`;
+  }
+
   return `# Prof. HT Kung — Principal Investigator
 
 > Named after H.T. Kung — Harvard CS professor, direct descendant of Confucius.
