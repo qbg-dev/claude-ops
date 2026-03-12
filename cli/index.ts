@@ -55,6 +55,7 @@ import { register as registerLayout } from "./commands/layout";
 import { register as registerDeepReview } from "./commands/deep-review";
 import { register as registerHook } from "./commands/hook";
 import { register as registerRecycle } from "./commands/recycle";
+import { register as registerPipeline } from "./commands/pipeline";
 
 registerSetup(program);
 registerCreate(program);
@@ -79,5 +80,6 @@ registerLayout(program);
 registerDeepReview(program);
 registerHook(program);
 registerRecycle(program);
+registerPipeline(program);
 
 program.parse();

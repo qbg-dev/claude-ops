@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Auto-generated: {{AGENT}} Stop -> Bridge Phase {{PHASE_INDEX}}
+# Program API hook — do not edit manually.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SESSION_DIR="$(cat "$SCRIPT_DIR/session-dir.txt")"
+PHASE="$(cat "$SCRIPT_DIR/phase-index.txt")"
+FIFO="$SESSION_DIR/fifo-bridge-$PHASE"
+
+if [ -p "$FIFO" ]; then
+  echo "go" > "$FIFO"
+  echo "[hook] Bridge-$PHASE FIFO triggered ({{AGENT}} completed)"
+else
+  # Fallback: run bridge directly in tmux
+  FLEET_DIR="${CLAUDE_FLEET_DIR:-$HOME/.claude-fleet}"
+  echo "[hook] No FIFO at $FIFO, running bridge directly" >&2
+  TMUX_SESSION=""
+  if [ -f "$SESSION_DIR/pipeline-state.json" ]; then
+    TMUX_SESSION="$(python3 -c "import json; print(json.load(open('$SESSION_DIR/pipeline-state.json'))['tmuxSession'])" 2>/dev/null || true)"
+  fi
+  BRIDGE_CMD="bun '$FLEET_DIR/engine/program/bridge.ts' '$SESSION_DIR' '$PHASE' 2>&1 | tee -a '$SESSION_DIR/bridge-$PHASE.log'"
+  if [ -n "$TMUX_SESSION" ] && tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    tmux new-window -d -t "$TMUX_SESSION" -n "bridge-$PHASE" bash -c "$BRIDGE_CMD; echo ''; echo '[bridge] Done. Press Enter to close.'; read" &
+  else
+    nohup bash -c "$BRIDGE_CMD" &
+  fi
+fi
+
+exit 0  # allow stop
