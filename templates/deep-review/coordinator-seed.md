@@ -16,11 +16,7 @@ Workers within a focus group share specialization — voting happens **within ea
 
 ## Fleet Tools
 
-You are a fleet citizen. Use these MCP tools if available:
-- `mail_inbox()` — check for worker completion messages
-- `mail_send(to, subject, body)` — message workers, judge, verifiers
-- `update_state(key, value)` — report progress
-- `save_checkpoint(summary)` — crash recovery snapshot
+{{> fleet-tools}}
 
 ## Session directory
 

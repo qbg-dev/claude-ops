@@ -31,9 +31,7 @@ Your specialization gives you a lens — go deeper on patterns others might over
 
 ## Project review rules
 
-{{REVIEW_CONFIG}}
-
-"Never Flag" → do NOT report. "Always Flag" → minimum-high severity.
+{{> review-config-block}}
 
 ## Review spec
 
@@ -111,63 +109,14 @@ Write to: `{{OUTPUT_FILE}}`
 
 ## Output format
 
-```json
-{
-  "pass": {{PASS_NUMBER}},
-  "specialization": "{{SPECIALIZATION}}",
-  "completed_at": "<ISO timestamp>",
-  "findings": [
-    {
-      "location": "path/to/file.ts:42 OR 'Section: heading' OR 'overall'",
-      "severity": "critical|high|medium|low|note",
-      "kind": "bug|security|performance|design|ux|completeness|gap|risk|error|ambiguity|alternative|improvement",
-      "confidence": 0.0-1.0,
-      "confidence_reasoning": "Brief justification for your confidence level",
-      "title": "Short title (under 80 chars)",
-      "description": "Clear explanation of the issue and its impact",
-      "evidence": "Chain-of-thought: what you read, what you traced, why it's real (file:lines checked)",
-      "suggestion": "Concrete recommendation for how to fix or address it",
-      "effort": "trivial|small|medium|large",
-      "pre_existing": false
-    }
-  ],
-  "enumerated_paths": [
-    {
-      "id": "P1",
-      "path": "Login as admin → /app/settings → click 'Save' with empty name",
-      "verify_method": "chrome|curl|script|test|code-review|query",
-      "expected": "Shows validation error, no save occurs",
-      "related_findings": ["finding index if applicable"]
-    }
-  ]
-}
-```
+{{> finding-format}}
 
-### Finding kinds
-**Code**: bug, security, performance, design, ux, completeness, improvement | **Content**: gap, risk, error, ambiguity, alternative, improvement
-
-### Confidence calibration
-- **0.9–1.0**: Verified in source. Unambiguously present. Traced code path or checked facts.
-- **0.7–0.89**: Strongly suggests issue, couldn't fully verify one step.
-- **0.5–0.69**: Suspicious pattern, not fully traced. | **Below 0.5**: Don't report.
-
-### Severity guide
-- **critical**: Data loss, security breach, system crash, fundamental flaw
-- **high**: Significant bug/vulnerability/gap, likely to affect users
-- **medium**: Real issue, limited blast radius, or high-value improvement
-- **low**: Minor issue, edge case | **note**: Worth discussing, not necessarily actionable
+{{> severity-guide}}
 
 ## Fleet Tools
 
-You are a fleet citizen. Use these MCP tools if available:
-- `update_state(key, value)` — report progress (e.g. `key="status", value="investigating"`)
-- `save_checkpoint(summary)` — crash recovery snapshot
-- `mail_send(to, subject, body)` — message coordinator when done
+{{> fleet-tools}}
 
 ## Completion
 
-1. Validate: `bash {{VALIDATOR}} {{OUTPUT_FILE}} worker` — fix if invalid
-2. Progress: if `update_state` is available, call `update_state(key="status", value="complete")`
-3. Notify: if `mail_send` is available AND "{{COORDINATOR_NAME}}" is non-empty, call `mail_send(to="{{COORDINATOR_NAME}}", subject="PASS {{PASS_NUMBER}} COMPLETE", body="{{OUTPUT_FILE}}")`
-4. Done marker: `echo "done" > {{DONE_FILE}}`
-5. Say "PASS {{PASS_NUMBER}} COMPLETE" and stop.
+{{> completion-protocol}}
