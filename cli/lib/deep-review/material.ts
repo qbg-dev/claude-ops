@@ -153,7 +153,7 @@ function gatherCodebaseFiles(projectRoot: string): Map<string, string[]> {
  * Each module chunk becomes a separate material file for parallel review.
  */
 export function collectCodebaseMaterial(
-  config: DeepReviewConfig,
+  _config: DeepReviewConfig,
   sessionDir: string,
   projectRoot: string,
 ): MaterialResult {
