@@ -1,15 +1,14 @@
 /**
  * Compiler — walks a Program declaration and produces CompiledPlan.
  *
- * Two modes:
- *   - Eager: compiles static phases whose agent count is known at launch.
- *   - Deferred: dynamic phases are compiled by the bridge at runtime.
+ * Single code path: all programs (Phase[] or ProgramGraph) compile through
+ * the graph pipeline. Phase[] programs are auto-converted via phasesToGraph().
  *
- * Supports both legacy Phase[] programs and graph-native ProgramGraph programs.
- * Graph programs are compiled via compileGraph(); legacy programs auto-convert
- * via phasesToGraph() shim.
+ * Two compilation modes:
+ *   - Eager: static phases whose agent count is known at launch.
+ *   - Deferred: dynamic phases compiled by the bridge at runtime.
  *
- * The compiler calls seed-resolver, hook-generator, fleet-provision for each phase.
+ * The compiler calls seed-resolver, hook-generator, fleet-provision for each node.
  */
 import { writeFileSync, readFileSync as fsReadFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +26,7 @@ import type {
 } from "./types";
 import { isDynamic } from "./types";
 import { resolveSeedToFile, buildStateVars } from "./seed-resolver";
-import { installStopHook, installPipelineHooks } from "./hook-generator";
+import { installPipelineHooks } from "./hook-generator";
 import { FLEET_DATA } from "../../cli/lib/paths";
 import { phasesToGraph, topologicalSort, buildNodeIndexMap, outgoingEdges, END_SENTINEL } from "./graph";
 
@@ -35,141 +34,14 @@ const HOME = process.env.HOME || "/tmp";
 
 /**
  * Compile a full program (eager pass).
- * If the program has a graph, uses compileGraph(). Otherwise compiles Phase[] directly.
+ * Always uses graph path — Phase[] programs auto-convert via phasesToGraph().
  */
 export function compile(
   program: Program,
   state: ProgramPipelineState,
 ): CompiledPlan {
-  // Graph dispatch: if program has .graph, compile via graph path
-  if (program.graph) {
-    return compileGraph(program.graph, state);
-  }
-
-  // Legacy Phase[] path (unchanged)
-  const plan: CompiledPlan = {
-    program: { name: program.name, description: program.description },
-    phases: [],
-    windows: [],
-    workers: [],
-    hooks: [],
-    sessionDir: state.sessionDir,
-    programPath: state.programPath,
-  };
-
-  for (let i = 0; i < program.phases.length; i++) {
-    const phase = program.phases[i];
-
-    if (isDynamic(phase.agents)) {
-      // Deferred compilation — placeholder
-      const estimate = phase.agents.estimate || 4;
-      plan.phases.push({
-        index: i,
-        name: phase.name,
-        status: "deferred",
-        agentCount: estimate,
-        agentNames: [],
-        dynamic: true,
-        estimate,
-      });
-
-      // Pre-create estimated windows
-      const panesPerWindow = phase.layout?.panesPerWindow || 4;
-      const numWindows = Math.ceil(estimate / panesPerWindow);
-      for (let w = 1; w <= numWindows; w++) {
-        plan.windows.push({
-          name: `${phase.name}-${w}`,
-          paneCount: Math.min(panesPerWindow, estimate - (w - 1) * panesPerWindow),
-          phase: phase.name,
-          layout: phase.layout?.algorithm || "tiled",
-        });
-      }
-    } else {
-      // Eager compilation
-      const compiled = compilePhase(i, phase.agents, phase, state);
-      plan.phases.push(compiled.phase);
-      plan.windows.push(...compiled.windows);
-      plan.workers.push(...compiled.workers);
-    }
-
-    // Hook chain: current phase's gate agent -> next phase bridge
-    const nextPhaseIndex = resolveNextPhase(phase, i, program.phases.length);
-    if (nextPhaseIndex !== null) {
-      // Install stop hooks on gate agents (only for eager phases)
-      if (!isDynamic(phase.agents)) {
-        const gateAgents = resolveGateAgents(phase, phase.agents);
-        const isGateAll = phase.gate === "all";
-
-        // Build convergence opts if this phase cycles
-        const convergenceOpts = phase.convergence ? {
-          check: phase.convergence.check,
-          maxIterations: phase.convergence.maxIterations || 10,
-          nextPhase: nextPhaseIndex,
-          cyclePhase: typeof phase.next === "number" ? phase.next : i,
-        } : undefined;
-
-        for (const gateAgent of gateAgents) {
-          installStopHook(
-            gateAgent.name,
-            state.fleetProject,
-            "",
-            state.sessionDir,
-            nextPhaseIndex,
-            {
-              ...(isGateAll ? { gateCount: gateAgents.length } : {}),
-              ...(convergenceOpts ? { convergence: convergenceOpts } : {}),
-            },
-          );
-
-          plan.hooks.push({
-            workerName: gateAgent.name,
-            targetPhaseIndex: nextPhaseIndex,
-            scriptPath: join(
-              HOME, ".claude/fleet", state.fleetProject,
-              gateAgent.name, "hooks", `phase-${nextPhaseIndex}-stop.sh`,
-            ),
-            sessionDirPath: state.sessionDir,
-            gateCount: isGateAll ? gateAgents.length : undefined,
-          });
-        }
-      }
-    }
-
-    // Install phase-level pipeline hooks (on all agents in this phase, eager only)
-    if (phase.hooks && phase.hooks.length > 0 && !isDynamic(phase.agents)) {
-      for (const agent of phase.agents) {
-        const workerHooksDir = join(FLEET_DATA, state.fleetProject, agent.name, "hooks");
-        // Fire-and-forget async — hooks are written before agents launch
-        installPipelineHooks(workerHooksDir, phase.hooks, state.programName).catch(() => {});
-      }
-    }
-
-    // Install per-agent pipeline hooks (eager only)
-    if (!isDynamic(phase.agents)) {
-      for (const agent of phase.agents) {
-        if (agent.hooks && agent.hooks.length > 0) {
-          const workerHooksDir = join(FLEET_DATA, state.fleetProject, agent.name, "hooks");
-          installPipelineHooks(workerHooksDir, agent.hooks, state.programName).catch(() => {});
-        }
-      }
-    }
-  }
-
-  return plan;
-}
-
-/**
- * Resolve the next phase index for a phase.
- * Returns null if this is the last phase (no transition needed).
- */
-function resolveNextPhase(phase: Phase, currentIndex: number, totalPhases: number): number | null {
-  if (phase.next !== undefined) {
-    if (typeof phase.next === "number") return phase.next;
-    // String reference — resolve by name (would need phases array, for now use i+1)
-    return currentIndex + 1 < totalPhases ? currentIndex + 1 : null;
-  }
-  // Default: next sequential phase
-  return currentIndex + 1 < totalPhases ? currentIndex + 1 : null;
+  const g = program.graph || phasesToGraph(program);
+  return compileGraph(g, state);
 }
 
 /**

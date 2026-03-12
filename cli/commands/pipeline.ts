@@ -19,7 +19,6 @@ import { compile, savePipelineState } from "../../engine/program/compiler";
 import { generateManifest } from "../../engine/program/manifest";
 import { createTmuxSession, showManifest, launchAgents, launchInPlanningWindow } from "../../engine/program/tmux-layout";
 import { provisionWorkers, generateLaunchWrapper, generateCleanupScript } from "../../engine/program/fleet-provision";
-import { installStopHook } from "../../engine/program/hook-generator";
 
 const HOME = process.env.HOME || "/tmp";
 const FLEET_DIR = process.env.CLAUDE_FLEET_DIR || join(HOME, ".claude-fleet");
@@ -126,6 +125,7 @@ export async function runPipeline(programName: string, opts: Record<string, any>
     compiledPhases: [],
     templateDir: join(FLEET_DIR, "templates"),
     validatorPath: join(FLEET_DIR, "scripts", "validate-findings.sh"),
+    ext: {},
     reviewConfig,
     spec: programOpts.spec || program.material?.spec || "",
   };
@@ -223,15 +223,8 @@ export async function runPipeline(programName: string, opts: Record<string, any>
       generateLaunchWrapper(worker, state);
     }
 
-    // Install stop hooks on Phase 0 gate agents (-> Phase 1)
-    if (program.phases.length > 1) {
-      const phase0 = program.phases[0];
-      if (!phase0.gate || phase0.gate !== "all") {
-        // Default gate: last agent
-        const gateWorker = phase0Workers[phase0Workers.length - 1];
-        installStopHook(gateWorker.name, fleetProject, "", sessionDir, 1);
-      }
-    }
+    // Stop hooks are installed by compile() via the graph path.
+    // No manual hook installation needed here.
 
     // Launch Phase 0 agents
     console.log("");

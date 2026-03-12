@@ -160,6 +160,14 @@ export function buildStateVars(state: ProgramPipelineState): Record<string, stri
     TMUX_SESSION: state.tmuxSession,
   };
 
+  // Auto-bind all opts as template variables (e.g. opts.scope → {{SCOPE}})
+  if (state.opts) {
+    for (const [k, v] of Object.entries(state.opts)) {
+      if (typeof v === "string") vars[k.toUpperCase()] = v;
+      else if (v !== null && v !== undefined) vars[k.toUpperCase()] = String(v);
+    }
+  }
+
   if (state.material) {
     vars.MATERIAL_FILE = state.material.materialFile;
     vars.MATERIAL_TYPE = state.material.materialType;

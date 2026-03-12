@@ -41,7 +41,7 @@ export { compile, compileGraph, compilePhase, installGraphStopHook, savePipeline
 export { resolveSeed, resolveSeedToFile, substitute, buildStateVars, registerPartials } from "./seed-resolver";
 
 // Hook generator
-export { generateStopHook, installStopHook, installPipelineHooks } from "./hook-generator";
+export { installPipelineHooks } from "./hook-generator";
 
 // Hooks bridge (dynamic import to claude-hooks)
 export { getHooksIO, getHooksTypes, checkHooksInstalled } from "./hooks-bridge";
@@ -54,3 +54,6 @@ export { createTmuxSession, addWindowsToSession, launchAgent, launchAgents, laun
 
 // Manifest
 export { generateManifest, updateManifest } from "./manifest";
+
+// Worker builder helpers
+export { workerTeam, coordinator } from "./helpers";
