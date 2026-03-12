@@ -20,7 +20,7 @@ export function register(parent: Command): void {
       const panes = listPaneIds();
       const results: Array<{
         name: string; project: string; status: string;
-        model: string; pane: string; window: string; branch: string;
+        model: string; pane: string; window: string; branch: string; runtime: string;
       }> = [];
 
       // Iterate project dirs
@@ -64,6 +64,7 @@ export function register(parent: Command): void {
             pane: state.pane_id || "-",
             window: config.window || "-",
             branch: config.branch || "-",
+            runtime: config.runtime || "claude",
           });
         }
       }
@@ -83,16 +84,16 @@ export function register(parent: Command): void {
       const uniqueProjects = new Set(results.map(r => r.project));
       if (uniqueProjects.size > 1) {
         table(
-          ["NAME", "PROJECT", "STATUS", "MODEL", "PANE", "WINDOW", "BRANCH"],
+          ["NAME", "PROJECT", "STATUS", "RUNTIME", "MODEL", "PANE", "WINDOW", "BRANCH"],
           results.map((r) => [
-            r.name, r.project, statusColor(r.status), r.model, r.pane, r.window, r.branch,
+            r.name, r.project, statusColor(r.status), r.runtime, r.model, r.pane, r.window, r.branch,
           ]),
         );
       } else {
         table(
-          ["NAME", "STATUS", "MODEL", "PANE", "WINDOW", "BRANCH"],
+          ["NAME", "STATUS", "RUNTIME", "MODEL", "PANE", "WINDOW", "BRANCH"],
           results.map((r) => [
-            r.name, statusColor(r.status), r.model, r.pane, r.window, r.branch,
+            r.name, statusColor(r.status), r.runtime, r.model, r.pane, r.window, r.branch,
           ]),
         );
       }

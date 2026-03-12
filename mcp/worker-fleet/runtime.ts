@@ -77,12 +77,13 @@ export const CODEX_RUNTIME: RuntimeConfig = {
   type: "codex",
   binary: "codex",
   defaultModel: "gpt-5.4",
-  buildLaunchCmd({ model, permissionMode, reasoningEffort }) {
+  buildLaunchCmd({ model, permissionMode, reasoningEffort, workerDir }) {
     let cmd = `codex -m ${model}`;
     if (permissionMode === "bypassPermissions") cmd += " --dangerously-bypass-approvals-and-sandbox";
-    else cmd += " -s workspace-write -a on-request";
+    else cmd += " -s danger-full-access -a on-request";
     if (reasoningEffort) cmd += ` -c model_reasoning_effort=${reasoningEffort}`;
     cmd += " --no-alt-screen";
+    if (workerDir) cmd += ` --add-dir "${workerDir}"`;
     return cmd;
   },
   buildResumeCmd({ sessionId }) {

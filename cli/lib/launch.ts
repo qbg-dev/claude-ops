@@ -52,7 +52,7 @@ export async function launchInTmux(
   if (!worktree) fail(`No worktree configured for ${name}`);
   if (!existsSync(worktree)) fail(`Worktree not found: ${worktree}`);
 
-  const runtime = options?.runtime || "claude";
+  const runtime = options?.runtime || config!.runtime || "claude";
   info(`Launching in tmux (session: ${session}, window: ${window}, runtime: ${runtime})`);
 
   // ── Symlink .mcp.json to project root ──
@@ -114,7 +114,7 @@ export async function launchInTmux(
     if (perm === "bypassPermissions") {
       cmd += " --dangerously-bypass-approvals-and-sandbox";
     } else {
-      cmd += " -s workspace-write -a on-request";
+      cmd += " -s danger-full-access -a on-request";
     }
     cmd += ` -c model_reasoning_effort=${effort}`;
     cmd += " --no-alt-screen";

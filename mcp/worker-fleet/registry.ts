@@ -383,7 +383,7 @@ export function workerDirsToRegistryEntry(name: string): RegistryWorkerEntry | n
     mission_file: join(FLEET_DIR, name, "mission.md"),
     custom: {
       ...s.custom,
-      runtime: "claude", // Always reconstruct this
+      runtime: config.runtime || "claude",
       reasoning_effort: config.reasoning_effort || "high",
       ...(s.cycles_completed ? { cycles_completed: s.cycles_completed } : {}),
       ...(s.last_cycle_at ? { last_cycle_at: s.last_cycle_at } : {}),

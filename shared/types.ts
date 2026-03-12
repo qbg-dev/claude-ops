@@ -12,6 +12,8 @@ export interface WorkerConfig {
   window: string | null;
   worktree: string;
   branch: string;
+  /** Runtime CLI: "claude" (default) or "codex" */
+  runtime?: "claude" | "codex";
   mcp: Record<string, unknown>;
   hooks: SystemHook[];
   /** Ephemeral workers skip watchdog respawn and are auto-cleaned after completion (e.g. deep-review workers) */
