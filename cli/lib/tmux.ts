@@ -105,6 +105,41 @@ export function killPane(paneId: string): void {
   run(["kill-pane", "-t", paneId]);
 }
 
+/** Get the PID of the process running in a pane */
+export function getPanePid(paneId: string): number | null {
+  const { ok, stdout } = run(["list-panes", "-a", "-F", "#{pane_id} #{pane_pid}", ]);
+  if (!ok) return null;
+  for (const line of stdout.split("\n")) {
+    const [id, pidStr] = line.split(" ");
+    if (id === paneId && pidStr) return parseInt(pidStr, 10) || null;
+  }
+  return null;
+}
+
+/**
+ * Kill the process tree in a pane, wait for it to die, then kill the pane.
+ * Prevents orphan Claude processes that keep running after the pane is destroyed.
+ */
+export async function killPaneWithProcess(paneId: string, timeoutMs = 10_000): Promise<void> {
+  const pid = getPanePid(paneId);
+  if (pid) {
+    // Kill the process group (negative PID = process group)
+    try { process.kill(-pid, "SIGTERM"); } catch {
+      // Process group kill failed — try direct kill
+      try { process.kill(pid, "SIGTERM"); } catch {}
+    }
+    // Wait for the process to die
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try { process.kill(pid, 0); } catch { break; } // pid gone
+      await Bun.sleep(500);
+    }
+    // Force kill if still alive
+    try { process.kill(pid, "SIGKILL"); } catch {}
+  }
+  killPane(paneId);
+}
+
 /** Send keys to a pane */
 export function sendKeys(paneId: string, text: string): void {
   run(["send-keys", "-t", paneId, text]);

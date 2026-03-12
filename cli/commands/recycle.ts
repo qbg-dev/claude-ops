@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { FLEET_DATA, DEFAULT_SESSION, workerDir, resolveProject } from "../lib/paths";
 import { getConfig, getFleetConfig, getState, writeJsonLocked } from "../lib/config";
 import { info, ok, warn, fail } from "../lib/fmt";
-import { listPaneIds, killPane } from "../lib/tmux";
+import { listPaneIds, killPaneWithProcess } from "../lib/tmux";
 import { launchInTmux } from "../lib/launch";
 import { syncWorktree } from "../lib/worktree";
 import { addGlobalOpts } from "../index";
@@ -50,10 +50,10 @@ async function recycleOne(name: string, project: string): Promise<void> {
   const panes = listPaneIds();
   const paneId = state?.pane_id;
 
-  // 1. Kill existing pane if alive
+  // 1. Kill existing pane + its process (prevents orphan Claude processes)
   if (paneId && panes.has(paneId)) {
-    killPane(paneId);
-    info(`Killed pane ${paneId}`);
+    await killPaneWithProcess(paneId);
+    info(`Killed pane ${paneId} and its process`);
   }
 
   // 2. Clear sleep/recycling state so it launches clean
