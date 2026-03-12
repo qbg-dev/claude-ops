@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # liveness-heartbeat.sh — Touch a timestamp file on every hook fire.
-# Registered on PostToolUse + UserPromptSubmit so the watchdog has a
-# reliable "last activity" signal without parsing scrollback.
+# Registered on ALL hook events so the watchdog has a reliable
+# "last activity" signal without parsing scrollback.
 #
 # File: ~/.claude-fleet/state/watchdog-runtime/{worker}/liveness
 # Contains: epoch timestamp of last activity
