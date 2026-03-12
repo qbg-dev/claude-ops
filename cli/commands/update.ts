@@ -11,7 +11,8 @@ export function register(parent: Command): void {
     .command("update")
     .description("Pull latest fleet code, install deps, re-run setup")
     .option("--reload", "Recycle all running workers after update")
-    .action(async (opts: { reload?: boolean }) => {
+    .option("--extensions", "Build and install all extensions during setup")
+    .action(async (opts: { reload?: boolean; extensions?: boolean }) => {
       console.log(`${chalk.bold("fleet update")} — updating fleet infrastructure\n`);
 
       // 1. git pull
@@ -33,9 +34,11 @@ export function register(parent: Command): void {
       if (install.exitCode !== 0) fail("bun install failed");
       ok("Dependencies installed");
 
-      // 3. Re-run fleet setup
-      info("Running fleet setup...");
-      const setup = Bun.spawnSync(["bun", "run", "cli/index.ts", "setup"], {
+      // 3. Re-run fleet setup (pass --extensions if requested or if reloading)
+      const setupArgs = ["bun", "run", "cli/index.ts", "setup"];
+      if (opts.extensions || opts.reload) setupArgs.push("--extensions");
+      info(`Running fleet setup${opts.extensions || opts.reload ? " --extensions" : ""}...`);
+      const setup = Bun.spawnSync(setupArgs, {
         cwd: FLEET_DIR,
         stdout: "inherit",
         stderr: "inherit",

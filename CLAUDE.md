@@ -27,6 +27,7 @@ Optional:  boring-mail-tui (Fleet Mail TUI client), oxlint/biome (deep review li
 
 ```
 fleet onboard                           # guided setup + fleet design (the entry point)
+fleet setup [--extensions]              # bootstrap infrastructure (--extensions installs all)
 fleet create <name> "<mission>"         # create + launch worker
 fleet start <name>                      # restart worker
 fleet stop <name> [--all]               # graceful stop
@@ -50,7 +51,7 @@ fleet pipeline <program> [opts]         # launch a program-API pipeline
 fleet hook <add|rm|ls|complete>         # manage dynamic hooks
 fleet doctor                            # verify installation
 fleet nuke <name>                       # destroy worker
-fleet update [--reload]                  # pull latest, reinstall, re-setup (--reload recycles workers)
+fleet update [--reload] [--extensions]    # pull + reinstall + setup (--reload recycles workers, --extensions installs all)
 ```
 
 Flags: `--model opus|sonnet|haiku`, `--effort high|max`, `--save`, `--json`, `-p <project>`

@@ -10,7 +10,8 @@ export function register(parent: Command): void {
   parent
     .command("setup")
     .description("Bootstrap fleet infrastructure")
-    .action(async () => {
+    .option("--extensions", "Build and install all extensions (watchdog, review, etc.)")
+    .action(async (opts: { extensions?: boolean }) => {
       console.log(`${chalk.bold("fleet setup")} — bootstrapping fleet infrastructure\n`);
 
       let errors = 0;
@@ -369,19 +370,65 @@ export function register(parent: Command): void {
         }
       }
 
-      // 10. Optional plugins
-      info("Detecting optional plugins...");
+      // 10. Extensions — detect or install
+      info(opts.extensions ? "Installing extensions..." : "Detecting extensions...");
 
-      // Watchdog plugin — prefer Rust binary over TypeScript
+      // Watchdog — prefer Rust binary over TypeScript
       const rustBinary = join(fleetDir, "extensions/watchdog-rs/target/release/boring-watchdog");
       const watchdogPlugin = join(fleetDir, "extensions/watchdog/src/watchdog.ts");
-      const hasRustWatchdog = existsSync(rustBinary);
+      const cargoToml = join(fleetDir, "extensions/watchdog-rs/Cargo.toml");
+      const watchdogPlist = join(HOME, "Library/LaunchAgents/com.tmux-agents.watchdog.plist");
+      const legacyPlist = join(HOME, "Library/LaunchAgents/com.claude-fleet.harness-watchdog.plist");
+      const watchdogInstalled = existsSync(watchdogPlist) || existsSync(legacyPlist);
+      let hasRustWatchdog = existsSync(rustBinary);
       const hasTsWatchdog = existsSync(watchdogPlugin);
-      if (hasRustWatchdog || hasTsWatchdog) {
+
+      if (opts.extensions && !watchdogInstalled) {
+        // Try to build + install Rust watchdog first, fall back to TS
+        if (existsSync(cargoToml)) {
+          const hasCargo = Bun.spawnSync(["which", "cargo"], { stderr: "pipe" }).exitCode === 0;
+          if (hasCargo) {
+            info("Building Rust watchdog...");
+            const build = Bun.spawnSync(
+              ["cargo", "build", "--release"],
+              { cwd: join(fleetDir, "extensions/watchdog-rs"), stdout: "inherit", stderr: "inherit" },
+            );
+            if (build.exitCode === 0) {
+              hasRustWatchdog = true;
+              ok("Rust watchdog built");
+              info("Installing watchdog daemon...");
+              const install = Bun.spawnSync(
+                [rustBinary, "install"],
+                { stdout: "inherit", stderr: "inherit" },
+              );
+              if (install.exitCode === 0) {
+                ok("Watchdog: Rust — launchd daemon installed");
+              } else {
+                warn("Watchdog install failed (try manually)");
+              }
+            } else {
+              warn("Rust watchdog build failed — trying TypeScript fallback");
+            }
+          } else {
+            info("cargo not found — using TypeScript watchdog");
+          }
+        }
+        // Fall back to TS watchdog if Rust didn't work
+        if (!hasRustWatchdog && hasTsWatchdog) {
+          info("Installing TypeScript watchdog...");
+          const install = Bun.spawnSync(
+            ["bash", join(fleetDir, "extensions/watchdog/install.sh")],
+            { stdout: "inherit", stderr: "inherit", env: { ...process.env, CLAUDE_FLEET_DIR: fleetDir } },
+          );
+          if (install.exitCode === 0) {
+            ok("Watchdog: TypeScript — launchd daemon installed");
+          } else {
+            warn("TypeScript watchdog install failed");
+          }
+        }
+      } else if (hasRustWatchdog || hasTsWatchdog) {
         const impl = hasRustWatchdog ? "Rust (boring-watchdog)" : "TypeScript";
-        const watchdogPlist = join(HOME, "Library/LaunchAgents/com.tmux-agents.watchdog.plist");
-        const legacyPlist = join(HOME, "Library/LaunchAgents/com.claude-fleet.harness-watchdog.plist");
-        if (existsSync(watchdogPlist) || existsSync(legacyPlist)) {
+        if (watchdogInstalled) {
           ok(`Watchdog: ${impl} — launchd daemon active`);
         } else {
           warn(`Watchdog: ${impl} found but not installed as daemon`);
@@ -390,21 +437,32 @@ export function register(parent: Command): void {
           } else {
             console.log(`    Install: bash ${join(fleetDir, "extensions/watchdog/install.sh")}`);
           }
+          if (!opts.extensions) {
+            console.log(`    Or run: fleet setup --extensions`);
+          }
         }
+      } else if (existsSync(cargoToml)) {
+        info("Watchdog: Rust source found but not built");
+        console.log(`    Build + install: fleet setup --extensions`);
       } else {
-        // Check if Cargo.toml exists but binary not built
-        const cargoToml = join(fleetDir, "extensions/watchdog-rs/Cargo.toml");
-        if (existsSync(cargoToml)) {
-          info("Watchdog: Rust source found but not built");
-          console.log(`    Build: cd ${join(fleetDir, "extensions/watchdog-rs")} && cargo build --release`);
-        } else {
-          info("Watchdog: not found (optional — supervises long-running workers)");
-        }
+        info("Watchdog: not found (optional — supervises long-running workers)");
       }
 
-      // Deep review
+      // Deep review extension
+      const reviewInstallScript = join(fleetDir, "extensions/review/install.sh");
       const deepReviewDir = process.env.DEEP_REVIEW_DIR || join(HOME, ".deep-review");
-      if (existsSync(join(deepReviewDir, "scripts/deep-review.sh"))) {
+      if (opts.extensions && existsSync(reviewInstallScript)) {
+        info("Installing review extension...");
+        const install = Bun.spawnSync(
+          ["bash", reviewInstallScript],
+          { stdout: "inherit", stderr: "inherit" },
+        );
+        if (install.exitCode === 0) {
+          ok("Deep review: installed (REVIEW.md, pre-commit hook, scripts)");
+        } else {
+          warn("Review extension install failed");
+        }
+      } else if (existsSync(join(deepReviewDir, "scripts/deep-review.sh"))) {
         ok(`Deep review: ${deepReviewDir}`);
       } else if (existsSync(join(fleetDir, "scripts/deep-review.sh"))) {
         ok("Deep review: bundled (in fleet repo)");

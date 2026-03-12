@@ -176,6 +176,34 @@ Proposals are committed alongside the review that surfaced them. No separate app
 
 ---
 
+## Installation & Setup
+
+Fleet has two setup paths:
+
+```bash
+fleet setup                # Core bootstrap: symlinks, deps, Fleet Mail, MCP, hooks
+fleet setup --extensions   # Core + build and install all extensions (watchdog, review, etc.)
+fleet update               # Pull latest code, reinstall deps, re-run setup
+fleet update --reload      # Pull + setup + recycle all running workers
+```
+
+**What `fleet setup` does** (always idempotent):
+1. Check dependencies (bun, tmux, claude)
+2. Create symlinks (`~/.claude-fleet`, `~/.local/bin/fleet`)
+3. Create `~/.claude/fleet/defaults.json`
+4. Connect or start Fleet Mail
+5. Register MCP servers (`worker-fleet`, `claude-hooks`) in `~/.claude/settings.json`
+6. Install hooks (4 events, preserves non-fleet hooks)
+7. Detect extensions (watchdog, deep review, TUI) — prints install hints
+
+**What `--extensions` adds** (installs everything):
+- **Watchdog**: Builds Rust binary (`extensions/watchdog-rs/`) if cargo available, falls back to TypeScript. Installs launchd daemon for auto-restart.
+- **Deep review**: Runs `extensions/review/install.sh` — symlinks REVIEW.md, installs pre-commit hook, links review scripts.
+- **Fleet Mail TUI**: Detected if on PATH (separate build).
+
+**What `fleet update --reload` does**:
+- `git pull origin main` → `bun install` → `fleet setup` → recycle all running workers (sets status to `"recycling"`, kills panes, watchdog respawns with fresh config).
+
 ## Related Conventions
 
 - [conventions/README-CONVENTIONS.md](conventions/README-CONVENTIONS.md) — 100 rules for writing READMEs. Applied to this project's README.
