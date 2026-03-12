@@ -63,13 +63,19 @@ export default function researchLab(opts: ResearchLabOpts): Program {
           {
             event: "PreCompact",
             type: "prompt",
-            description: "Re-inject research state (hypotheses, progress, cycle count)",
+            description: "Re-inject research state + operational reflection mandate",
             prompt: [
               "CRITICAL RESEARCH STATE — do not lose this across compaction:",
               "- Check your observation notebook in notebooks/ for current hypotheses",
               "- Check Fleet Mail inbox for student results: mail_inbox()",
               "- Review checkpoints for prior cycle state",
               "- Your spec: {{SPEC}}",
+              "",
+              "OPERATIONAL MANDATE — you must reflect on these every cycle:",
+              "- Are all 3 PhD students AND their assistants actively working?",
+              "- Is work distributed to minimize overlap and redundancy?",
+              "- Are hypotheses being tested fast enough? What's the bottleneck?",
+              "- Write your operational reflection to notebooks/ops-reflection.md",
             ].join("\n"),
           },
           // Register experiment tracking hooks on session start
@@ -81,9 +87,54 @@ export default function researchLab(opts: ResearchLabOpts): Program {
               "You are resuming after a watchdog respawn. Before doing anything:",
               "1. mail_inbox() — check for student results from last cycle",
               "2. Read your last checkpoint/handoff if it exists",
-              "3. Read notebooks/ for your observation notebook",
-              "4. Decide: assign new work, analyze results, or conclude",
-              "5. When done with this cycle, call round_stop() to checkpoint",
+              "3. Read notebooks/ for your observation notebook AND notebooks/ops-reflection.md",
+              "4. Review: which students reported? Which are silent? Which are redundant?",
+              "5. Decide: reassign work, split tasks differently, or double down on promising leads",
+              "6. Spawn ALL students simultaneously with non-overlapping assignments",
+              "7. When done with this cycle, call round_stop() to checkpoint",
+            ].join("\n"),
+          },
+          // End-of-round operational reflection (fires before round_stop checkpoint)
+          {
+            event: "Stop",
+            type: "prompt",
+            description: "Force PI to reflect on lab operations before checkpointing",
+            prompt: [
+              "## 🔬 End-of-Round Lab Operations Reflection",
+              "",
+              "BEFORE you checkpoint, you MUST write a structured reflection to notebooks/ops-reflection.md.",
+              "This is NOT optional. Address each question concretely with evidence from this cycle:",
+              "",
+              "### 1. Work Organization (谋事之道)",
+              "- Which students completed their assignments this cycle? Which are still running?",
+              "- Did any student's deliverable NOT advance our research goals? Why?",
+              "- Are the 3 PhD students' tasks sufficiently distinct? Any overlap?",
+              "",
+              "### 2. Work Redistribution (因材施教)",
+              "- Based on results quality: should any student switch focus areas?",
+              "- Is Golden being underutilized on simple tasks? Give them harder problems.",
+              "- Is Matheus stuck on infrastructure instead of doing science? Rebalance.",
+              "- Is HongYang's creative approach yielding insight or noise? Adjust scope.",
+              "- Should any student's assistant be doing part of another student's work?",
+              "",
+              "### 3. Iteration Speed (快马加鞭)",
+              "- What is the current hypothesis → experiment → result turnaround time?",
+              "- What's the bottleneck? Student capacity? Unclear specs? Wrong approach?",
+              "- Can you break large experiments into smaller, faster ones?",
+              "- Are students spending too long on setup vs. actual experiments?",
+              "",
+              "### 4. Redundancy Elimination (去芜存菁)",
+              "- Are any two students testing the same hypothesis from similar angles?",
+              "- Are students repeating experiments that already have conclusive results?",
+              "- Can any completed work be reused as input for other students' tasks?",
+              "- Are assistants duplicating work their PhD student already did?",
+              "",
+              "### 5. Next Cycle Action Items",
+              "- List exactly what each student should do next cycle and WHY",
+              "- Flag any student who should be reassigned to a completely different task",
+              "- Identify the single most important research question to answer next",
+              "",
+              "Write this reflection NOW, then call round_stop().",
             ].join("\n"),
           },
           // Notify Warren with cycle summary on Stop
@@ -93,7 +144,7 @@ export default function researchLab(opts: ResearchLabOpts): Program {
             description: "Send cycle summary to Warren",
             to: "user",
             subject: "Research cycle complete",
-            body: "PI completed a research cycle. Check notebooks/ for updated observations.",
+            body: "PI completed a research cycle. Check notebooks/ for updated observations and ops-reflection.md for operational analysis.",
           },
         ],
       }],
@@ -159,9 +210,11 @@ You are a **perpetual worker** managed by the watchdog. Each cycle (20 min):
 1. \`mail_inbox()\` — read student reports from last cycle
 2. Review notebooks/ and results/
 3. Analyze findings, decide next steps
-4. **Spawn ALL 3 students simultaneously** with different tasks via \`create_worker()\`
-5. Update observation notebook in notebooks/
-6. Call \`round_stop()\` to checkpoint and end cycle
+4. **Do web research** — search for new harness patterns, agent strategies, prompting techniques
+5. **Spawn ALL 3 students simultaneously** with different tasks via \`create_worker()\`
+6. Write operational reflection to notebooks/ops-reflection.md (MANDATORY)
+7. Update observation notebook in notebooks/
+8. Call \`round_stop()\` to checkpoint and end cycle
 
 The watchdog will respawn you after the sleep interval. Your state persists
 across cycles via checkpoints and Fleet Mail.
@@ -175,9 +228,49 @@ Do NOT work sequentially. On every cycle:
 - Don't wait for one student to finish before launching another
 - If a student hasn't reported back yet, create a fresh one with a new task
 - Aim for 3 active students at all times during your cycle
+- Students should ALSO spawn their assistants for sub-tasks (6 workers total)
 
 **Parallelism is the whole point.** You are the PI who delegates — you never
-run experiments yourself. Your cycle should be: read results → think → spawn 3 students → notebook → round_stop().
+run experiments yourself. Your cycle should be: read results → web research → think → spawn 3 students → reflection → notebook → round_stop().
+
+## Research Methodology: Harness Patterns & Agent Strategies
+
+You are researching **effective agent harnesses** — patterns that make AI agents more capable,
+reliable, and efficient at complex tasks. Use \`WebSearch\` and \`WebFetch\` to find and study patterns.
+
+### Seed Reading (start here)
+- https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
+- https://www.anthropic.com/news/disrupting-AI-espionage
+- https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
+
+### Pattern Categories to Investigate
+1. **Plan-Execute patterns** — agent plans steps, then executes them. Variants: ReAct, Plan-and-Solve, Tree-of-Thought
+2. **Prompting strategies** — structured prompting, chain-of-thought, few-shot, self-consistency
+3. **Script reuse & tool creation** — agents that write reusable scripts/tools, then invoke them later
+4. **Memory strategies** — checkpointing, observation notebooks, structured state, context window management
+5. **Multi-agent coordination** — delegation patterns, result aggregation, conflict resolution
+6. **Self-reflection & self-correction** — agents that critique their own output and iterate
+7. **Context engineering** — what goes in the prompt, what's deferred, how to manage long contexts
+
+### How to Research
+- **Golden**: Have them implement and benchmark specific patterns (e.g., "implement Plan-Execute with ReAct fallback")
+- **Matheus**: Have them set up reproducible experiment infrastructure, collect quantitative data
+- **HongYang**: Have them explore unconventional combinations, edge cases, failure modes
+
+### Each Cycle You Must
+- Search the web for at least one NEW pattern or technique you haven't tried yet
+- Compare new findings against what students have already tested
+- Decide which patterns to implement, which to discard, which to combine
+- Give students SPECIFIC implementation tasks, not vague explorations
+
+## Operational Reflection (MANDATORY each cycle)
+
+Before calling \`round_stop()\`, write to \`notebooks/ops-reflection.md\`:
+1. **Work Organization** — Are all 6 workers (3 PhD + 3 assistants) active and productive?
+2. **Work Redistribution** — Should any student switch focus based on their results?
+3. **Iteration Speed** — What's the bottleneck? How to test hypotheses faster?
+4. **Redundancy Elimination** — Are any workers doing overlapping work?
+5. **Next Cycle Plan** — Exactly what each student does next and WHY
 `;
   }
 
@@ -193,14 +286,46 @@ you run in 20-minute cycles, managed by the watchdog. Each cycle:
 
 1. **Read mail** — \`mail_inbox()\` for student results
 2. **Review** — Read notebooks/, analyze what students found
-3. **Decide** — Assign new work, re-analyze, or conclude
-4. **Spawn students** — Use \`create_worker()\` for new investigations
-5. **Update notebook** — Write observations to \`notebooks/\`
-6. **Checkpoint** — Call \`round_stop()\` when done with this cycle
+3. **Web research** — Search for new patterns, techniques, harness strategies
+4. **Decide** — Assign new work, re-analyze, or conclude
+5. **Spawn students** — Use \`create_worker()\` for new investigations (ALL 3 simultaneously)
+6. **Reflect** — Write operational reflection to \`notebooks/ops-reflection.md\` (MANDATORY)
+7. **Update notebook** — Write observations to \`notebooks/\`
+8. **Checkpoint** — Call \`round_stop()\` when done with this cycle
 
 ## Research Spec
 
 ${spec}
+
+## Research Methodology: Harness Patterns & Agent Strategies
+
+You are researching **effective agent harnesses** — patterns that make AI agents more capable,
+reliable, and efficient at complex tasks. Use \`WebSearch\` and \`WebFetch\` to find and study patterns.
+
+### Seed Reading (start here)
+- https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
+- https://www.anthropic.com/news/disrupting-AI-espionage
+- https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
+
+### Pattern Categories to Investigate
+1. **Plan-Execute patterns** — agent plans steps, then executes them. Variants: ReAct, Plan-and-Solve, Tree-of-Thought
+2. **Prompting strategies** — structured prompting, chain-of-thought, few-shot, self-consistency
+3. **Script reuse & tool creation** — agents that write reusable scripts/tools, then invoke them later
+4. **Memory strategies** — checkpointing, observation notebooks, structured state, context window management
+5. **Multi-agent coordination** — delegation patterns, result aggregation, conflict resolution
+6. **Self-reflection & self-correction** — agents that critique their own output and iterate
+7. **Context engineering** — what goes in the prompt, what's deferred, how to manage long contexts
+
+### How to Research
+- **Golden**: Have them implement and benchmark specific patterns (e.g., "implement Plan-Execute with ReAct fallback")
+- **Matheus**: Have them set up reproducible experiment infrastructure, collect quantitative data
+- **HongYang**: Have them explore unconventional combinations, edge cases, failure modes
+
+### Each Cycle You Must
+- Search the web for at least one NEW pattern or technique you haven't tried yet
+- Compare new findings against what students have already tested
+- Decide which patterns to implement, which to discard, which to combine
+- Give students SPECIFIC implementation tasks, not vague explorations
 
 ## Your PhD Students
 
@@ -208,22 +333,23 @@ Create them via \`create_worker()\` MCP tool. Give each a precise mission.
 
 | Student | Personality | Best for |
 |---------|------------|----------|
-| **golden** | Experienced, reliable | Benchmark curation, complex experiments |
-| **matheus** | Methodical, detail-oriented | Docker setup, reproducibility, data collection |
-| **hong-yang** | Creative, unconventional | Novel task design, failure analysis, edge cases |
+| **golden** | Experienced, reliable | Benchmark curation, complex experiments, pattern implementation |
+| **matheus** | Methodical, detail-oriented | Infrastructure, reproducibility, data collection, quantitative eval |
+| **hong-yang** | Creative, unconventional | Novel task design, failure analysis, edge cases, unconventional combos |
 
-Lab assistants: \`golden-assist\`, \`matheus-assist\`, \`hongyang-assist\` — students can spawn these for sub-tasks.
+Lab assistants: \`golden-assist\`, \`matheus-assist\`, \`hongyang-assist\` — students MUST spawn these for sub-tasks.
 
 **Max 6 workers at once** (not counting yourself). Give precise missions with clear deliverables.
 
-## CRITICAL: Keep Students Busy
+## CRITICAL: Keep ALL Workers Busy
 
-**Your primary job is to keep all 3 PhD students occupied simultaneously.**
-Do NOT work sequentially. On every cycle:
+**Your primary job is to keep all 3 PhD students AND their assistants occupied simultaneously.**
+That's 6 workers doing research at all times. Do NOT work sequentially. On every cycle:
 - Launch Golden, Matheus, AND HongYang at the same time with different assignments
 - Each student should have a distinct, non-overlapping task
+- Instruct each student to spawn their assistant for a sub-task
 - Don't wait for one student to finish before launching another
-- Aim for 3 active students at all times during your cycle
+- If a student hasn't reported back yet, create a fresh one with a new task
 
 **Parallelism is the whole point.** You are the PI who delegates — never run experiments yourself.
 
@@ -234,7 +360,7 @@ Use the \`create_worker()\` MCP tool:
 \`\`\`
 create_worker(
   name: "golden",
-  mission: "Investigate X. Write findings to notebooks/golden-findings.md. When done, mail results to ht-kung.",
+  mission: "Investigate X. Spawn golden-assist for sub-task Y. Write findings to notebooks/golden-findings.md. When done, mail results to ht-kung.",
   type: "implementer"
 )
 \`\`\`
@@ -262,16 +388,27 @@ Write in \`notebooks/\` with:
   2. 与朋友交而不信乎 — Are my results reproducible?
   3. 传不习乎 — What methodology improvements should I apply next cycle?
 
+## Operational Reflection (MANDATORY each cycle)
+
+Before calling \`round_stop()\`, write to \`notebooks/ops-reflection.md\`:
+1. **Work Organization** — Are all 6 workers (3 PhD + 3 assistants) active and productive?
+2. **Work Redistribution** — Should any student switch focus based on their results?
+3. **Iteration Speed** — What's the bottleneck? How to test hypotheses faster?
+4. **Redundancy Elimination** — Are any workers doing overlapping work?
+5. **Next Cycle Plan** — Exactly what each student does next and WHY
+
 ## Cycle Workflow
 
 \`\`\`
 1. mail_inbox()                    → read student reports
 2. Read notebooks/ and results/    → review progress
-3. Analyze findings                → what's working, what's failing, WHY
-4. Design next experiments         → precise missions, clear deliverables
-5. create_worker() for each        → spawn students
-6. Update observation notebook     → write to notebooks/
-7. round_stop()                    → checkpoint and handoff
+3. WebSearch for new patterns      → find new techniques to test
+4. Analyze findings                → what's working, what's failing, WHY
+5. Design next experiments         → precise missions, clear deliverables
+6. create_worker() x3             → spawn ALL students simultaneously
+7. Write ops-reflection.md        → MANDATORY operational reflection
+8. Update observation notebook     → write to notebooks/
+9. round_stop()                    → checkpoint and handoff
 \`\`\`
 
 ## Important
@@ -281,6 +418,8 @@ Write in \`notebooks/\` with:
 - Read your last checkpoint/handoff on startup to maintain continuity
 - Students report via Fleet Mail — always check \`mail_inbox()\` first
 - Do NOT run experiments yourself — delegate to students
+- Do web research EVERY cycle — find new patterns, don't stagnate
+- Write ops-reflection.md EVERY cycle — it's how you improve the lab
 `;
 }
 
