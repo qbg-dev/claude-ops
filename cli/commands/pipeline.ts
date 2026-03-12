@@ -255,11 +255,48 @@ export async function runPipeline(programName: string, opts: Record<string, any>
     console.log(`  Reviewing:   ${state.material.diffDesc} (${state.material.diffLines} lines)`);
   }
   console.log("");
-  console.log(`  Phases: ${program.phases.length} (hook-chained)`);
-  for (let i = 0; i < program.phases.length; i++) {
-    const phase = program.phases[i];
-    const status = i === 0 ? "← running now" : "← auto-launches on completion";
-    console.log(`    ${i}. ${phase.name}: ${phase.description || ""} ${status}`);
+  if (program.graph) {
+    // Graph-native: render nodes + edges as flow diagram
+    const g = program.graph;
+    const nodeNames = Object.keys(g.nodes);
+    console.log(`  Pipeline: ${nodeNames.length} nodes (graph-native)`);
+    console.log("");
+    // Render each node
+    for (const name of nodeNames) {
+      const node = g.nodes[name];
+      const isEntry = name === g.entry;
+      const marker = isEntry ? " ← running now" : "";
+      const desc = node.description ? ` — ${node.description}` : "";
+      console.log(`    [${name}]${desc}${marker}`);
+    }
+    console.log("");
+    // Render edges as flow
+    const edgesByFrom = new Map<string, typeof g.edges>();
+    for (const e of g.edges) {
+      if (!edgesByFrom.has(e.from)) edgesByFrom.set(e.from, []);
+      edgesByFrom.get(e.from)!.push(e);
+    }
+    console.log("  Flow:");
+    for (const [from, edges] of edgesByFrom) {
+      for (const e of edges) {
+        const label = e.label ? ` "${e.label}"` : e.condition ? " (conditional)" : "";
+        const iter = e.maxIterations ? ` [max ${e.maxIterations}x]` : "";
+        console.log(`    ${from} ──${label}──> ${e.to}${iter}`);
+      }
+    }
+  } else {
+    // Linear phases: render as chain
+    console.log(`  Pipeline: ${program.phases.length} phases (linear)`);
+    console.log("");
+    const parts: string[] = [];
+    for (let i = 0; i < program.phases.length; i++) {
+      const phase = program.phases[i];
+      const desc = phase.description ? ` — ${phase.description}` : "";
+      parts.push(`[${phase.name}${desc}]`);
+    }
+    console.log(`    ${parts.join(" ──> ")}`);
+    console.log("");
+    console.log(`    ${program.phases[0].name} ← running now`);
   }
   console.log("");
   console.log(`  Attach: tmux switch-client -t ${sessionName}`);
