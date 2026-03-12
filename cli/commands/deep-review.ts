@@ -107,8 +107,8 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     noImproveReview: opts.improveReview === false, // commander inverts --no-improve-review
     sessionName: opts.sessionName || "",
     notifyTarget: opts.notify || "",
-    workerModel: process.env.DEEP_REVIEW_WORKER_MODEL || "opus",
-    coordModel: process.env.DEEP_REVIEW_COORD_MODEL || "opus",
+    workerModel: process.env.DEEP_REVIEW_WORKER_MODEL || "sonnet",
+    coordModel: process.env.DEEP_REVIEW_COORD_MODEL || "sonnet",
   };
 
   // Default: if nothing specified, review HEAD commit

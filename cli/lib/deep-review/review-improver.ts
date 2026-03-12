@@ -70,10 +70,10 @@ export function improveReviewMd(
   const seedPath = join(ctx.sessionDir, "review-improver-seed.md");
   writeFileSync(seedPath, template);
 
-  // Run Sonnet non-interactively (120s timeout — needs to read material + produce full REVIEW.md)
+  // Run Opus non-interactively (180s timeout — needs to read material + produce full REVIEW.md)
   const result = Bun.spawnSync(
-    ["claude", "-p", "--model", "sonnet", "--dangerously-skip-permissions", readFileSync(seedPath, "utf-8")],
-    { cwd: ctx.projectRoot, stderr: "pipe", stdout: "pipe", timeout: 120_000 },
+    ["claude", "-p", "--model", "opus", "--dangerously-skip-permissions", readFileSync(seedPath, "utf-8")],
+    { cwd: ctx.projectRoot, stderr: "pipe", stdout: "pipe", timeout: 180_000 },
   );
 
   if (result.exitCode !== 0 || !existsSync(outputFile)) {

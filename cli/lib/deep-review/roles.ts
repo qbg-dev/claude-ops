@@ -41,10 +41,10 @@ export function designRoles(
   const seedPath = join(ctx.sessionDir, "role-designer-seed.md");
   writeFileSync(seedPath, template);
 
-  // Run Sonnet non-interactively (90s timeout)
+  // Run Opus non-interactively (180s timeout)
   const result = Bun.spawnSync(
-    ["claude", "-p", "--model", "sonnet", "--dangerously-skip-permissions", readFileSync(seedPath, "utf-8")],
-    { cwd: ctx.projectRoot, stderr: "pipe", stdout: "pipe", timeout: 90_000 },
+    ["claude", "-p", "--model", "opus", "--dangerously-skip-permissions", readFileSync(seedPath, "utf-8")],
+    { cwd: ctx.projectRoot, stderr: "pipe", stdout: "pipe", timeout: 180_000 },
   );
 
   if (result.exitCode !== 0 || !existsSync(rolesFile)) {
