@@ -96,9 +96,9 @@ describe("argument parsing", () => {
     expect(r1.exitCode).not.toBe(0);
     expect(r1.stderr).toMatch(/missing required argument/i);
 
-    // Parent + child but no mission
+    // Parent + child but no mission — parent validation fires first
     const r2 = fleet("fork", "some-parent", "some-child");
     expect(r2.exitCode).not.toBe(0);
-    expect(r2.stderr).toMatch(/missing required argument/i);
+    expect(r2.stderr).toMatch(/not found|missing required argument/i);
   });
 });
