@@ -2,7 +2,7 @@
 /**
  * worker-fleet MCP server — Core tools for worker fleet coordination.
  *
- * 14 tools (fundamentals only — use fleet CLI for everything else):
+ * 16 tools (fundamentals only — use fleet CLI for everything else):
  *   Mail (4):       mail_send, mail_inbox, mail_read, mail_help
  *   Lifecycle (2):  recycle, save_checkpoint
  *   State (2):      get_worker_state, update_state
