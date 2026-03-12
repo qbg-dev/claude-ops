@@ -1,11 +1,31 @@
 /**
- * Material collection: git diff generation, content file reading, auto-skip.
+ * Material collection: git diff generation, content file reading, codebase scanning, auto-skip.
  */
-import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { DeepReviewConfig, MaterialResult } from "./types";
 
 const HOME = process.env.HOME || "/tmp";
+
+/** Default ignore patterns for codebase scanning (beyond .gitignore) */
+const CODEBASE_IGNORE_DIRS = new Set([
+  "node_modules", "dist", "build", ".git", ".next", ".nuxt", ".cache",
+  ".turbo", "coverage", "__pycache__", ".mypy_cache", ".pytest_cache",
+  "vendor", "target", ".gradle", ".idea", ".vscode", ".claude",
+]);
+
+/** Source file extensions to include in codebase scans */
+const SOURCE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+  ".py", ".rs", ".go", ".java", ".kt", ".swift",
+  ".c", ".cpp", ".h", ".hpp", ".cs",
+  ".rb", ".php", ".lua", ".sh", ".bash", ".zsh",
+  ".sql", ".graphql", ".gql",
+  ".html", ".css", ".scss", ".less", ".svelte", ".vue",
+  ".json", ".yaml", ".yml", ".toml", ".xml",
+  ".md", ".mdx",
+  ".Dockerfile", ".dockerfile",
+]);
 
 /** Generate git diff based on scope type */
 function generateDiff(scope: string, sessionDir: string, projectRoot: string): { lines: number; descPart: string } {
@@ -81,8 +101,146 @@ function generateDiff(scope: string, sessionDir: string, projectRoot: string): {
   return { lines: showResult.stdout.toString().split("\n").length, descPart: `commit ${scope}` };
 }
 
+/**
+ * Gather all tracked source files in the project, respecting .gitignore.
+ * Returns files grouped by top-level directory (module).
+ */
+function gatherCodebaseFiles(projectRoot: string): Map<string, string[]> {
+  // Use git ls-files for .gitignore-aware listing
+  const result = Bun.spawnSync(
+    ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+    { cwd: projectRoot, stderr: "pipe" },
+  );
+  const allFiles = result.stdout.toString().trim().split("\n").filter(Boolean);
+
+  const moduleMap = new Map<string, string[]>();
+
+  for (const file of allFiles) {
+    // Skip files in ignored directories
+    const parts = file.split("/");
+    if (parts.some(p => CODEBASE_IGNORE_DIRS.has(p))) continue;
+
+    // Skip non-source files (binary, lockfiles, etc.)
+    const ext = "." + file.split(".").pop()!;
+    const baseName = basename(file);
+    if (
+      !SOURCE_EXTENSIONS.has(ext) &&
+      !baseName.startsWith(".") &&
+      baseName !== "Dockerfile" &&
+      baseName !== "Makefile" &&
+      baseName !== "Rakefile" &&
+      baseName !== "Gemfile"
+    ) continue;
+
+    // Skip lockfiles
+    const lockfileNames = new Set([
+      "bun.lock", "bun.lockb", "package-lock.json", "yarn.lock",
+      "pnpm-lock.yaml", "Cargo.lock", "Gemfile.lock", "poetry.lock", "composer.lock",
+    ]);
+    if (lockfileNames.has(baseName)) continue;
+
+    // Group by top-level directory (module)
+    const topDir = parts.length > 1 ? parts[0] : ".";
+    if (!moduleMap.has(topDir)) moduleMap.set(topDir, []);
+    moduleMap.get(topDir)!.push(file);
+  }
+
+  return moduleMap;
+}
+
+/**
+ * Collect codebase material — scans all source files, chunks by module.
+ * Each module chunk becomes a separate material file for parallel review.
+ */
+export function collectCodebaseMaterial(
+  config: DeepReviewConfig,
+  sessionDir: string,
+  projectRoot: string,
+): MaterialResult {
+  console.log("Scanning codebase...");
+  const moduleMap = gatherCodebaseFiles(projectRoot);
+
+  if (moduleMap.size === 0) {
+    throw new Error("No source files found in codebase");
+  }
+
+  // Build the full material file (all modules concatenated)
+  const materialFile = join(sessionDir, "material-full.txt");
+  const allFiles: string[] = [];
+  const moduleChunksDir = join(sessionDir, "chunks");
+  mkdirSync(moduleChunksDir, { recursive: true });
+
+  // Sort modules by file count (largest first) for better work distribution
+  const sortedModules = [...moduleMap.entries()].sort((a, b) => b[1].length - a[1].length);
+
+  let totalLines = 0;
+  const moduleStats: { name: string; files: number; lines: number }[] = [];
+
+  for (const [moduleName, files] of sortedModules) {
+    const chunkFile = join(moduleChunksDir, `${moduleName.replace(/\//g, "__")}.txt`);
+    let chunkContent = "";
+
+    for (const file of files) {
+      const fullPath = join(projectRoot, file);
+      if (!existsSync(fullPath)) continue;
+
+      try {
+        const content = readFileSync(fullPath, "utf-8");
+        // Skip very large files (>10K lines) — likely generated
+        const lineCount = content.split("\n").length;
+        if (lineCount > 10_000) {
+          console.log(`  Skipping ${file} (${lineCount} lines — likely generated)`);
+          continue;
+        }
+
+        const header = `═══ FILE: ${file} ═══\n`;
+        const fileBlock = header + content + "\n\n";
+        appendFileSync(materialFile, fileBlock);
+        chunkContent += fileBlock;
+        allFiles.push(file);
+        totalLines += lineCount;
+      } catch {
+        // Skip files that can't be read (binary, permission issues)
+      }
+    }
+
+    if (chunkContent) {
+      writeFileSync(chunkFile, chunkContent);
+      moduleStats.push({ name: moduleName, files: files.length, lines: chunkContent.split("\n").length });
+    }
+  }
+
+  // Write module index for workers
+  const indexContent = moduleStats
+    .map(m => `${m.name}: ${m.files} files, ${m.lines} lines`)
+    .join("\n");
+  writeFileSync(join(sessionDir, "module-index.txt"), indexContent);
+
+  console.log(`  Modules: ${moduleStats.length}`);
+  for (const m of moduleStats) {
+    console.log(`    ${m.name}: ${m.files} files, ${m.lines} lines`);
+  }
+  console.log(`  Total: ${allFiles.length} files, ${totalLines} lines`);
+
+  return {
+    hasDiff: false,
+    hasContent: false,
+    materialType: "code_listing",
+    materialFile,
+    materialTypesStr: "codebase",
+    diffDesc: `full codebase (${allFiles.length} files, ${moduleStats.length} modules)`,
+    diffLines: totalLines,
+    changedFiles: allFiles,
+  };
+}
+
 /** Collect all material (additive: diff + content files) */
 export function collectMaterial(config: DeepReviewConfig, sessionDir: string, projectRoot: string): MaterialResult {
+  // Codebase mode: scan all source files instead of generating diffs
+  if (config.scope === "codebase") {
+    return collectCodebaseMaterial(config, sessionDir, projectRoot);
+  }
+
   const hasDiff = !!config.scope;
   const hasContent = config.contentFiles.length > 0;
   const materialFile = join(sessionDir, "material-full.txt");
@@ -172,6 +330,8 @@ export function collectMaterial(config: DeepReviewConfig, sessionDir: string, pr
 
 /** Check if material should be auto-skipped */
 export function shouldAutoSkip(material: MaterialResult, config: DeepReviewConfig): string | null {
+  // Never auto-skip codebase scans or code listings
+  if (config.scope === "codebase" || material.materialType === "code_listing") return null;
   if (config.force || !material.hasDiff || material.hasContent) return null;
 
   const content = readFileSync(material.materialFile, "utf-8");

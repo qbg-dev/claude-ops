@@ -15,7 +15,7 @@ import { fail } from "../lib/fmt";
 import { resolveProjectRoot } from "../lib/paths";
 import { runPipeline } from "./pipeline";
 // V1-only imports
-import { DEFAULT_DIFF_FOCUS, DEFAULT_CONTENT_FOCUS, DEFAULT_MIXED_FOCUS } from "../lib/deep-review/args";
+import { DEFAULT_DIFF_FOCUS, DEFAULT_CONTENT_FOCUS, DEFAULT_MIXED_FOCUS, DEFAULT_CODEBASE_FOCUS } from "../lib/deep-review/args";
 import { collectMaterial, shouldAutoSkip } from "../lib/deep-review/material";
 import { runContextPrePass } from "../lib/deep-review/context";
 import {
@@ -41,7 +41,7 @@ export function register(program: Command): void {
     .command("deep-review")
     .alias("dr")
     .description("Launch a multi-pass deep review pipeline")
-    .option("--scope <scope>", "Git diff scope (branch, SHA, uncommitted, pr:N, HEAD)")
+    .option("--scope <scope>", "Git diff scope (branch, SHA, uncommitted, pr:N, HEAD, codebase)")
     .option("--content <files>", "File path(s) to review, comma-separated")
     .option("--spec <text>", "What to review for (guides all workers)")
     .option("--passes <n>", "Passes per focus area (default: 2)", "2")
@@ -141,12 +141,15 @@ async function runV1DeepReview(opts: Record<string, any>): Promise<void> {
     config.scope = "HEAD";
   }
 
-  const hasDiff = !!config.scope;
+  const isCodebase = config.scope === "codebase";
+  const hasDiff = !!config.scope && !isCodebase;
   const hasContent = config.contentFiles.length > 0;
 
   // Resolve focus areas
   if (config.customFocus) {
     config.focusAreas = config.customFocus.split(",").map((s) => s.trim());
+  } else if (isCodebase) {
+    config.focusAreas = [...DEFAULT_CODEBASE_FOCUS];
   } else if (hasDiff && hasContent) {
     config.focusAreas = [...DEFAULT_MIXED_FOCUS];
   } else if (hasContent) {
@@ -196,7 +199,10 @@ async function runV1DeepReview(opts: Record<string, any>): Promise<void> {
   } else {
     const worktreeName = basename(projectRoot).replace(/^Wechat-w-/, "").replace(/^Wechat$/, "main");
 
-    if (hasContent && !hasDiff) {
+    if (isCodebase) {
+      const codebaseHash = hashStr(projectRoot + Date.now().toString()).slice(0, 8);
+      reviewSession = `dr-${worktreeName}-codebase-${codebaseHash}`;
+    } else if (hasContent && !hasDiff) {
       const firstFile = config.contentFiles[0];
       const fileBase = basename(firstFile)
         .replace(/\.[^.]*$/, "")
@@ -293,7 +299,11 @@ async function runV1DeepReview(opts: Record<string, any>): Promise<void> {
   }
 
   if (!config.spec) {
-    config.spec = "Review this material thoroughly for issues, gaps, and improvements.";
+    if (isCodebase) {
+      config.spec = "Perform a comprehensive quality review of this codebase. Look for bugs, security issues, architectural problems, error handling gaps, and opportunities for improvement.";
+    } else {
+      config.spec = "Review this material thoroughly for issues, gaps, and improvements.";
+    }
   }
 
   // Run V1 pipeline

@@ -27,7 +27,7 @@ export interface DeepReviewConfig {
 export interface MaterialResult {
   hasDiff: boolean;
   hasContent: boolean;
-  materialType: "code_diff" | "document" | "config" | "mixed";
+  materialType: "code_diff" | "code_listing" | "document" | "config" | "mixed";
   materialFile: string;
   materialTypesStr: string;
   diffDesc: string;

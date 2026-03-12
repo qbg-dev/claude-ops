@@ -296,10 +296,16 @@ function buildProgramOpts(
   projectRoot: string,
 ): Record<string, any> {
   if (programName === "deep-review") {
+    const scope = opts.scope || "HEAD";
+    const isCodebase = scope === "codebase";
+    const defaultSpec = isCodebase
+      ? "Perform a comprehensive quality review of this codebase. Look for bugs, security issues, architectural problems, error handling gaps, and opportunities for improvement."
+      : "Review this material thoroughly for issues, gaps, and improvements.";
+
     return {
-      scope: opts.scope || "HEAD",
+      scope,
       contentFiles: opts.content ? opts.content.split(",").map((s: string) => s.trim()) : [],
-      spec: opts.spec || "Review this material thoroughly for issues, gaps, and improvements.",
+      spec: opts.spec || defaultSpec,
       passesPerFocus: parseInt(opts.passes, 10) || 2,
       focusAreas: opts.focus ? opts.focus.split(",").map((s: string) => s.trim()) : [],
       maxWorkers: opts.maxWorkers ? parseInt(opts.maxWorkers, 10) : null,
@@ -346,6 +352,12 @@ function buildSessionName(
 ): string {
   const worktreeName = basename(projectRoot).replace(/^Wechat-w-/, "").replace(/^Wechat$/, "main");
   const scope = opts.scope || "HEAD";
+
+  // Codebase mode: use a deterministic hash instead of git ref
+  if (scope === "codebase") {
+    const codebaseHash = hashStr(projectRoot + Date.now().toString()).slice(0, 8);
+    return `${programName.slice(0, 3)}-${worktreeName}-codebase-${codebaseHash}`.slice(0, 50);
+  }
 
   let resolvedRef = scope;
   if (scope === "uncommitted") {

@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Program, AgentSpec, ProgramPipelineState, ProgramDefaults } from "../engine/program/types";
+import { DEFAULT_CODEBASE_FOCUS } from "../cli/lib/deep-review/args";
 
 export interface DeepReviewOpts {
   scope: string;
@@ -298,9 +299,13 @@ export function parse_review_improver_output(state: ProgramPipelineState): void 
 
 function defaultWorkers(opts: DeepReviewOpts): AgentSpec[] {
   const model = opts.workerModel || "sonnet";
+  const isCodebase = opts.scope === "codebase";
+  const defaultFocus = isCodebase
+    ? [...DEFAULT_CODEBASE_FOCUS]
+    : ["security", "logic", "error-handling", "data-integrity", "performance", "architecture"];
   const focusAreas = opts.focusAreas.length > 0
     ? opts.focusAreas
-    : ["security", "logic", "error-handling", "data-integrity", "performance", "architecture"];
+    : defaultFocus;
 
   const agents: AgentSpec[] = [];
   let workerNum = 1;

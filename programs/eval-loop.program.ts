@@ -1,21 +1,23 @@
 /**
- * Eval Loop Program — cyclic pipeline with convergence.
+ * Eval Loop Program — cyclic pipeline with convergence (graph-native).
  *
- * 2 phases that cycle:
- *   Phase 0: generator — produces test scenarios + runs them
- *   Phase 1: evaluator — scores results, writes score.txt
- *   Phase 1 cycles back to Phase 0 until score >= threshold or maxIterations.
+ * 2 nodes that cycle:
+ *   generate: produces test scenarios + runs them
+ *   evaluate: scores results, writes score.txt
+ *   evaluate cycles back to generate until score >= threshold or maxIterations.
  *
  * Demonstrates:
- *   - phase.next (cycle back to earlier phase)
- *   - phase.convergence (stop condition + safety valve)
- *   - cycleCount tracking in pipeline state
+ *   - graph() builder with conditional back-edges
+ *   - maxIterations safety valve on back-edges
+ *   - $end sentinel for pipeline completion
+ *   - prelaunch actions on nodes
  *
  * Usage:
  *   fleet pipeline eval-loop --scope HEAD --spec "test the BI dashboard queries"
  *   fleet pipeline eval-loop --dry-run
  */
 import type { Program } from "../engine/program/types";
+import { graph } from "../engine/program/graph";
 
 export interface EvalLoopOpts {
   scope?: string;
@@ -30,54 +32,65 @@ export default function evalLoop(opts: EvalLoopOpts): Program {
   const threshold = opts.threshold || 80;
   const maxIter = opts.maxIterations || 5;
 
-  return {
-    name: "eval-loop",
-    description: `Iterative test-evaluate loop (converge at score >= ${threshold}, max ${maxIter} cycles)`,
-    phases: [
-      // ── Phase 0: Generator ────────────────────────────────
-      {
-        name: "generate",
-        description: "Produce test scenarios and run them",
-        agents: [{
-          name: "generator",
-          role: "generator",
-          model: "sonnet",
-          seed: { inline: generatorSeed(opts, threshold) },
-          window: "generate",
-        }],
-      },
-
-      // ── Phase 1: Evaluator (cycles back to Phase 0) ──────
-      {
-        name: "evaluate",
-        description: `Score results, cycle back if score < ${threshold}`,
-        agents: [{
-          name: "evaluator",
-          role: "evaluator",
-          model: "opus",
-          seed: { inline: evaluatorSeed(opts, threshold) },
-          window: "evaluate",
-        }],
-        // Cycle back to Phase 0 on Stop (unless converged)
-        next: 0,
-        convergence: {
-          check: `test $(cat "{{SESSION_DIR}}/score.txt" 2>/dev/null || echo 0) -ge ${threshold}`,
-          maxIterations: maxIter,
-        },
-        prelaunch: [
-          { type: "parse-output", agent: "generator", file: "test-results.json" },
-        ],
-      },
-    ],
-    defaults: {
+  const g = graph(
+    "eval-loop",
+    `Iterative test-evaluate loop (converge at score >= ${threshold}, max ${maxIter} cycles)`,
+  )
+    .node("generate", {
+      description: "Produce test scenarios and run them",
+      agents: [{
+        name: "generator",
+        role: "generator",
+        model: "sonnet",
+        seed: { inline: generatorSeed(opts, threshold) },
+        window: "generate",
+      }],
+    })
+    .node("evaluate", {
+      description: `Score results, cycle back if score < ${threshold}`,
+      agents: [{
+        name: "evaluator",
+        role: "evaluator",
+        model: "opus",
+        seed: { inline: evaluatorSeed(opts, threshold) },
+        window: "evaluate",
+      }],
+      prelaunch: [
+        { type: "parse-output", agent: "generator", file: "test-results.json" },
+      ],
+    })
+    // generate -> evaluate (always)
+    .edge("generate", "evaluate")
+    // evaluate -> generate (cycle back if score below threshold)
+    .edge("evaluate", "generate", {
+      condition: `test $(cat "{{SESSION_DIR}}/score.txt" 2>/dev/null || echo 0) -lt ${threshold}`,
+      maxIterations: maxIter,
+      label: "score below threshold",
+    })
+    // evaluate -> $end (converged)
+    .edge("evaluate", "$end", {
+      label: "converged",
+      priority: 1,
+    })
+    .defaults({
       model: "sonnet",
       effort: "high",
       permission: "bypassPermissions",
-    },
-    material: {
+    })
+    .material({
       scope: opts.scope,
       spec: opts.spec || "Iterative evaluation of test scenarios.",
-    },
+    })
+    .build();
+
+  // Return Program with graph attached (compiler uses graph path)
+  return {
+    name: g.name,
+    description: g.description,
+    phases: [], // empty — graph is the source of truth
+    defaults: g.defaults,
+    material: g.material,
+    graph: g,
   };
 }
 
@@ -97,7 +110,7 @@ Target score: ${threshold}/100. You may be re-run multiple times with feedback.
 3. Execute each test scenario and record pass/fail + details
 4. Write results to {{SESSION_DIR}}/test-results.json as:
    {
-     "cycle": <number from SESSION_DIR/cycle-1.count or 0>,
+     "cycle": <number from SESSION_DIR/cycle-evaluate-to-generate.count or 0>,
      "scenarios": [
        { "name": "...", "description": "...", "passed": bool, "details": "..." }
      ],

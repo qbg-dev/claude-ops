@@ -66,3 +66,12 @@ export const DEFAULT_MIXED_FOCUS = [
   "feasibility",
   "risks",
 ];
+
+export const DEFAULT_CODEBASE_FOCUS = [
+  "security",
+  "architecture",
+  "error-handling",
+  "data-integrity",
+  "performance",
+  "completeness",
+];
