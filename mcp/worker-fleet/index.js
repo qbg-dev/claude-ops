@@ -6551,8 +6551,8 @@ var init_types = __esm(() => {
 });
 
 // cli/lib/paths.ts
-import { join as join12 } from "path";
-import { existsSync as existsSync9, readFileSync as readFileSync9 } from "fs";
+import { join as join11 } from "path";
+import { existsSync as existsSync9, readFileSync as readFileSync8 } from "fs";
 function resolveMailConfig() {
   const envUrl = process.env.FLEET_MAIL_URL || null;
   const envToken = process.env.FLEET_MAIL_TOKEN || null;
@@ -6561,7 +6561,7 @@ function resolveMailConfig() {
   const dp = defaultsPath();
   if (existsSync9(dp)) {
     try {
-      const d = JSON.parse(readFileSync9(dp, "utf-8"));
+      const d = JSON.parse(readFileSync8(dp, "utf-8"));
       if (d.fleet_mail_url)
         fileUrl = String(d.fleet_mail_url);
       if (d.fleet_mail_token)
@@ -6574,41 +6574,49 @@ function resolveMailConfig() {
   };
 }
 function workerDir(project, name) {
-  return join12(FLEET_DATA, project, name);
+  return join11(FLEET_DATA, project, name);
 }
 function configPath(project, name) {
-  return join12(workerDir(project, name), "config.json");
+  return join11(workerDir(project, name), "config.json");
 }
 function defaultsPath() {
-  return join12(FLEET_DATA, "defaults.json");
+  return join11(FLEET_DATA, "defaults.json");
 }
-var HOME2, FLEET_DIR2, FLEET_DATA, _mailConfig, FLEET_MAIL_URL2, FLEET_MAIL_TOKEN;
+var HOME3, FLEET_DIR2, FLEET_DATA, _mailConfig, FLEET_MAIL_URL2, FLEET_MAIL_TOKEN;
 var init_paths = __esm(() => {
-  HOME2 = process.env.HOME || process.env.USERPROFILE || "/tmp";
-  FLEET_DIR2 = process.env.CLAUDE_FLEET_DIR || process.env.CLAUDE_FLEET_DIR || join12(HOME2, ".claude-fleet");
-  FLEET_DATA = join12(HOME2, ".claude", "fleet");
+  HOME3 = process.env.HOME || process.env.USERPROFILE || "/tmp";
+  FLEET_DIR2 = process.env.CLAUDE_FLEET_DIR || join11(HOME3, ".claude-fleet");
+  FLEET_DATA = join11(HOME3, ".claude", "fleet");
   _mailConfig = resolveMailConfig();
   FLEET_MAIL_URL2 = _mailConfig.url;
   FLEET_MAIL_TOKEN = _mailConfig.token;
 });
 
 // shared/io.ts
-import { readFileSync as readFileSync10, writeFileSync as writeFileSync8, mkdirSync as mkdirSync8 } from "fs";
-import { dirname, join as join13 } from "path";
+var exports_io = {};
+__export(exports_io, {
+  writeJsonLocked: () => writeJsonLocked,
+  writeJson: () => writeJson,
+  updateJsonLocked: () => updateJsonLocked,
+  readJson: () => readJson,
+  REGISTRY_LOCK_PATH: () => REGISTRY_LOCK_PATH
+});
+import { readFileSync as readFileSync9, writeFileSync as writeFileSync9, mkdirSync as mkdirSync9 } from "fs";
+import { dirname, join as join12 } from "path";
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync10(path, "utf-8"));
+    return JSON.parse(readFileSync9(path, "utf-8"));
   } catch {
     return null;
   }
 }
 function writeJson(path, data) {
-  mkdirSync8(dirname(path), { recursive: true });
-  writeFileSync8(path, JSON.stringify(data, null, 2) + `
+  mkdirSync9(dirname(path), { recursive: true });
+  writeFileSync9(path, JSON.stringify(data, null, 2) + `
 `);
 }
 function writeJsonLocked(path, data) {
-  mkdirSync8(dirname(REGISTRY_LOCK_PATH), { recursive: true });
+  mkdirSync9(dirname(REGISTRY_LOCK_PATH), { recursive: true });
   if (!acquireLock(REGISTRY_LOCK_PATH)) {
     throw new Error("Could not acquire worker-registry lock after 10s \u2014 stale lock?");
   }
@@ -6618,12 +6626,26 @@ function writeJsonLocked(path, data) {
     releaseLock(REGISTRY_LOCK_PATH);
   }
 }
-var HOME3, FLEET_ROOT, REGISTRY_LOCK_PATH;
+function updateJsonLocked(path, updater) {
+  mkdirSync9(dirname(REGISTRY_LOCK_PATH), { recursive: true });
+  if (!acquireLock(REGISTRY_LOCK_PATH)) {
+    throw new Error("Could not acquire worker-registry lock after 10s \u2014 stale lock?");
+  }
+  try {
+    const current = readJson(path);
+    const updated = updater(current);
+    writeJson(path, updated);
+    return updated;
+  } finally {
+    releaseLock(REGISTRY_LOCK_PATH);
+  }
+}
+var HOME4, FLEET_ROOT, REGISTRY_LOCK_PATH;
 var init_io = __esm(() => {
   init_lock_utils();
-  HOME3 = process.env.HOME || process.env.USERPROFILE || "/tmp";
-  FLEET_ROOT = process.env.CLAUDE_FLEET_DIR || process.env.CLAUDE_FLEET_DIR || join13(HOME3, ".claude-fleet");
-  REGISTRY_LOCK_PATH = join13(FLEET_ROOT, "state", "locks", "worker-registry");
+  HOME4 = process.env.HOME || process.env.USERPROFILE || "/tmp";
+  FLEET_ROOT = process.env.CLAUDE_FLEET_DIR || join12(HOME4, ".claude-fleet");
+  REGISTRY_LOCK_PATH = join12(FLEET_ROOT, "state", "locks", "worker-registry");
 });
 
 // cli/lib/config.ts
@@ -6750,11 +6772,11 @@ async function waitForPrompt(paneId, timeoutMs = 60000) {
   return false;
 }
 function pasteBuffer(paneId, content) {
-  const { writeFileSync: writeFileSync9, unlinkSync: unlinkSync2 } = __require("fs");
+  const { writeFileSync: writeFileSync10, unlinkSync: unlinkSync2 } = __require("fs");
   const MAX_CHUNK = 8 * 1024;
   if (content.length > MAX_CHUNK) {
     const tmpFile2 = `/tmp/fleet-paste-${process.pid}.txt`;
-    writeFileSync9(tmpFile2, content);
+    writeFileSync10(tmpFile2, content);
     try {
       const bufName = `fleet-${process.pid}`;
       run(["delete-buffer", "-b", bufName]);
@@ -6772,7 +6794,7 @@ function pasteBuffer(paneId, content) {
     }
   }
   const tmpFile = `/tmp/fleet-paste-${process.pid}.txt`;
-  writeFileSync9(tmpFile, content);
+  writeFileSync10(tmpFile, content);
   try {
     const bufName = `fleet-${process.pid}`;
     run(["delete-buffer", "-b", bufName]);
@@ -7291,8 +7313,8 @@ var exports_launch = {};
 __export(exports_launch, {
   launchInTmux: () => launchInTmux
 });
-import { readFileSync as readFileSync11, writeFileSync as writeFileSync9, existsSync as existsSync10, copyFileSync as copyFileSync2, mkdirSync as mkdirSync9 } from "fs";
-import { join as join14 } from "path";
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync10, existsSync as existsSync10, copyFileSync as copyFileSync3, mkdirSync as mkdirSync10 } from "fs";
+import { join as join13 } from "path";
 async function launchInTmux(name, project, session, window, windowIndex, options) {
   const dir = workerDir(project, name);
   const config2 = getConfig(project, name);
@@ -7307,8 +7329,8 @@ async function launchInTmux(name, project, session, window, windowIndex, options
   info(`Launching in tmux (session: ${session}, window: ${window}, runtime: ${runtime})`);
   const projectRoot = resolveProjectRootFromWorktree(worktree);
   if (projectRoot && projectRoot !== worktree) {
-    const mcpSrc = join14(projectRoot, ".mcp.json");
-    const mcpDst = join14(worktree, ".mcp.json");
+    const mcpSrc = join13(projectRoot, ".mcp.json");
+    const mcpDst = join13(worktree, ".mcp.json");
     if (existsSync10(mcpSrc)) {
       try {
         const { unlinkSync: unlinkSync2, symlinkSync: symlinkSync3 } = __require("fs");
@@ -7331,6 +7353,14 @@ async function launchInTmux(name, project, session, window, windowIndex, options
     paneId = createWindow(session, window, worktree, windowIndex);
   }
   setPaneTitle(paneId, name);
+  try {
+    const { readJson: readJsonImport } = await Promise.resolve().then(() => (init_io(), exports_io));
+    const fleetJsonPath2 = join13(FLEET_DATA, project, "fleet.json");
+    const fleetJson = readJsonImport(fleetJsonPath2);
+    if (fleetJson?.layouts?.[window]) {
+      Bun.spawnSync(["tmux", "select-layout", "-t", `${session}:${window}`, fleetJson.layouts[window]], { stderr: "pipe" });
+    }
+  } catch {}
   if (createdSession) {
     sendKeys(paneId, `cd "${worktree}"`);
     sendEnter(paneId);
@@ -7399,7 +7429,7 @@ async function launchInTmux(name, project, session, window, windowIndex, options
   if (oldSessionId) {
     pastSessions = [oldSessionId, ...pastSessions].slice(0, 10);
   }
-  writeJsonLocked(join14(dir, "state.json"), {
+  writeJsonLocked(join13(dir, "state.json"), {
     status: "active",
     pane_id: paneId,
     pane_target: paneTarget,
@@ -7422,18 +7452,18 @@ function installWorktreeGitHooks(worktree, projectRoot) {
     const gitDir = result.exitCode === 0 ? result.stdout.toString().trim() : null;
     if (!gitDir)
       return;
-    const hooksDir = join14(gitDir, "hooks");
-    mkdirSync9(hooksDir, { recursive: true });
+    const hooksDir = join13(gitDir, "hooks");
+    mkdirSync10(hooksDir, { recursive: true });
     const hookNames = ["commit-msg", "post-commit"];
     for (const hookName of hookNames) {
-      let src = projectRoot ? join14(projectRoot, `.claude/scripts/worker-${hookName}-hook.sh`) : "";
+      let src = projectRoot ? join13(projectRoot, `.claude/scripts/worker-${hookName}-hook.sh`) : "";
       if (!src || !existsSync10(src)) {
-        src = join14(FLEET_DIR2, `scripts/worker-${hookName}-hook.sh`);
+        src = join13(FLEET_DIR2, `scripts/worker-${hookName}-hook.sh`);
       }
       if (existsSync10(src)) {
-        const dst = join14(hooksDir, hookName);
+        const dst = join13(hooksDir, hookName);
         if (!existsSync10(dst)) {
-          copyFileSync2(src, dst);
+          copyFileSync3(src, dst);
           Bun.spawnSync(["chmod", "+x", dst]);
         }
       }
@@ -7452,14 +7482,14 @@ function resolveProjectRootFromWorktree(worktree) {
   }
 }
 function updateRegistry(name, project, paneId, paneTarget, session) {
-  const registryPath = join14(FLEET_DATA, project, "registry.json");
+  const registryPath = join13(FLEET_DATA, project, "registry.json");
   if (!existsSync10(registryPath))
     return;
   const config2 = getConfig(project, name);
   if (!config2)
     return;
   try {
-    const registry2 = JSON.parse(readFileSync11(registryPath, "utf-8"));
+    const registry2 = JSON.parse(readFileSync10(registryPath, "utf-8"));
     registry2[name] = {
       ...registry2[name] || {},
       pane_id: paneId,
@@ -7472,7 +7502,7 @@ function updateRegistry(name, project, paneId, paneTarget, session) {
       permission_mode: config2.permission_mode,
       status: "active"
     };
-    writeFileSync9(registryPath, JSON.stringify(registry2, null, 2) + `
+    writeFileSync10(registryPath, JSON.stringify(registry2, null, 2) + `
 `);
   } catch {}
 }
@@ -20448,7 +20478,7 @@ import { execSync } from "child_process";
 import { join, basename } from "path";
 var HOME = process.env.HOME;
 var PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
-var CLAUDE_FLEET = process.env.TMUX_AGENTS_DIR || process.env.CLAUDE_FLEET_DIR || join(HOME, ".tmux-agents");
+var CLAUDE_FLEET = process.env.CLAUDE_FLEET_DIR || join(HOME, ".claude-fleet");
 var WORKERS_DIR = join(PROJECT_ROOT, ".claude/workers");
 function _setWorkersDir(dir) {
   WORKERS_DIR = dir;
@@ -21325,12 +21355,17 @@ function refreshFleetMailUnread() {
       _fleetMailUnreadCount = data?._diagnostics?.unread_count || data?.messages?.length || 0;
   }).catch(() => {});
 }
+var _cachedToken = null;
 async function getFleetMailToken() {
+  if (_cachedToken)
+    return _cachedToken;
   const tokenPath = join5(FLEET_DIR, WORKER_NAME, "token");
   try {
     const token2 = readFileSync4(tokenPath, "utf-8").trim();
-    if (token2)
+    if (token2) {
+      _cachedToken = token2;
       return token2;
+    }
   } catch {}
   const entry = getWorkerEntry(WORKER_NAME);
   if (entry?.bms_token) {
@@ -21338,6 +21373,7 @@ async function getFleetMailToken() {
       mkdirSync5(join5(FLEET_DIR, WORKER_NAME), { recursive: true });
       writeFileSync4(tokenPath, entry.bms_token);
     } catch {}
+    _cachedToken = entry.bms_token;
     return entry.bms_token;
   }
   const nsName = mailAccountName(WORKER_NAME);
@@ -21386,29 +21422,51 @@ async function getFleetMailToken() {
   } catch (e) {
     console.error(`[getFleetMailToken] WARN: Failed to persist bms_token for ${WORKER_NAME} to registry.json: ${e}`);
   }
+  _cachedToken = token;
   return token;
+}
+async function withRetry(fn, context, maxRetries = 3) {
+  for (let attempt = 0;attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err.status ?? err.statusCode;
+      const isTransient = typeof status === "number" && status >= 500 || err.code === "ECONNREFUSED" || err.code === "UND_ERR_CONNECT_TIMEOUT" || err.code === "ETIMEDOUT" || err.name === "TimeoutError" || err.message?.includes("timeout") || err.message?.includes("abort");
+      if (!isTransient || attempt === maxRetries)
+        throw err;
+      const delay = 2000 * Math.pow(2, attempt);
+      console.error(`[mail-client] ${context} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${err.message ?? err}. Retrying in ${delay / 1000}s...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("unreachable");
 }
 async function fleetMailRequest(method, path, body) {
   const token = await getFleetMailToken();
   const url = `${FLEET_MAIL_URL}${path}`;
-  const opts = {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...body ? { "Content-Type": "application/json" } : {}
-    },
-    ...body ? { body: JSON.stringify(body) } : {}
-  };
-  const resp = await fetch(url, opts);
-  const text = await resp.text();
-  if (!resp.ok) {
-    throw new Error(`Fleet Mail ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+  return withRetry(async () => {
+    const opts = {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...body ? { "Content-Type": "application/json" } : {}
+      },
+      ...body ? { body: JSON.stringify(body) } : {},
+      signal: AbortSignal.timeout(15000)
+    };
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
+    if (!resp.ok) {
+      const err = new Error(`Fleet Mail ${method} ${path} failed (${resp.status}): ${text.slice(0, 500)}`);
+      err.status = resp.status;
+      throw err;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }, `${method} ${path}`);
 }
 function stripMailNamespaceFromResult(data) {
   if (!data || typeof data !== "object")
@@ -21446,7 +21504,8 @@ async function resolveFleetMailAccountId(name) {
   if (!_fleetMailDirectoryCache || now - _fleetMailDirCacheTime > FLEET_MAIL_DIR_CACHE_TTL) {
     const token = await getFleetMailToken();
     const resp = await fetch(`${FLEET_MAIL_URL}/api/directory`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(1e4)
     });
     if (resp.ok) {
       const data = await resp.json();
@@ -21485,9 +21544,18 @@ async function resolveFleetMailAccountId(name) {
         return nsUserName;
       }
       if (provResp.status === 409) {
+        if (resolveFleetMailAccountId._retrying) {
+          delete resolveFleetMailAccountId._retrying;
+          throw new Error(`Fleet Mail account '${nsName}' exists but cannot be resolved after retry`);
+        }
+        resolveFleetMailAccountId._retrying = true;
         _fleetMailDirectoryCache = null;
         _fleetMailDirCacheTime = 0;
-        return resolveFleetMailAccountId(name);
+        try {
+          return await resolveFleetMailAccountId(name);
+        } finally {
+          delete resolveFleetMailAccountId._retrying;
+        }
       }
     } catch {}
   }
@@ -21851,7 +21919,7 @@ ${new Date().toISOString()}
           channel: "worker-fleet-mcp",
           updated_by: WORKER_NAME
         });
-        execSync5(`source "${CLAUDE_FLEET}/lib/event-bus.sh" && bus_publish "agent.state-changed" '${payload.replace(/'/g, "'\\''")}'`, { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash" });
+        execSync5(`source "${CLAUDE_FLEET}/lib/event-bus.sh" && bus_publish "agent.state-changed" "$BUS_PAYLOAD"`, { cwd: PROJECT_ROOT, timeout: 5000, encoding: "utf-8", shell: "/bin/bash", env: { ...process.env, BUS_PAYLOAD: payload } });
       } catch {}
       const prefix = targetName !== WORKER_NAME ? `${targetName}.` : "state.";
       return withLint({ content: [{ type: "text", text: `Updated ${prefix}${key} = ${JSON.stringify(value)}` }] });
@@ -21862,74 +21930,249 @@ ${new Date().toISOString()}
 }
 
 // mcp/worker-fleet/tools/hooks.ts
-import { readFileSync as readFileSync7 } from "fs";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync7, existsSync as existsSync7, mkdirSync as mkdirSync8 } from "fs";
 import { join as join9 } from "path";
 
 // mcp/worker-fleet/hooks.ts
-import { readFileSync as readFileSync6, writeFileSync as writeFileSync6, existsSync as existsSync6, mkdirSync as mkdirSync7, rmSync as rmSync3 } from "fs";
-import { join as join8 } from "path";
+import { readFileSync as readFileSync6, writeFileSync as writeFileSync6, existsSync as existsSync6, mkdirSync as mkdirSync7, rmSync as rmSync3, copyFileSync as copyFileSync2 } from "fs";
+import { join as join8, resolve } from "path";
 var dynamicHooks = new Map;
 var _hookCounter = 0;
 function _incrementHookCounter() {
   return ++_hookCounter;
 }
-var HOOKS_DIR = process.env.CLAUDE_HOOKS_DIR || join8(HOME, ".claude/ops/hooks/dynamic");
+function resolveHooksDir() {
+  const fleetHooksDir = join8(FLEET_DIR, WORKER_NAME, "hooks");
+  if (existsSync6(join8(FLEET_DIR, WORKER_NAME))) {
+    return fleetHooksDir;
+  }
+  const legacyDir = process.env.CLAUDE_HOOKS_DIR || join8(HOME, ".claude/ops/hooks/dynamic");
+  return legacyDir;
+}
+var HOOKS_DIR = resolveHooksDir();
 try {
   mkdirSync7(HOOKS_DIR, { recursive: true });
 } catch {}
-var HOOKS_FILE = join8(HOOKS_DIR, `${WORKER_NAME}.json`);
+function getHooksFile() {
+  if (HOOKS_DIR.endsWith("/hooks")) {
+    return join8(HOOKS_DIR, "hooks.json");
+  }
+  return join8(HOOKS_DIR, `${WORKER_NAME}.json`);
+}
+var HOOKS_FILE = getHooksFile();
+function isNewLayout() {
+  return HOOKS_DIR.endsWith("/hooks");
+}
+function slugify(desc) {
+  return desc.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
+}
+function scriptFileName(id, description) {
+  const slug = slugify(description);
+  return slug ? `${id}-${slug}.sh` : `${id}.sh`;
+}
+function writeScriptFile(id, description, script) {
+  const filename = scriptFileName(id, description);
+  const destPath = join8(HOOKS_DIR, filename);
+  if (script.startsWith("@")) {
+    const srcPath = script.slice(1);
+    const resolvedSrc = resolve(srcPath);
+    const projectRootResolved = resolve(PROJECT_ROOT);
+    const fleetDirResolved = resolve(FLEET_DIR);
+    if (!resolvedSrc.startsWith(projectRootResolved) && !resolvedSrc.startsWith(fleetDirResolved)) {
+      throw new Error(`Script source path must be within project or fleet directory: ${srcPath}`);
+    }
+    if (!existsSync6(srcPath)) {
+      throw new Error(`Script source file not found: ${srcPath}`);
+    }
+    copyFileSync2(srcPath, destPath);
+  } else {
+    const content = script.startsWith("#!/") ? script : `#!/usr/bin/env bash
+set -uo pipefail
+${script}
+`;
+    writeFileSync6(destPath, content);
+  }
+  try {
+    Bun.spawnSync(["chmod", "+x", destPath]);
+  } catch {}
+  return filename;
+}
 function _persistHooks() {
   try {
-    const hooks = [...dynamicHooks.values()];
-    if (hooks.length === 0) {
-      try {
-        rmSync3(HOOKS_FILE);
-      } catch {}
-      return;
+    const activeHooks = [...dynamicHooks.values()];
+    let archivedHooks = [];
+    try {
+      if (existsSync6(HOOKS_FILE)) {
+        const data = JSON.parse(readFileSync6(HOOKS_FILE, "utf-8"));
+        if (Array.isArray(data.hooks)) {
+          archivedHooks = data.hooks.filter((h) => h.status === "archived");
+        }
+      }
+    } catch {}
+    const activeIds = new Set(activeHooks.map((h) => h.id));
+    const mergedArchived = archivedHooks.filter((h) => !activeIds.has(h.id));
+    const allHooks = [...activeHooks, ...mergedArchived];
+    if (isNewLayout()) {
+      writeFileSync6(HOOKS_FILE, JSON.stringify({ hooks: allHooks }, null, 2));
+    } else {
+      writeFileSync6(HOOKS_FILE, JSON.stringify({ worker: WORKER_NAME, hooks: allHooks }, null, 2));
     }
-    writeFileSync6(HOOKS_FILE, JSON.stringify({ worker: WORKER_NAME, hooks }, null, 2));
   } catch (e) {
     console.error(`[_persistHooks] Failed to write ${HOOKS_FILE}: ${e}`);
   }
 }
-try {
-  if (existsSync6(HOOKS_FILE)) {
-    const data = JSON.parse(readFileSync6(HOOKS_FILE, "utf-8"));
-    if (data.worker === WORKER_NAME && Array.isArray(data.hooks)) {
-      for (const h of data.hooks) {
+function _restoreHooks() {
+  const files = [HOOKS_FILE];
+  if (isNewLayout()) {
+    const legacyDir = process.env.CLAUDE_HOOKS_DIR || join8(HOME, ".claude/ops/hooks/dynamic");
+    const legacyFile = join8(legacyDir, `${WORKER_NAME}.json`);
+    if (existsSync6(legacyFile) && !existsSync6(HOOKS_FILE)) {
+      files.push(legacyFile);
+    }
+  }
+  for (const file of files) {
+    try {
+      if (!existsSync6(file))
+        continue;
+      const data = JSON.parse(readFileSync6(file, "utf-8"));
+      const hooks = data.hooks;
+      if (!Array.isArray(hooks))
+        continue;
+      if (data.worker && data.worker !== WORKER_NAME)
+        continue;
+      for (const h of hooks) {
+        if (h.status === "archived")
+          continue;
+        if (!h.status)
+          h.status = "active";
         dynamicHooks.set(h.id, h);
         const num = parseInt(h.id.replace("dh-", ""), 10);
         if (!isNaN(num) && num > _hookCounter)
           _hookCounter = num;
       }
-    }
+      if (file !== HOOKS_FILE && dynamicHooks.size > 0) {
+        _persistHooks();
+        try {
+          rmSync3(file);
+        } catch {}
+      }
+      break;
+    } catch {}
   }
-} catch {}
+}
+_restoreHooks();
 function _captureHooksSnapshot() {
   return [...dynamicHooks.values()].map((h) => ({
     id: h.id,
     event: h.event,
     description: h.description,
     blocking: h.blocking,
-    completed: h.completed
+    completed: h.completed,
+    ...h.script_path ? { script_path: h.script_path } : {},
+    ...h.status ? { status: h.status } : {},
+    ...h.lifetime ? { lifetime: h.lifetime } : {},
+    ...h.check ? { check: h.check } : {}
   }));
 }
 function _pendingHooksSummary(event) {
   const hooks = [...dynamicHooks.values()];
   const pending = hooks.filter((h) => h.blocking && !h.completed && (!event || h.event === event));
   const injects = hooks.filter((h) => !h.blocking && (!event || h.event === event));
+  const scripts = hooks.filter((h) => h.script_path && (!event || h.event === event));
   const parts = [];
   if (pending.length > 0)
     parts.push(`${pending.length} blocking`);
   if (injects.length > 0)
     parts.push(`${injects.length} inject`);
+  if (scripts.length > 0)
+    parts.push(`${scripts.length} with scripts`);
   return parts.join(", ") || "none";
+}
+function _archiveHook(id, reason) {
+  const hook = dynamicHooks.get(id);
+  if (!hook)
+    return null;
+  hook.status = "archived";
+  hook.archived_at = new Date().toISOString();
+  hook.archive_reason = reason;
+  dynamicHooks.delete(id);
+  _persistHooks();
+  return hook;
+}
+function resolveMainRepoRoot() {
+  const gitPath = join8(PROJECT_ROOT, ".git");
+  try {
+    if (existsSync6(gitPath)) {
+      const stat = Bun.file(gitPath);
+      if (stat.size < 1000) {
+        const content = readFileSync6(gitPath, "utf-8").trim();
+        if (content.startsWith("gitdir:")) {
+          const gitdir = content.replace("gitdir:", "").trim();
+          const mainGit = gitdir.replace(/\/\.git\/worktrees\/[^/]+$/, "");
+          if (existsSync6(mainGit))
+            return mainGit;
+        }
+      }
+    }
+  } catch {}
+  return PROJECT_ROOT;
+}
+function readOtherWorkerHooks(workerName, includeArchived = false) {
+  const mainRepo = resolveMainRepoRoot();
+  const candidates = [
+    join8(FLEET_DIR, workerName, "hooks", "hooks.json"),
+    join8(mainRepo, ".claude/workers", workerName, "hooks.json")
+  ];
+  for (const file of candidates) {
+    try {
+      if (!existsSync6(file))
+        continue;
+      const data = JSON.parse(readFileSync6(file, "utf-8"));
+      if (!Array.isArray(data.hooks))
+        continue;
+      return includeArchived ? data.hooks : data.hooks.filter((h) => h.status !== "archived");
+    } catch {}
+  }
+  return [];
 }
 
 // mcp/worker-fleet/tools/hooks.ts
+function scanScriptAgainstDenyList(scriptContent) {
+  const permsPath = join9(PROJECT_ROOT, ".claude/workers", WORKER_NAME, "permissions.json");
+  if (!existsSync7(permsPath))
+    return null;
+  let denyList;
+  try {
+    const perms = JSON.parse(readFileSync7(permsPath, "utf-8"));
+    denyList = perms.denyList || [];
+  } catch {
+    return null;
+  }
+  if (denyList.length === 0)
+    return null;
+  const lines = scriptContent.split(`
+`).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  const normalized = lines.join(" ; ");
+  for (const pattern of denyList) {
+    const toolMatch = pattern.match(/^(\w+)\((.+)\)$/);
+    if (!toolMatch)
+      continue;
+    const [, toolName, argPattern] = toolMatch;
+    if (toolName !== "Bash")
+      continue;
+    const regex = argPattern.replace(/[.[\]^$+{}|\\]/g, "\\$&").replace(/\*\*/g, "GLOB_STAR_STAR").replace(/\*/g, ".*").replace(/GLOB_STAR_STAR/g, ".*").replace(/\?/g, ".");
+    try {
+      const re = new RegExp(regex);
+      if (re.test(normalized) || re.test(scriptContent)) {
+        return `Script blocked by policy: matches Bash(${argPattern}) in denyList`;
+      }
+    } catch {}
+  }
+  return null;
+}
 function registerHookTools(server) {
   server.registerTool("add_hook", {
-    description: "Register a dynamic hook that fires on a hook event. Can block the event (gate) or inject context. Use for self-governance: add verification gates before recycling, inject guidance before tool calls, or block specific tool usage until conditions are met. Hook scripts read these at runtime.",
+    description: "Register a dynamic hook that fires on a hook event. Can block the event (gate), inject context, or run a script. Use for self-governance: add verification gates before recycling, inject guidance before tool calls, trigger notifications via scripts, or block specific tool usage until conditions are met.",
     inputSchema: {
       event: exports_external.enum([
         "SessionStart",
@@ -21951,26 +22194,63 @@ function registerHookTools(server) {
         "WorktreeCreate",
         "WorktreeRemove"
       ]).describe("Which hook event to fire on. Common: Stop (blocks session exit), PreToolUse (fires before tool call), PreCompact (before context compaction), SubagentStop (when subagent finishes)"),
-      description: exports_external.string().describe("Human-readable purpose (e.g. 'verify build passes', 'ontology guidance')"),
+      description: exports_external.string().describe("Human-readable purpose (e.g. 'verify build passes', 'notify validator on completion')"),
       blocking: exports_external.boolean().optional().describe("If true (default for Stop), blocks the event until complete_hook(id) is called. If false (default for PreToolUse), injects content as context and passes through"),
       content: exports_external.string().optional().describe("For inject hooks: context text to add. For blocking hooks: block reason shown to agent. Falls back to description if omitted"),
+      script: exports_external.string().optional().describe("Shell script to execute when hook fires. Inline command or @/path/to/script.sh (file is copied). Scanned against denyList at registration. Exit 0=allow, 2=block (stderr shown), 1=error (logged)"),
       condition: exports_external.object({
         tool: exports_external.string().optional().describe("Only fire when this tool is called (e.g. 'Bash', 'Edit', 'Write')"),
         file_glob: exports_external.string().optional().describe("Only fire when file path matches glob (e.g. 'src/ontology/**')"),
         command_pattern: exports_external.string().optional().describe("Only fire when Bash command matches regex (e.g. 'git push.*')")
       }).optional().describe("Condition for when this hook fires (PreToolUse only). Omit for unconditional"),
-      agent_id: exports_external.string().optional().describe("Scope to a specific subagent. Auto-completed on SubagentStop. Subagents: use the agent_id injected by pre-tool-context-injector")
+      agent_id: exports_external.string().optional().describe("Scope to a specific subagent. Auto-completed on SubagentStop. Subagents: use the agent_id injected by pre-tool-context-injector"),
+      lifetime: exports_external.enum(["cycle", "persistent"]).optional().describe("Hook lifetime. 'cycle' = archived on recycle. 'persistent' = survives recycles. Default: 'persistent' for Stop, 'cycle' for others"),
+      check: exports_external.string().optional().describe("Bash command to verify condition. Exit 0 = pass (hook allows), non-zero = block. Re-evaluated each time the event fires \u2014 no manual complete_hook needed. Env: $WORKER_NAME, $PROJECT_ROOT"),
+      max_fires: exports_external.number().optional().describe("Auto-pass after this many blocks (safety valve). Default: 5. Prevents infinite loops for check-based Stop hooks")
     }
-  }, async ({ event, description, blocking, content, condition, agent_id }) => {
+  }, async ({ event, description, blocking, content, script, condition, agent_id, lifetime, check: check2, max_fires }) => {
     const id = `dh-${_incrementHookCounter()}`;
     const isBlocking = blocking ?? event === "Stop";
+    let scriptPath;
+    if (script) {
+      let scriptContent;
+      if (script.startsWith("@")) {
+        const srcPath = script.slice(1);
+        if (!existsSync7(srcPath)) {
+          return { content: [{ type: "text", text: `Script source file not found: ${srcPath}` }], isError: true };
+        }
+        scriptContent = readFileSync7(srcPath, "utf-8");
+      } else {
+        scriptContent = script;
+      }
+      const blocked = scanScriptAgainstDenyList(scriptContent);
+      if (blocked) {
+        return { content: [{ type: "text", text: `Hook rejected: ${blocked}` }], isError: true };
+      }
+      try {
+        scriptPath = writeScriptFile(id, description, script);
+      } catch (e) {
+        return { content: [{ type: "text", text: `Failed to write script: ${e}` }], isError: true };
+      }
+    }
+    if (check2) {
+      const blocked = scanScriptAgainstDenyList(check2);
+      if (blocked) {
+        return { content: [{ type: "text", text: `Hook rejected: check command blocked \u2014 ${blocked}` }], isError: true };
+      }
+    }
+    const resolvedLifetime = lifetime ?? (event === "Stop" ? "persistent" : "cycle");
     const hook = {
       id,
       event,
       description,
       blocking: isBlocking,
       completed: false,
-      added_at: new Date().toISOString()
+      status: "active",
+      lifetime: resolvedLifetime,
+      added_at: new Date().toISOString(),
+      registered_by: WORKER_NAME,
+      ownership: "self"
     };
     if (content)
       hook.content = content;
@@ -21978,15 +22258,28 @@ function registerHookTools(server) {
       hook.condition = condition;
     if (agent_id)
       hook.agent_id = agent_id;
+    if (scriptPath)
+      hook.script_path = scriptPath;
+    if (check2)
+      hook.check = check2;
+    if (max_fires !== undefined)
+      hook.max_fires = max_fires;
+    if (check2 && hook.max_fires === undefined)
+      hook.max_fires = 5;
+    if (check2)
+      hook.fire_count = 0;
     dynamicHooks.set(id, hook);
     _persistHooks();
     const agentNote = agent_id ? ` (scoped to subagent ${agent_id})` : "";
     const typeLabel = isBlocking ? "blocking" : "inject";
     const condNote = condition ? ` [condition: ${JSON.stringify(condition)}]` : "";
+    const scriptNote = scriptPath ? ` [script: ${scriptPath}]` : "";
+    const checkNote = check2 ? ` [check: ${check2.slice(0, 60)}${check2.length > 60 ? "..." : ""}]` : "";
+    const lifetimeNote = ` [${resolvedLifetime}]`;
     return {
       content: [{
         type: "text",
-        text: `Hook registered: [${id}] ${event}/${typeLabel} \u2014 ${description}${agentNote}${condNote}
+        text: `Hook registered: [${id}] ${event}/${typeLabel} \u2014 ${description}${agentNote}${condNote}${scriptNote}${checkNote}${lifetimeNote}
 Active hooks: ${_pendingHooksSummary()}.`
       }]
     };
@@ -21999,7 +22292,7 @@ Active hooks: ${_pendingHooksSummary()}.`
     }
   }, async ({ id, result }) => {
     if (id === "all") {
-      const pending2 = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
+      const pending2 = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed && h.ownership !== "system" && !(h.ownership === "creator" && h.registered_by !== WORKER_NAME));
       if (pending2.length === 0) {
         return { content: [{ type: "text", text: "No pending blocking hooks to complete." }] };
       }
@@ -22014,13 +22307,16 @@ Active hooks: ${_pendingHooksSummary()}.`
       return {
         content: [{
           type: "text",
-          text: `Completed ${pending2.length} hook(s). All blocking hooks cleared.`
+          text: `Completed ${pending2.length} hook(s). System/creator hooks preserved.`
         }]
       };
     }
     const hook = dynamicHooks.get(id);
     if (!hook) {
       return { content: [{ type: "text", text: `No hook with ID '${id}'.` }], isError: true };
+    }
+    if (hook.ownership === "system" || hook.ownership === "creator" && hook.registered_by !== WORKER_NAME) {
+      return { content: [{ type: "text", text: `Cannot complete hook [${id}] \u2014 owned by ${hook.registered_by || "system"}. Use the check command mechanism or ask the owner.` }], isError: true };
     }
     hook.completed = true;
     hook.completed_at = new Date().toISOString();
@@ -22038,25 +22334,63 @@ ${pending.length} blocking hook(s) remaining.`
     };
   });
   server.registerTool("list_hooks", {
-    description: "List all active hooks (static infrastructure + dynamic runtime hooks). Shows what fires on each event, whether it blocks or injects, and its current status.",
+    description: "List hooks (static infrastructure + dynamic runtime hooks). Shows what fires on each event, whether it blocks or injects, and its current status. Supports cross-worker discovery.",
     inputSchema: {
       event: exports_external.string().optional().describe("Filter to a specific event (e.g. 'Stop', 'PreToolUse'). Omit for all events"),
-      include_static: exports_external.boolean().optional().describe("Include static infrastructure hooks from manifest (default: true)")
+      include_static: exports_external.boolean().optional().describe("Include static infrastructure hooks from manifest (default: true)"),
+      include_archived: exports_external.boolean().optional().describe("Include archived hooks (default: false). Useful for auditing hook history"),
+      worker: exports_external.string().optional().describe("Read another worker's hooks (cross-worker discovery). Omit for your own hooks")
     }
-  }, async ({ event, include_static }) => {
+  }, async ({ event, include_static, include_archived, worker }) => {
     const showStatic = include_static !== false;
-    const lines = [`# Active Hooks
+    const showArchived = include_archived === true;
+    const isOtherWorker = worker && worker !== WORKER_NAME;
+    const lines = [`# ${isOtherWorker ? `${worker}'s` : "Active"} Hooks
 `];
-    const dynamicList = [...dynamicHooks.values()].filter((h) => !event || h.event === event).sort((a, b) => a.event.localeCompare(b.event) || a.id.localeCompare(b.id));
-    if (dynamicList.length > 0) {
-      lines.push(`## Dynamic Hooks (${dynamicList.length})
+    if (worker && !/^[a-z0-9][a-z0-9-]*$/.test(worker)) {
+      return { content: [{ type: "text", text: `Invalid worker name: ${worker}.` }], isError: true };
+    }
+    let hookList;
+    if (isOtherWorker) {
+      hookList = readOtherWorkerHooks(worker, showArchived);
+    } else {
+      hookList = [...dynamicHooks.values()];
+      if (showArchived) {
+        try {
+          const hooksDir = join9(FLEET_DIR, WORKER_NAME, "hooks", "hooks.json");
+          if (existsSync7(hooksDir)) {
+            const data = JSON.parse(readFileSync7(hooksDir, "utf-8"));
+            if (Array.isArray(data.hooks)) {
+              const activeIds = new Set(hookList.map((h) => h.id));
+              const archived = data.hooks.filter((h) => h.status === "archived" && !activeIds.has(h.id));
+              hookList = [...hookList, ...archived];
+            }
+          }
+        } catch {}
+      }
+    }
+    const filteredList = hookList.filter((h) => !event || h.event === event).sort((a, b) => a.event.localeCompare(b.event) || a.id.localeCompare(b.id));
+    if (filteredList.length > 0) {
+      lines.push(`## Dynamic Hooks (${filteredList.length})
 `);
-      for (const h of dynamicList) {
+      for (const h of filteredList) {
         const type = h.blocking ? "GATE" : "INJECT";
-        const status = h.blocking ? h.completed ? `DONE${h.result ? ` (${h.result})` : ""}` : "PENDING" : "active";
+        const isArchived = h.status === "archived";
+        let status;
+        if (isArchived) {
+          status = `ARCHIVED (${h.archive_reason || "unknown"})`;
+        } else if (h.blocking) {
+          status = h.completed ? `DONE${h.result ? ` (${h.result})` : ""}` : "PENDING";
+        } else {
+          status = "active";
+        }
         const cond = h.condition ? ` [${Object.entries(h.condition).map(([k, v]) => `${k}=${v}`).join(", ")}]` : "";
         const scope = h.agent_id ? ` (agent: ${h.agent_id})` : "";
-        lines.push(`- **[${h.id}]** ${h.event}/${type} \u2014 ${h.description}${cond}${scope}`);
+        const scriptInfo = h.script_path ? ` [script: ${h.script_path}]` : "";
+        const checkInfo = h.check ? ` [check: ${h.check.slice(0, 50)}${h.check.length > 50 ? "..." : ""}]` : "";
+        const lifetimeInfo = h.lifetime ? ` [${h.lifetime}]` : "";
+        const fireInfo = h.fire_count !== undefined ? ` (fired: ${h.fire_count}/${h.max_fires || 5})` : "";
+        lines.push(`- **[${h.id}]** ${h.event}/${type} \u2014 ${h.description}${cond}${scope}${scriptInfo}${checkInfo}${lifetimeInfo}${fireInfo}`);
         lines.push(`  Status: ${status} | Added: ${h.added_at.slice(0, 16)}`);
         if (h.content && h.content !== h.description) {
           const preview = h.content.length > 100 ? h.content.slice(0, 97) + "..." : h.content;
@@ -22064,9 +22398,9 @@ ${pending.length} blocking hook(s) remaining.`
         }
       }
     } else {
-      lines.push("## Dynamic Hooks\nNone registered. Use `add_hook()` to add verification gates or context injectors.\n");
+      lines.push("## Dynamic Hooks\nNone registered. Use `add_hook()` to add verification gates, context injectors, or script triggers.\n");
     }
-    if (showStatic) {
+    if (showStatic && !isOtherWorker) {
       try {
         const manifestPath = join9(CLAUDE_FLEET, "hooks", "manifest.json");
         const manifest = JSON.parse(readFileSync7(manifestPath, "utf-8"));
@@ -22095,522 +22429,306 @@ ${pending.length} blocking hook(s) remaining.`
 _Could not read manifest.json_`);
       }
     }
-    const blocking = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
-    const inject = [...dynamicHooks.values()].filter((h) => !h.blocking);
+    const activeHooks = hookList.filter((h) => h.status !== "archived");
+    const blocking = activeHooks.filter((h) => h.blocking && !h.completed);
+    const inject = activeHooks.filter((h) => !h.blocking);
+    const withCheck = activeHooks.filter((h) => h.check);
+    const archivedCount = hookList.filter((h) => h.status === "archived").length;
     lines.push(`
 ---
-**Summary:** ${dynamicHooks.size} dynamic (${blocking.length} blocking pending, ${inject.length} inject active)`);
+**Summary:** ${activeHooks.length} active (${blocking.length} blocking pending, ${inject.length} inject, ${withCheck.length} with check)${archivedCount > 0 ? ` | ${archivedCount} archived` : ""}`);
     return { content: [{ type: "text", text: lines.join(`
 `) }] };
   });
   server.registerTool("remove_hook", {
-    description: "Remove a dynamic hook entirely. Use for inject hooks you no longer need, or to clean up completed gates.",
+    description: "Archive a dynamic hook (preserved in hooks.json but no longer fires). Use for inject hooks you no longer need, or to clean up completed gates. Archived hooks are discoverable via list_hooks(include_archived=true).",
     inputSchema: {
-      id: exports_external.string().describe("Hook ID to remove (e.g. 'dh-2'). Use 'all' to remove all hooks")
+      id: exports_external.string().describe("Hook ID to archive (e.g. 'dh-2'). Use 'all' to archive all hooks")
     }
   }, async ({ id }) => {
     if (id === "all") {
-      const count = dynamicHooks.size;
-      dynamicHooks.clear();
-      _persistHooks();
-      return { content: [{ type: "text", text: `Removed all ${count} hook(s).` }] };
+      let count = 0;
+      for (const [hookId, hook2] of dynamicHooks) {
+        if (hook2.ownership === "system")
+          continue;
+        if (hook2.ownership === "creator" && hook2.registered_by !== WORKER_NAME)
+          continue;
+        _archiveHook(hookId, "removed");
+        count++;
+      }
+      return { content: [{ type: "text", text: `Archived ${count} removable hook(s). System/creator hooks preserved.` }] };
     }
     const hook = dynamicHooks.get(id);
     if (!hook) {
-      return { content: [{ type: "text", text: `No hook with ID '${id}'.` }], isError: true };
+      return { content: [{ type: "text", text: `No active hook with ID '${id}'.` }], isError: true };
     }
-    dynamicHooks.delete(id);
-    _persistHooks();
+    if (hook.ownership === "system") {
+      return { content: [{ type: "text", text: `Cannot remove system hook [${id}]. System hooks are irremovable.` }], isError: true };
+    }
+    if (hook.ownership === "creator" && hook.registered_by !== WORKER_NAME) {
+      return { content: [{ type: "text", text: `Cannot remove creator-owned hook [${id}] (owned by ${hook.registered_by}). Only the creator or mission_authority can remove it.` }], isError: true };
+    }
+    const archived = _archiveHook(id, "removed");
     return {
       content: [{
         type: "text",
-        text: `Removed: [${id}] ${hook.description}
-Remaining hooks: ${_pendingHooksSummary()}.`
+        text: `Archived: [${id}] ${archived.description}
+Remaining active hooks: ${_pendingHooksSummary()}.`
       }]
     };
+  });
+  server.registerTool("manage_worker_hooks", {
+    description: "Manage hooks on another worker. Add verification gates, remove hooks, complete hooks, or list hooks for a target worker. Requires authority over the target (mission_authority or direct report). For managing your own hooks, use add_hook/remove_hook/complete_hook/list_hooks instead.",
+    inputSchema: {
+      action: exports_external.enum(["add", "remove", "complete", "list"]).describe("Action to perform on target worker's hooks"),
+      target: exports_external.string().describe("Target worker name"),
+      event: exports_external.string().optional().describe("Hook event (Stop, PreToolUse, etc.) \u2014 required for 'add'"),
+      hook_description: exports_external.string().optional().describe("Human-readable purpose \u2014 required for 'add'"),
+      blocking: exports_external.boolean().optional().describe("If true, blocks event until completed. Default: true for Stop, false otherwise"),
+      content: exports_external.string().optional().describe("Context text (inject) or block reason (gate)"),
+      script: exports_external.string().optional().describe("Shell script to run. Scanned against target's permissions"),
+      check: exports_external.string().optional().describe("Bash command for auto-verification. Exit 0 = pass"),
+      lifetime: exports_external.enum(["cycle", "persistent"]).optional().describe("Hook lifetime. Default: persistent for Stop, cycle for others"),
+      max_fires: exports_external.number().optional().describe("Auto-pass after N blocks (safety valve). Default: 5 for check hooks"),
+      id: exports_external.string().optional().describe("Hook ID (e.g. 'dh-1') \u2014 required for 'remove'/'complete'. Use 'all' to batch"),
+      result: exports_external.string().optional().describe("Brief outcome for 'complete' (e.g. 'PASS')"),
+      include_archived: exports_external.boolean().optional().describe("Include archived hooks (default: false)")
+    }
+  }, async (params) => {
+    const { action, target } = params;
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(target)) {
+      return { content: [{ type: "text", text: `Invalid worker name: ${target}. Must be lowercase alphanumeric with hyphens.` }], isError: true };
+    }
+    const registry2 = readRegistry();
+    if (!canUpdateWorker(WORKER_NAME, target, registry2)) {
+      return {
+        content: [{ type: "text", text: `Unauthorized: ${WORKER_NAME} cannot manage hooks on ${target}. Requires mission_authority or direct-report relationship.` }],
+        isError: true
+      };
+    }
+    const targetHooksDir = join9(FLEET_DIR, target, "hooks");
+    const targetHooksFile = join9(targetHooksDir, "hooks.json");
+    function readTargetHooks() {
+      if (!existsSync7(targetHooksFile))
+        return { hooks: [], counter: 0 };
+      try {
+        const data = JSON.parse(readFileSync7(targetHooksFile, "utf-8"));
+        const hooks = data.hooks || [];
+        let counter = 0;
+        for (const h of hooks) {
+          const num = parseInt(h.id.replace("dh-", ""), 10);
+          if (!isNaN(num) && num > counter)
+            counter = num;
+        }
+        return { hooks, counter };
+      } catch {
+        return { hooks: [], counter: 0 };
+      }
+    }
+    function writeTargetHooks(hooks) {
+      mkdirSync8(targetHooksDir, { recursive: true });
+      writeFileSync7(targetHooksFile, JSON.stringify({ hooks }, null, 2));
+    }
+    if (action === "list") {
+      const { hooks } = readTargetHooks();
+      const filtered = params.include_archived ? hooks : hooks.filter((h) => h.status !== "archived");
+      if (filtered.length === 0) {
+        return { content: [{ type: "text", text: `No hooks on ${target}.` }] };
+      }
+      const lines = filtered.map((h) => {
+        const type = h.blocking ? "GATE" : "INJECT";
+        const status = h.status === "archived" ? "ARCHIVED" : h.blocking ? h.completed ? "DONE" : "PENDING" : "active";
+        const by = h.registered_by ? ` (by ${h.registered_by})` : "";
+        return `[${h.id}] ${h.event}/${type} \u2014 ${h.description} [${status}]${by}`;
+      });
+      return { content: [{ type: "text", text: `# ${target}'s hooks (${filtered.length})
+${lines.join(`
+`)}` }] };
+    }
+    if (action === "add") {
+      if (!params.event || !params.hook_description) {
+        return { content: [{ type: "text", text: "Error: 'event' and 'hook_description' are required for add" }], isError: true };
+      }
+      const { hooks, counter } = readTargetHooks();
+      const id = `dh-${counter + 1}`;
+      const isBlocking = params.blocking ?? params.event === "Stop";
+      if (params.script) {
+        const targetPermsPath = join9(PROJECT_ROOT, ".claude/workers", target, "permissions.json");
+        if (existsSync7(targetPermsPath)) {
+          const scriptContent = params.script.startsWith("@") ? existsSync7(params.script.slice(1)) ? readFileSync7(params.script.slice(1), "utf-8") : params.script : params.script;
+          try {
+            const perms = JSON.parse(readFileSync7(targetPermsPath, "utf-8"));
+            const denyList = perms.denyList || [];
+            for (const pattern of denyList) {
+              const m = pattern.match(/^(\w+)\((.+)\)$/);
+              if (!m || m[1] !== "Bash")
+                continue;
+              const regex = m[2].replace(/[.[\]^$+{}|\\]/g, "\\$&").replace(/\*\*/g, "GLOB_STAR_STAR").replace(/\*/g, ".*").replace(/GLOB_STAR_STAR/g, ".*").replace(/\?/g, ".");
+              try {
+                if (new RegExp(regex).test(scriptContent)) {
+                  return { content: [{ type: "text", text: `Hook rejected: script blocked by target's policy (matches Bash(${m[2]}))` }], isError: true };
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      }
+      if (params.check) {
+        const targetPermsPath = join9(PROJECT_ROOT, ".claude/workers", target, "permissions.json");
+        if (existsSync7(targetPermsPath)) {
+          try {
+            const perms = JSON.parse(readFileSync7(targetPermsPath, "utf-8"));
+            const denyList = perms.denyList || [];
+            for (const pattern of denyList) {
+              const m = pattern.match(/^(\w+)\((.+)\)$/);
+              if (!m || m[1] !== "Bash")
+                continue;
+              const regex = m[2].replace(/[.[\]^$+{}|\\]/g, "\\$&").replace(/\*\*/g, "GLOB_STAR_STAR").replace(/\*/g, ".*").replace(/GLOB_STAR_STAR/g, ".*").replace(/\?/g, ".");
+              try {
+                if (new RegExp(regex).test(params.check)) {
+                  return { content: [{ type: "text", text: `Hook rejected: check command blocked by target's policy (matches Bash(${m[2]}))` }], isError: true };
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      }
+      const resolvedLifetime = params.lifetime ?? (params.event === "Stop" ? "persistent" : "cycle");
+      const hook = {
+        id,
+        event: params.event,
+        description: params.hook_description,
+        blocking: isBlocking,
+        completed: false,
+        status: "active",
+        lifetime: resolvedLifetime,
+        registered_by: WORKER_NAME,
+        ownership: "creator",
+        added_at: new Date().toISOString()
+      };
+      if (params.content)
+        hook.content = params.content;
+      if (params.check) {
+        hook.check = params.check;
+        hook.max_fires = params.max_fires ?? 5;
+        hook.fire_count = 0;
+      }
+      if (params.max_fires !== undefined)
+        hook.max_fires = params.max_fires;
+      hooks.push(hook);
+      writeTargetHooks(hooks);
+      return { content: [{ type: "text", text: `Hook [${id}] added to ${target}: ${params.event}/${isBlocking ? "GATE" : "INJECT"} \u2014 ${params.hook_description} [${resolvedLifetime}, owner: ${WORKER_NAME}]` }] };
+    }
+    if (action === "remove") {
+      if (!params.id)
+        return { content: [{ type: "text", text: "Error: 'id' required for remove" }], isError: true };
+      const { hooks } = readTargetHooks();
+      if (params.id === "all") {
+        let count = 0;
+        const now = new Date().toISOString();
+        for (const h of hooks) {
+          if (h.status === "archived")
+            continue;
+          if (h.ownership === "system")
+            continue;
+          h.status = "archived";
+          h.archived_at = now;
+          h.archive_reason = `removed by ${WORKER_NAME}`;
+          count++;
+        }
+        writeTargetHooks(hooks);
+        return { content: [{ type: "text", text: `Archived ${count} hook(s) on ${target}. System hooks preserved.` }] };
+      }
+      const hook = hooks.find((h) => h.id === params.id);
+      if (!hook)
+        return { content: [{ type: "text", text: `No hook '${params.id}' on ${target}.` }], isError: true };
+      if (hook.ownership === "system") {
+        return { content: [{ type: "text", text: `Cannot remove system hook [${params.id}] on ${target}.` }], isError: true };
+      }
+      hook.status = "archived";
+      hook.archived_at = new Date().toISOString();
+      hook.archive_reason = `removed by ${WORKER_NAME}`;
+      writeTargetHooks(hooks);
+      return { content: [{ type: "text", text: `Archived [${params.id}] on ${target}: ${hook.description}` }] };
+    }
+    if (action === "complete") {
+      if (!params.id)
+        return { content: [{ type: "text", text: "Error: 'id' required for complete" }], isError: true };
+      const { hooks } = readTargetHooks();
+      const now = new Date().toISOString();
+      if (params.id === "all") {
+        let count = 0;
+        for (const h of hooks) {
+          if (h.blocking && !h.completed && h.status !== "archived") {
+            h.completed = true;
+            h.completed_at = now;
+            if (params.result)
+              h.result = params.result;
+            count++;
+          }
+        }
+        writeTargetHooks(hooks);
+        return { content: [{ type: "text", text: `Completed ${count} blocking hook(s) on ${target}.` }] };
+      }
+      const hook = hooks.find((h) => h.id === params.id);
+      if (!hook)
+        return { content: [{ type: "text", text: `No hook '${params.id}' on ${target}.` }], isError: true };
+      hook.completed = true;
+      hook.completed_at = now;
+      if (params.result)
+        hook.result = params.result;
+      writeTargetHooks(hooks);
+      return { content: [{ type: "text", text: `Completed [${params.id}] on ${target}: ${hook.description}${params.result ? ` (${params.result})` : ""}` }] };
+    }
+    return { content: [{ type: "text", text: `Unknown action: ${action}` }], isError: true };
   });
 }
 
 // mcp/worker-fleet/tools/lifecycle.ts
-import { writeFileSync as writeFileSync7, existsSync as existsSync8, readdirSync as readdirSync4 } from "fs";
-import { join as join11 } from "path";
-import { execSync as execSync6 } from "child_process";
-
-// mcp/worker-fleet/runtime.ts
-var CLAUDE_RUNTIME = {
-  type: "claude",
-  binary: "claude",
-  defaultModel: "opus",
-  buildLaunchCmd({ model, permissionMode, disallowedTools, workerDir, reasoningEffort }) {
-    let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
-    if (permissionMode === "bypassPermissions")
-      cmd += " --dangerously-skip-permissions";
-    if (reasoningEffort)
-      cmd += ` --effort ${reasoningEffort}`;
-    if (disallowedTools)
-      cmd += ` --disallowed-tools "${disallowedTools}"`;
-    cmd += ` --add-dir ${workerDir}`;
-    return cmd;
-  },
-  buildResumeCmd({ model, permissionMode, workerDir, sessionId }) {
-    let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
-    if (permissionMode === "bypassPermissions")
-      cmd += " --dangerously-skip-permissions";
-    cmd += ` --add-dir ${workerDir} --resume ${sessionId}`;
-    return cmd;
-  },
-  buildForkCmd({ model, permissionMode, workerDir, sessionId }) {
-    let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
-    if (permissionMode === "bypassPermissions")
-      cmd += " --dangerously-skip-permissions";
-    cmd += ` --add-dir ${workerDir} --resume ${sessionId} --fork-session`;
-    return cmd;
-  },
-  exitCommand: "/exit",
-  processPattern: /claude/,
-  tuiReadyPattern: /bypass permissions|Context left/,
-  buildEnv() {
-    return { CLAUDE_CODE_SKIP_PROJECT_LOCK: "1" };
-  }
-};
-var CODEX_RUNTIME = {
-  type: "codex",
-  binary: "codex",
-  defaultModel: "gpt-5.4",
-  buildLaunchCmd({ model, permissionMode, reasoningEffort }) {
-    let cmd = `codex -m ${model}`;
-    if (permissionMode === "bypassPermissions")
-      cmd += " --dangerously-bypass-approvals-and-sandbox";
-    else
-      cmd += " -s workspace-write -a on-request";
-    if (reasoningEffort)
-      cmd += ` -c model_reasoning_effort=${reasoningEffort}`;
-    cmd += " --no-alt-screen";
-    return cmd;
-  },
-  buildResumeCmd({ sessionId }) {
-    return `codex resume ${sessionId}`;
-  },
-  buildForkCmd({ sessionId }) {
-    return `codex fork ${sessionId}`;
-  },
-  exitCommand: "/exit",
-  processPattern: /codex/,
-  tuiReadyPattern: /codex|ready/i,
-  buildEnv() {
-    return {};
-  }
-};
-var RUNTIMES = {
-  claude: CLAUDE_RUNTIME,
-  codex: CODEX_RUNTIME
-};
-function getWorkerRuntime(workerName) {
-  const name = workerName || WORKER_NAME;
-  try {
-    const entry = getWorkerEntry(name);
-    const rt = entry?.custom?.runtime || "claude";
-    return RUNTIMES[rt] || CLAUDE_RUNTIME;
-  } catch {
-    return CLAUDE_RUNTIME;
-  }
-}
-
-// mcp/worker-fleet/seed.ts
-import { readFileSync as readFileSync8, existsSync as existsSync7 } from "fs";
+import { writeFileSync as writeFileSync8, existsSync as existsSync8, readdirSync as readdirSync4 } from "fs";
 import { join as join10 } from "path";
-function loadSeedContext(branch, missionAuthority, workerName) {
-  const name = workerName || WORKER_NAME;
-  const tmplPath = join10(CLAUDE_FLEET, "templates/seed-context.md");
-  try {
-    return readFileSync8(tmplPath, "utf-8").replace(/\{\{WORKER_NAME\}\}/g, name).replace(/\{\{BRANCH\}\}/g, branch).replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
-  } catch {
-    return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;
-  }
-}
-function generateSeedContent(handoff, workerName) {
-  const effectiveName = workerName || WORKER_NAME;
-  const workerDir = join10(PROJECT_ROOT, ".claude/workers", effectiveName);
-  const fleetWorkerDir = join10(FLEET_DIR, effectiveName);
-  const worktreeDir = getWorktreeDir();
-  const branch = `worker/${effectiveName}`;
-  const _seedConfig = readRegistry()._config;
-  const _missionAuth = getMissionAuthorityLabel(_seedConfig);
-  let stateBlock = "";
-  let proposalBlock = "";
-  try {
-    const reg = readRegistry();
-    const entry = reg[effectiveName];
-    if (entry?.custom && Object.keys(entry.custom).length > 0) {
-      stateBlock = `
-
-## Persisted State
-\`\`\`json
-${JSON.stringify(entry.custom, null, 2)}
-\`\`\`
-These values were saved by your previous instance via \`update_state()\`. Use them to resume context.`;
-    }
-    if (entry?.custom?.proposal_required) {
-      const instrPath = join10(CLAUDE_FLEET, "templates/proposal-instructions.md");
-      const tmplPath = join10(CLAUDE_FLEET, "templates/proposal-template.html");
-      try {
-        let instrContent = readFileSync8(instrPath, "utf-8");
-        instrContent = instrContent.replace(/\{\{WORKER_NAME\}\}/g, effectiveName).replace(/\{\{MISSION_AUTHORITY\}\}/g, _missionAuth).replace(/\{\{TEMPLATE_PATH\}\}/g, tmplPath);
-        proposalBlock = `
-
-` + instrContent;
-      } catch {}
-    }
-  } catch {}
-  const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
-  const workerMemoryDir = join10(HOME, ".claude", "projects", projectSlug, "memory", effectiveName);
-  let handoffBlock = "";
-  if (handoff) {
-    handoffBlock = `
-## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
-
-${handoff}`;
-  } else {
-    const checkpointLatest = join10(WORKERS_DIR, effectiveName, "checkpoints", "latest.json");
-    if (existsSync7(checkpointLatest)) {
-      try {
-        const cpRaw = readFileSync8(checkpointLatest, "utf-8").trim();
-        const cp = JSON.parse(cpRaw);
-        let cpBlock = `
-## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
-
-`;
-        cpBlock += `**Summary**: ${cp.summary || "No summary"}
-`;
-        if (cp.git_state?.branch) {
-          cpBlock += `**Git**: ${cp.git_state.branch} @ ${cp.git_state.sha || "?"} (${cp.git_state.dirty_count || 0} dirty, ${cp.git_state.staged_count || 0} staged)
-`;
-        }
-        if (cp.key_facts?.length > 0) {
-          cpBlock += `**Key facts**:
-${cp.key_facts.map((f) => `- ${f}`).join(`
-`)}
-`;
-        }
-        if (cp.dynamic_hooks?.length > 0) {
-          const pending = cp.dynamic_hooks.filter((h) => !h.completed);
-          if (pending.length > 0) {
-            cpBlock += `**Pending hooks**: ${pending.map((h) => `${h.id} (${h.event}: ${h.description})`).join(", ")}
-`;
-          }
-        }
-        if (cp.transcript_ref) {
-          cpBlock += `**Transcript**: ${cp.transcript_ref} \u2014 Read this if you need details from before recycling
-`;
-        }
-        handoffBlock = cpBlock;
-      } catch {
-        const handoffPath = join10(WORKERS_DIR, effectiveName, "handoff.md");
-        if (existsSync7(handoffPath)) {
-          try {
-            const handoffContent = readFileSync8(handoffPath, "utf-8").trim();
-            if (handoffContent) {
-              handoffBlock = `
-## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
-
-${handoffContent}`;
-            }
-          } catch {}
-        }
-      }
-    } else {
-      const handoffPath = join10(WORKERS_DIR, effectiveName, "handoff.md");
-      if (existsSync7(handoffPath)) {
-        try {
-          const handoffContent = readFileSync8(handoffPath, "utf-8").trim();
-          if (handoffContent) {
-            handoffBlock = `
-## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
-
-${handoffContent}`;
-          }
-        } catch {}
-      }
-    }
-  }
-  let seed = `You are worker **${effectiveName}**.
-Worktree: ${worktreeDir} (branch: ${branch})
-Worker config: ${workerDir}/
-${handoffBlock}
-Read these files NOW in this order:
-1. ${existsSync7(join10(workerDir, "mission.md")) ? workerDir : fleetWorkerDir}/mission.md \u2014 your mission and goals (you own this file \u2014 update it as your mission evolves)
-2. Call \`mail_inbox()\` \u2014 check for messages before anything else
-3. Check \`.claude/scripts/${effectiveName}/\` for existing scripts
-
-**Your memory**: \`${workerMemoryDir}/MEMORY.md\`
-Use Edit/Write to update it directly. Create topic files in that same directory for detailed notes.
-This path is under the project-level auto-memory \u2014 it persists across recycles and is shared with other workers.
-
-If your inbox has a message from the user or ${_missionAuth} (mission_authority), prioritize it over your current work.${stateBlock}${proposalBlock}
-
-${loadSeedContext(branch, _missionAuth)}`;
-  return seed;
-}
-
-// mcp/worker-fleet/tools/lifecycle.ts
 function registerLifecycleTools(server) {
-  server.registerTool("recycle", { description: `Restart yourself in the same tmux pane to get a fresh context window.
+  server.registerTool("round_stop", { description: `Mark the end of a work round: save checkpoint, write handoff document, send cycle report \u2014 but stay alive.
 
-Four modes:
-  (1) soft=true (preferred for cycle boundaries): saves checkpoint + cycle report but does NOT exit. You stay alive and keep working. Use this to mark cycle boundaries without restarting. Context refreshes naturally via pre-compact hook.
-  (2) Default (cold restart): exits current session, generates a new seed file with the handoff message, and launches a brand-new Claude session.
-  (3) resume=true (hot restart): resume same session ID \u2014 preserves full conversation history but reloads MCP config.
-  (4) Perpetual workers with sleep_duration: exits session and lets the watchdog respawn after sleep_duration seconds. Use sleep_seconds to override.
+Use this when:
+  - You finished a task and want to log progress before starting the next one
+  - You're done with all work and want to save state before going idle
+  - Context is getting long and you want a clean checkpoint
 
-When to use which:
-  - Finished a task, have more work or mail to handle \u2192 soft=true. Stay alive, log the cycle.
-  - Context window getting very long (compacted 2+ times) \u2192 cold restart (default). Handoff carries state.
-  - MCP config or .mcp.json changed \u2192 hot restart (resume=true). Keeps conversation, reloads MCP.
-  - No more work AND no pending mail \u2192 default recycle. Let watchdog handle respawn timer.
-  - Stuck or corrupted state \u2192 cold restart with minimal handoff.
-
-Blocked by pending dynamic hooks unless force=true.`, inputSchema: {
-    message: exports_external.string().optional().describe("Handoff context for the next instance. Include: what was accomplished, what remains, any blockers or decisions needed. Written to handoff.md and injected into the next session's seed"),
-    resume: exports_external.boolean().optional().describe("If true, hot-restart: resume the same session (keeps conversation history, reloads MCP/model config). If false (default), cold-restart with a fresh seed"),
-    force: exports_external.boolean().optional().describe("If true, bypass the stop-check gate. Use only when pending checks are genuinely not applicable to the current cycle"),
-    sleep_seconds: exports_external.number().optional().describe("Override sleep_duration for this recycle only. The watchdog will respawn after this many seconds. 0 = immediate restart (no sleep). Only applies to perpetual workers"),
-    cancel: exports_external.boolean().optional().describe("If true, cancel a pending sleep timer (clears status=sleeping). Use when you realize you have more work and don't need to restart yet"),
-    soft: exports_external.boolean().optional().describe("If true, soft recycle: save checkpoint, send cycle report, log the cycle \u2014 but do NOT exit Claude or kill the pane. You stay alive and keep working. Use this to mark cycle boundaries without restarting. The pre-compact hook will re-inject your seed when context compacts naturally")
-  } }, async ({ message, resume, force, sleep_seconds, cancel, soft }) => {
-    if (cancel) {
-      withRegistryLocked((registry2) => {
-        const w = registry2[WORKER_NAME];
-        if (w && w.status === "sleeping") {
-          w.status = "active";
-          if (w.custom)
-            w.custom.sleep_until = null;
-        }
-      });
-      return { content: [{ type: "text", text: "Sleep timer cancelled. Status restored to active." }] };
-    }
-    if (soft) {
-      try {
-        const checkpointDir = join11(WORKERS_DIR, WORKER_NAME, "checkpoints");
-        const gitState = _captureGitState();
-        const hooks = _captureHooksSnapshot();
-        _writeCheckpoint(checkpointDir, {
-          timestamp: new Date().toISOString(),
-          type: "soft-recycle",
-          summary: message || "Soft recycle \u2014 cycle boundary",
-          git_state: gitState,
-          dynamic_hooks: hooks,
-          key_facts: [],
-          transcript_ref: ""
-        });
-      } catch {}
-      withRegistryLocked((registry2) => {
-        const w = registry2[WORKER_NAME];
-        if (w) {
-          w.custom = w.custom || {};
-          w.custom.last_recycle_at = new Date().toISOString();
-          w.custom.last_recycle_reason = "soft";
-        }
-      });
-      if (message) {
-        try {
-          const handoffPath = join11(WORKERS_DIR, WORKER_NAME, "handoff.md");
-          writeFileSync7(handoffPath, message.trim() + `
-`);
-        } catch {}
-      }
-      try {
-        const registry2 = readRegistry();
-        const config2 = registry2._config;
-        const cycleReport = message ? `[${WORKER_NAME}] Soft cycle complete: ${message}` : `[${WORKER_NAME}] Soft cycle complete (no summary)`;
-        const maList = config2?.mission_authority;
-        const operatorNames = !maList ? [] : Array.isArray(maList) ? maList : [maList];
-        const filteredOps = operatorNames.filter((n) => n !== WORKER_NAME);
-        if (filteredOps.length > 0) {
-          getFleetMailToken().then(async () => {
-            const toIds = await resolveFleetMailRecipients(filteredOps);
-            await fleetMailRequest("POST", "/api/messages/send", {
-              to: toIds,
-              subject: `${WORKER_NAME} soft cycle done`,
-              body: cycleReport,
-              cc: [],
-              thread_id: null,
-              in_reply_to: null,
-              reply_by: null,
-              labels: ["CYCLE-REPORT"],
-              attachments: []
-            });
-          }).catch(() => {});
-        }
-      } catch {}
-      for (const [id, hook] of dynamicHooks.entries()) {
-        if (hook.completed)
-          dynamicHooks.delete(id);
-      }
-      return {
-        content: [{
-          type: "text",
-          text: `Soft recycle complete \u2014 cycle logged, checkpoint saved. You are still alive.
-` + `${message ? `Handoff: "${message.slice(0, 100)}${message.length > 100 ? "..." : ""}"` : "No handoff message."}
-` + `Completed hooks cleared. Keep working \u2014 check mail_inbox() for new tasks.`
-        }]
-      };
-    }
-    const pendingChecks = [...dynamicHooks.values()].filter((h) => h.blocking && !h.completed);
-    if (pendingChecks.length > 0 && !force) {
-      const checkList = pendingChecks.map((h) => `  [${h.id}] ${h.event}/${h.blocking ? "gate" : "inject"} \u2014 ${h.description}`).join(`
-`);
-      return {
-        content: [{
-          type: "text",
-          text: `BLOCKED: ${pendingChecks.length} pending hook(s) \u2014 complete these before recycling:
-
-${checkList}
-
-Use complete_hook(id) to mark each done, or recycle(force=true) to skip.`
-        }],
-        isError: true
-      };
-    }
-    const ownPane = findOwnPane();
-    if (!ownPane) {
-      return { content: [{ type: "text", text: "Error: Could not find own pane in registry. Are you running in tmux?" }], isError: true };
-    }
-    let pendingWarning = "";
-    let hasUnreadMail = false;
+This does NOT exit your session, restart anything, or touch your hooks.
+To actually restart a worker (fresh context, config reload), the operator runs \`fleet recycle <name>\` from the CLI.`, inputSchema: {
+    message: exports_external.string().describe("Handoff document: what was accomplished, what remains, any blockers. Written to handoff.md and checkpoint")
+  } }, async ({ message }) => {
     try {
-      const mailToken = getWorkerEntry(WORKER_NAME)?.bms_token;
-      if (mailToken) {
-        const resp = await fetch(`${FLEET_MAIL_URL}/api/messages?label=UNREAD&maxResults=1`, {
-          headers: { Authorization: `Bearer ${mailToken}` },
-          signal: AbortSignal.timeout(3000)
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          const unread = data?._diagnostics?.unread_count || 0;
-          if (unread > 0) {
-            hasUnreadMail = true;
-            pendingWarning = `
-
-WARNING: ${unread} unread mail \u2014 call mail_inbox() before recycling.`;
-          }
-        }
-      }
-    } catch {}
-    const entry0 = getWorkerEntry(WORKER_NAME);
-    const isPerpetual0 = (entry0?.sleep_duration ?? null) !== null && (entry0?.sleep_duration ?? 0) > 0;
-    if (isPerpetual0 && !hasUnreadMail && !resume) {
-      const hasSubstantiveHandoff = message && message.trim().length > 20;
-      if (!hasSubstantiveHandoff) {
-        const registrySleepDur0 = entry0?.sleep_duration ?? 1800;
-        const effectiveSleep0 = sleep_seconds !== undefined ? sleep_seconds : registrySleepDur0;
-        if (effectiveSleep0 > 0) {
-          const sleepUntil0 = new Date(Date.now() + effectiveSleep0 * 1000).toISOString();
-          try {
-            const checkpointDir = join11(WORKERS_DIR, WORKER_NAME, "checkpoints");
-            const gitState = _captureGitState();
-            const hooks = _captureHooksSnapshot();
-            const checkpoint = {
-              timestamp: new Date().toISOString(),
-              type: "idle-sleep",
-              summary: message || "Idle \u2014 no pending work, sleeping",
-              git_state: gitState,
-              dynamic_hooks: hooks,
-              key_facts: [],
-              transcript_ref: ""
-            };
-            _writeCheckpoint(checkpointDir, checkpoint);
-          } catch {}
-          withRegistryLocked((registry2) => {
-            const w = registry2[WORKER_NAME];
-            if (w) {
-              w.status = "sleeping";
-              w.custom = w.custom || {};
-              w.custom.sleep_until = sleepUntil0;
-              w.custom.last_recycle_at = new Date().toISOString();
-              w.custom.last_recycle_reason = "idle";
-            }
-          });
-          const rt0 = getWorkerRuntime();
-          const recycleScript0 = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
-          writeFileSync7(recycleScript0, `#!/bin/bash
-# Auto-generated IDLE SLEEP for ${WORKER_NAME} \u2014 no pending work, watchdog will wake on mail or timer
-set -uo pipefail
-PANE_ID="${ownPane.paneId}"
-sleep 5
-tmux send-keys -t "$PANE_ID" "${rt0.exitCommand}"
-tmux send-keys -t "$PANE_ID" -H 0d
-WAIT=0
-while [ "$WAIT" -lt 30 ]; do
-  sleep 2; WAIT=$((WAIT+2))
-  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
-  [ -z "$PANE_PID" ] && break
-  AGENT_RUNNING=false
-  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
-    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-    [[ "$cmd" == *${rt0.binary}* ]] && AGENT_RUNNING=true && break
-  done
-  [ "$AGENT_RUNNING" = "false" ] && break
-done
-rm -f "${recycleScript0}"
-`);
-          try {
-            execSync6(`nohup bash "${recycleScript0}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
-              shell: "/bin/bash",
-              timeout: 5000
-            });
-          } catch (e) {
-            return { content: [{ type: "text", text: `Error spawning idle sleep: ${e.message}` }], isError: true };
-          }
-          const wakeTime0 = new Date(Date.now() + effectiveSleep0 * 1000);
-          const wakeStr0 = `${wakeTime0.getHours().toString().padStart(2, "0")}:${wakeTime0.getMinutes().toString().padStart(2, "0")}`;
-          return {
-            content: [{
-              type: "text",
-              text: `IDLE SLEEP \u2014 no pending work detected. Sleeping for ${effectiveSleep0}s (~${wakeStr0}).
-` + `Watchdog will wake early if mail arrives.
-` + `Status: sleeping (until ${sleepUntil0})
-` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.`
-            }]
-          };
-        }
-      }
-    }
-    const sessionId = getSessionId(ownPane.paneId);
-    const worktreeDir = getWorktreeDir();
-    const pathSlug = worktreeDir.replace(/\//g, "-").replace(/^-/, "-");
-    const transcriptPath = sessionId ? join11(HOME, ".claude/projects", pathSlug, `${sessionId}.jsonl`) : null;
-    try {
-      const checkpointDir = join11(WORKERS_DIR, WORKER_NAME, "checkpoints");
+      const checkpointDir = join10(WORKERS_DIR, WORKER_NAME, "checkpoints");
       const gitState = _captureGitState();
       const hooks = _captureHooksSnapshot();
-      const checkpoint = {
+      _writeCheckpoint(checkpointDir, {
         timestamp: new Date().toISOString(),
-        type: "recycle",
-        summary: message || "Recycle without summary",
+        type: "round-stop",
+        summary: message,
         git_state: gitState,
         dynamic_hooks: hooks,
         key_facts: [],
-        transcript_ref: transcriptPath || ""
-      };
-      _writeCheckpoint(checkpointDir, checkpoint);
-      const handoffPath = join11(WORKERS_DIR, WORKER_NAME, "handoff.md");
-      if (message) {
-        let handoffContent = message;
-        if (transcriptPath) {
-          handoffContent += `
-
-If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: ${transcriptPath}`;
-        }
-        writeFileSync7(handoffPath, handoffContent.trim() + `
-`);
+        transcript_ref: ""
+      });
+    } catch {}
+    withRegistryLocked((registry2) => {
+      const w = registry2[WORKER_NAME];
+      if (w) {
+        w.custom = w.custom || {};
+        w.custom.last_cycle_at = new Date().toISOString();
       }
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error writing checkpoint: ${e.message}` }], isError: true };
-    }
+    });
+    try {
+      const handoffPath = join10(WORKERS_DIR, WORKER_NAME, "handoff.md");
+      writeFileSync8(handoffPath, message.trim() + `
+`);
+    } catch {}
     try {
       const registry2 = readRegistry();
       const config2 = registry2._config;
-      const cycleReport = message ? `[${WORKER_NAME}] Cycle complete: ${message}` : `[${WORKER_NAME}] Cycle complete (no summary provided)`;
+      const cycleReport = `[${WORKER_NAME}] Round complete: ${message}`;
       const maList = config2?.mission_authority;
       const operatorNames = !maList ? [] : Array.isArray(maList) ? maList : [maList];
       const filteredOps = operatorNames.filter((n) => n !== WORKER_NAME);
@@ -22619,7 +22737,7 @@ If you need specific details from before compaction (like exact code snippets, e
           const toIds = await resolveFleetMailRecipients(filteredOps);
           await fleetMailRequest("POST", "/api/messages/send", {
             to: toIds,
-            subject: `${WORKER_NAME} cycle done`,
+            subject: `${WORKER_NAME} round done`,
             body: cycleReport,
             cc: [],
             thread_id: null,
@@ -22631,235 +22749,34 @@ If you need specific details from before compaction (like exact code snippets, e
         }).catch(() => {});
       }
     } catch {}
-    if (resume) {
-      const sessionId2 = getSessionId(ownPane.paneId);
-      if (!sessionId2) {
-        return { content: [{ type: "text", text: "Error: Could not detect session ID \u2014 cannot resume." }], isError: true };
-      }
-      const model2 = getWorkerModel();
-      const workerDir2 = join11(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
-      const worktreeDir2 = getWorktreeDir();
-      const rt2 = getWorkerRuntime();
-      const resumeCmd = rt2.buildResumeCmd({ model: model2, permissionMode: "bypassPermissions", workerDir: workerDir2, sessionId: sessionId2 });
-      const resumeCmdFile = `/tmp/resume-cmd-${WORKER_NAME}-${Date.now()}.txt`;
-      writeFileSync7(resumeCmdFile, `echo 'Continue from where you left off.' | ${resumeCmd}`);
-      const reloadScript = `/tmp/reload-${WORKER_NAME}-${Date.now()}.sh`;
-      writeFileSync7(reloadScript, `#!/bin/bash
-set -uo pipefail
-PANE_ID="${ownPane.paneId}"
-RESUME_CMD_FILE="${resumeCmdFile}"
-sleep 3
-tmux send-keys -t "$PANE_ID" "${rt2.exitCommand}"
-tmux send-keys -t "$PANE_ID" -H 0d
-WAIT=0
-while [ "$WAIT" -lt 30 ]; do
-  sleep 2; WAIT=$((WAIT+2))
-  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
-  [ -z "$PANE_PID" ] && { echo "FATAL: pane gone"; exit 1; }
-  AGENT_RUNNING=false
-  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
-    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-    [[ "$cmd" == *${rt2.binary}* ]] && AGENT_RUNNING=true && break
-  done
-  [ "$AGENT_RUNNING" = "false" ] && break
-done
-sleep 2
-tmux send-keys -t "$PANE_ID" "cd ${worktreeDir2}"
-tmux send-keys -t "$PANE_ID" -H 0d
-sleep 1
-# Use load-buffer to avoid shell quoting issues with resume command
-tmux load-buffer -b "resume-$$" "$RESUME_CMD_FILE"
-tmux paste-buffer -b "resume-$$" -t "$PANE_ID" -d
-tmux send-keys -t "$PANE_ID" -H 0d
-rm -f "${reloadScript}" "$RESUME_CMD_FILE"
-`);
-      execSync6(`nohup bash "${reloadScript}" > /dev/null 2>&1 &`, { shell: "/bin/bash", timeout: 5000 });
-      return {
-        content: [{
-          type: "text",
-          text: `Hot-restarting \u2014 /exit in ~3s, then session ${sessionId2} resumes.
-Model: ${model2}
-Do NOT send any more tool calls \u2014 /exit is imminent.` + pendingWarning
-        }]
-      };
-    }
-    const model = getWorkerModel();
-    const workerDir = join11(PROJECT_ROOT, ".claude/workers", WORKER_NAME);
-    const rt = getWorkerRuntime();
-    const entry = getWorkerEntry(WORKER_NAME);
-    const isPerpetual = entry?.sleep_duration !== null && entry?.sleep_duration !== undefined && entry.sleep_duration > 0;
-    const registrySleepDur = entry?.sleep_duration ?? 1800;
-    const effectiveSleep = sleep_seconds !== undefined ? sleep_seconds : registrySleepDur;
-    const shouldDeferToWatchdog = isPerpetual && effectiveSleep > 0;
-    if (shouldDeferToWatchdog) {
-      const sleepUntil = new Date(Date.now() + effectiveSleep * 1000).toISOString();
-      withRegistryLocked((registry2) => {
-        const w = registry2[WORKER_NAME];
-        if (w) {
-          w.status = "sleeping";
-          w.custom = w.custom || {};
-          w.custom.sleep_until = sleepUntil;
-          w.custom.last_recycle_at = new Date().toISOString();
-        }
-      });
-      const recycleScript2 = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
-      writeFileSync7(recycleScript2, `#!/bin/bash
-# Auto-generated SLEEP recycle for ${WORKER_NAME} \u2014 watchdog will respawn after ${effectiveSleep}s
-set -uo pipefail
-PANE_ID="${ownPane.paneId}"
-sleep 5
-tmux send-keys -t "$PANE_ID" "${rt.exitCommand}"
-tmux send-keys -t "$PANE_ID" -H 0d
-WAIT=0
-while [ "$WAIT" -lt 30 ]; do
-  sleep 2; WAIT=$((WAIT+2))
-  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
-  [ -z "$PANE_PID" ] && break
-  AGENT_RUNNING=false
-  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
-    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-    [[ "$cmd" == *${rt.binary}* ]] && AGENT_RUNNING=true && break
-  done
-  [ "$AGENT_RUNNING" = "false" ] && break
-done
-rm -f "${recycleScript2}"
-`);
-      try {
-        execSync6(`nohup bash "${recycleScript2}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
-          shell: "/bin/bash",
-          timeout: 5000
-        });
-      } catch (e) {
-        return { content: [{ type: "text", text: `Error spawning recycle: ${e.message}` }], isError: true };
-      }
-      const wakeTime = new Date(Date.now() + effectiveSleep * 1000);
-      const wakeStr = `${wakeTime.getHours().toString().padStart(2, "0")}:${wakeTime.getMinutes().toString().padStart(2, "0")}`;
-      return {
-        content: [{
-          type: "text",
-          text: `Recycling initiated. Watchdog will respawn in ${effectiveSleep}s (~${wakeStr}).
-` + `Checkpoint: ${message ? "saved to checkpoints/" : "none"}
-` + `Transcript: ${transcriptPath || "unknown"}
-` + `Status: sleeping (until ${sleepUntil})
-` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.` + pendingWarning
-        }]
-      };
-    }
-    const seedHandoff = message || "";
-    const seedTranscript = transcriptPath ? `
-
-If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: ${transcriptPath}` : "";
-    const seedContent = generateSeedContent((seedHandoff + seedTranscript).trim() || undefined);
-    const seedFile = `/tmp/worker-${WORKER_NAME}-seed.txt`;
-    writeFileSync7(seedFile, seedContent);
-    const recycleScript = `/tmp/recycle-${WORKER_NAME}-${Date.now()}.sh`;
-    const permMode = entry?.permission_mode || "bypassPermissions";
-    const disallowed = Array.isArray(entry?.disallowed_tools) ? entry.disallowed_tools.join(",") : "";
-    const effort = entry?.custom?.reasoning_effort;
-    const agentLaunchCmd = rt.buildLaunchCmd({ model, permissionMode: permMode, disallowedTools: disallowed || undefined, workerDir, reasoningEffort: effort });
-    const tuiPatternStr = rt.tuiReadyPattern.source;
-    const launchCmdFile = `/tmp/launch-cmd-${WORKER_NAME}-${Date.now()}.txt`;
-    writeFileSync7(launchCmdFile, agentLaunchCmd);
-    writeFileSync7(recycleScript, `#!/bin/bash
-# Auto-generated recycle script for ${WORKER_NAME} (runtime: ${rt.type})
-set -uo pipefail
-PANE_ID="${ownPane.paneId}"
-PANE_TARGET="${ownPane.paneTarget}"
-SEED_FILE="${seedFile}"
-LAUNCH_CMD_FILE="${launchCmdFile}"
-
-# Wait for MCP tool response to propagate to TUI
-sleep 5
-
-# Send exit command (graceful \u2014 keeps pane alive with shell prompt)
-tmux send-keys -t "$PANE_ID" "${rt.exitCommand}"
-tmux send-keys -t "$PANE_ID" -H 0d
-
-# Wait for agent to exit and shell prompt to return (max 30s)
-WAIT=0
-while [ "$WAIT" -lt 30 ]; do
-  sleep 2; WAIT=$((WAIT+2))
-  PANE_PID=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null | awk -v id="$PANE_ID" '$1 == id {print $2}')
-  [ -z "$PANE_PID" ] && { echo "FATAL: pane $PANE_ID gone"; exit 1; }
-  AGENT_RUNNING=false
-  for pid in $(pgrep -P "$PANE_PID" 2>/dev/null); do
-    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
-    [[ "$cmd" == *${rt.binary}* ]] && AGENT_RUNNING=true && break
-  done
-  [ "$AGENT_RUNNING" = "false" ] && break
-done
-
-# Small delay for shell prompt to stabilize
-sleep 2
-
-# Change to worktree directory
-tmux send-keys -t "$PANE_ID" "cd ${worktreeDir}"
-tmux send-keys -t "$PANE_ID" -H 0d
-sleep 1
-
-# Launch agent via tmux buffer (avoids shell quoting issues with parens in --disallowed-tools)
-LAUNCH_BUFFER="launch-${WORKER_NAME}-$$"
-tmux load-buffer -b "$LAUNCH_BUFFER" "$LAUNCH_CMD_FILE"
-tmux paste-buffer -b "$LAUNCH_BUFFER" -t "$PANE_ID" -d
-sleep 1
-tmux send-keys -t "$PANE_ID" -H 0d
-
-# Wait for TUI ready (poll for statusline, max 90s)
-WAIT=0
-until tmux capture-pane -t "$PANE_ID" -p 2>/dev/null | grep -qE "${tuiPatternStr}"; do
-  sleep 3; WAIT=$((WAIT+3))
-  [ "$WAIT" -ge 90 ] && break
-done
-sleep 3
-
-# Inject seed using a named buffer (prevents race conditions when multiple workers recycle concurrently)
-BUFFER_NAME="recycle-${WORKER_NAME}-$$"
-tmux load-buffer -b "$BUFFER_NAME" "$SEED_FILE"
-tmux paste-buffer -b "$BUFFER_NAME" -t "$PANE_ID" -d
-sleep 2
-tmux send-keys -t "$PANE_ID" -H 0d
-
-# Cleanup
-rm -f "${recycleScript}" "$LAUNCH_CMD_FILE"
-`);
-    try {
-      execSync6(`nohup bash "${recycleScript}" > /tmp/recycle-${WORKER_NAME}.log 2>&1 &`, {
-        shell: "/bin/bash",
-        timeout: 5000
-      });
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error spawning recycle: ${e.message}` }], isError: true };
-    }
     return {
       content: [{
         type: "text",
-        text: `Recycling initiated. You will be restarted in ~10 seconds.
-` + `Checkpoint: ${message ? "saved to checkpoints/" : "none"}
-` + `Transcript: ${transcriptPath || "unknown"}
-` + `Seed: ${seedFile}
-` + `Do NOT send any more tool calls \u2014 /exit will be sent shortly.` + pendingWarning
+        text: `Round logged, checkpoint saved, handoff written. You are still alive.
+` + `Handoff: "${message.slice(0, 120)}${message.length > 120 ? "..." : ""}"
+` + `Keep working \u2014 check mail_inbox() for new tasks, or go idle if nothing pending.`
       }]
     };
   });
   server.registerTool("save_checkpoint", {
-    description: "Save a checkpoint of your current working state. Automatically captures git state and dynamic hooks. Use before complex operations, when context is getting long, or to preserve state across recycles. Checkpoints are auto-saved before context compaction and on recycle.",
+    description: "Save a checkpoint of your current working state. Automatically captures git state and dynamic hooks. Use before complex operations, when context is getting long, or to preserve state across restarts. Checkpoints are auto-saved on round_stop and before context compaction.",
     inputSchema: {
       summary: exports_external.string().describe("Brief description of what you're working on and current progress"),
       key_facts: exports_external.array(exports_external.string()).optional().describe("Important facts to preserve across context boundaries (max 10)")
     }
   }, async ({ summary, key_facts }) => {
-    const checkpointDir = join11(WORKERS_DIR, WORKER_NAME, "checkpoints");
+    const checkpointDir = join10(WORKERS_DIR, WORKER_NAME, "checkpoints");
     const gitState = _captureGitState();
     const hooks = _captureHooksSnapshot();
     let transcriptRef = "";
     try {
       const worktreeDir = getWorktreeDir();
       const pathSlug = worktreeDir.replace(/\//g, "-").replace(/^-/, "-");
-      const projectDir = join11(HOME, ".claude/projects", pathSlug);
+      const projectDir = join10(HOME, ".claude/projects", pathSlug);
       if (existsSync8(projectDir)) {
         const files = readdirSync4(projectDir).filter((f) => f.endsWith(".jsonl")).sort().reverse();
         if (files.length > 0) {
-          transcriptRef = join11(projectDir, files[0]);
+          transcriptRef = join10(projectDir, files[0]);
         }
       }
     } catch {}
@@ -22886,15 +22803,15 @@ Facts: ${(key_facts || []).length} saved`
 }
 
 // mcp/worker-fleet/tools/fleet.ts
-import { readFileSync as readFileSync12, writeFileSync as writeFileSync10, appendFileSync as appendFileSync2, existsSync as existsSync11, mkdirSync as mkdirSync10, lstatSync, rmSync as rmSync4, unlinkSync as unlinkSync2, symlinkSync as symlinkSync3, copyFileSync as copyFileSync3, cpSync } from "fs";
-import { join as join15 } from "path";
-import { execSync as execSync7, spawnSync as spawnSync3 } from "child_process";
-var TEMPLATE_TYPES_DIR = join15(CLAUDE_FLEET, "templates/flat-worker/types");
+import { readFileSync as readFileSync11, writeFileSync as writeFileSync11, appendFileSync as appendFileSync2, existsSync as existsSync11, mkdirSync as mkdirSync11, lstatSync, rmSync as rmSync4, unlinkSync as unlinkSync2, symlinkSync as symlinkSync3, copyFileSync as copyFileSync4, cpSync } from "fs";
+import { join as join14 } from "path";
+import { execSync as execSync6, spawnSync as spawnSync3 } from "child_process";
+var TEMPLATE_TYPES_DIR = join14(CLAUDE_FLEET, "templates/flat-worker/types");
 function loadTypeTemplate(type) {
-  const typeDir = join15(TEMPLATE_TYPES_DIR, type);
+  const typeDir = join14(TEMPLATE_TYPES_DIR, type);
   const result = {};
   try {
-    const perms = JSON.parse(readFileSync12(join15(typeDir, "permissions.json"), "utf-8"));
+    const perms = JSON.parse(readFileSync11(join14(typeDir, "permissions.json"), "utf-8"));
     if (perms.model)
       result.model = perms.model;
     if (perms.permission_mode)
@@ -22903,7 +22820,7 @@ function loadTypeTemplate(type) {
       result.disallowedTools = perms.denyList;
   } catch {}
   try {
-    const defaults = JSON.parse(readFileSync12(join15(typeDir, "defaults.json"), "utf-8"));
+    const defaults = JSON.parse(readFileSync11(join14(typeDir, "defaults.json"), "utf-8"));
     if ("sleep_duration" in defaults)
       result.sleep_duration = defaults.sleep_duration;
   } catch {}
@@ -22915,7 +22832,7 @@ function createWorkerFiles(input) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
     return { ok: false, error: `Name must be kebab-case (got '${name}')` };
   }
-  const workerDir2 = join15(WORKERS_DIR, name);
+  const workerDir2 = join14(WORKERS_DIR, name);
   if (existsSync11(workerDir2)) {
     return { ok: false, error: `Worker '${name}' already exists at ${workerDir2}` };
   }
@@ -22923,39 +22840,39 @@ function createWorkerFiles(input) {
     return { ok: false, error: `Mission cannot be empty` };
   }
   const tpl = type ? loadTypeTemplate(type) : {};
-  mkdirSync10(workerDir2, { recursive: true });
+  mkdirSync11(workerDir2, { recursive: true });
   const projectSlug = PROJECT_ROOT.replace(/\//g, "-");
-  const autoMemoryDir = join15(HOME, ".claude", "projects", projectSlug, "memory", name);
-  mkdirSync10(autoMemoryDir, { recursive: true });
-  const autoMemoryPath = join15(autoMemoryDir, "MEMORY.md");
+  const autoMemoryDir = join14(HOME, ".claude", "projects", projectSlug, "memory", name);
+  mkdirSync11(autoMemoryDir, { recursive: true });
+  const autoMemoryPath = join14(autoMemoryDir, "MEMORY.md");
   try {
     if (lstatSync(autoMemoryPath).isSymbolicLink()) {
       rmSync4(autoMemoryPath);
     }
   } catch {}
   if (!existsSync11(autoMemoryPath)) {
-    writeFileSync10(autoMemoryPath, `# ${name} Memory
+    writeFileSync11(autoMemoryPath, `# ${name} Memory
 
 `);
   }
-  const perWorkerFleetDir = join15(FLEET_DIR, name);
-  mkdirSync10(perWorkerFleetDir, { recursive: true });
-  const perWorkerMission = join15(perWorkerFleetDir, "mission.md");
-  writeFileSync10(perWorkerMission, mission.trim() + `
+  const perWorkerFleetDir = join14(FLEET_DIR, name);
+  mkdirSync11(perWorkerFleetDir, { recursive: true });
+  const perWorkerMission = join14(perWorkerFleetDir, "mission.md");
+  writeFileSync11(perWorkerMission, mission.trim() + `
 `);
-  const centralMissionsDir = join15(FLEET_DIR, "missions");
-  mkdirSync10(centralMissionsDir, { recursive: true });
-  const centralMission = join15(centralMissionsDir, `${name}.md`);
-  writeFileSync10(centralMission, mission.trim() + `
+  const centralMissionsDir = join14(FLEET_DIR, "missions");
+  mkdirSync11(centralMissionsDir, { recursive: true });
+  const centralMission = join14(centralMissionsDir, `${name}.md`);
+  writeFileSync11(centralMission, mission.trim() + `
 `);
-  const worktreeMission = join15(workerDir2, "mission.md");
+  const worktreeMission = join14(workerDir2, "mission.md");
   try {
     unlinkSync2(worktreeMission);
   } catch {}
   try {
     symlinkSync3(perWorkerMission, worktreeMission);
   } catch {
-    writeFileSync10(worktreeMission, mission.trim() + `
+    writeFileSync11(worktreeMission, mission.trim() + `
 `);
   }
   const defaultDisallowed = [
@@ -23004,15 +22921,15 @@ async function handleFleetCreate(params) {
 `).map((w) => w.trim());
       if (!windows.includes(winName)) {
         const target = windowIndex != null ? `${tmuxSession}:${windowIndex}` : tmuxSession;
-        return execSync7(`tmux new-window -t "${target}" -n "${winName}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+        return execSync6(`tmux new-window -t "${target}" -n "${winName}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
       }
-      const paneId = execSync7(`tmux split-window -t "${tmuxSession}:${winName}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
+      const paneId = execSync6(`tmux split-window -t "${tmuxSession}:${winName}" -d -P -F '#{pane_id}' -c "${cwd}"`, { encoding: "utf-8", timeout: 5000 }).trim();
       spawnSync3("tmux", ["select-layout", "-t", `${tmuxSession}:${winName}`, "tiled"], { encoding: "utf-8" });
       return paneId;
     }, registerPane = function(paneId) {
       let paneTarget = "";
       try {
-        paneTarget = execSync7(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${paneId}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
+        paneTarget = execSync6(`tmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' | awk -v id="${paneId}" '$1 == id {print $2}'`, { encoding: "utf-8", timeout: 5000 }).trim();
       } catch {}
       withRegistryLocked((registry2) => {
         const entry = registry2[name];
@@ -23052,8 +22969,8 @@ async function handleFleetCreate(params) {
     const reportTo = direct_report ? WORKER_NAME : report_to || defaultReportTo;
     const { state, permissions, runtime: resolvedRuntime, model: selectedModel } = result;
     const isPerpetual = (state.sleep_duration ?? null) !== null && (state.sleep_duration ?? 0) > 0;
-    const workerFleetDir = join15(FLEET_DIR, name);
-    mkdirSync10(workerFleetDir, { recursive: true });
+    const workerFleetDir = join14(FLEET_DIR, name);
+    mkdirSync11(workerFleetDir, { recursive: true });
     const allHooks = [...getDefaultSystemHooks()];
     if (type) {
       const fleetCfg = readFleetConfig();
@@ -23119,15 +23036,15 @@ async function handleFleetCreate(params) {
       }
     });
     const projectName = PROJECT_ROOT.split("/").pop();
-    const worktreeDir = join15(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
+    const worktreeDir = join14(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
     const workerBranch = `worker/${name}`;
     let worktreeReady = false;
     try {
       if (!existsSync11(worktreeDir)) {
         try {
-          execSync7(`git -C "${PROJECT_ROOT}" branch "${workerBranch}" HEAD 2>/dev/null`, { timeout: 5000 });
+          execSync6(`git -C "${PROJECT_ROOT}" branch "${workerBranch}" HEAD 2>/dev/null`, { timeout: 5000 });
         } catch {}
-        execSync7(`git -C "${PROJECT_ROOT}" worktree add "${worktreeDir}" "${workerBranch}"`, { encoding: "utf-8", timeout: 1e4 });
+        execSync6(`git -C "${PROJECT_ROOT}" worktree add "${worktreeDir}" "${workerBranch}"`, { encoding: "utf-8", timeout: 1e4 });
       }
       worktreeReady = true;
       const latestConfig = readWorkerConfig(name);
@@ -23136,8 +23053,34 @@ async function handleFleetCreate(params) {
         writeWorkerConfig(name, latestConfig);
         writeLaunchScript(name, latestConfig);
       }
-      const wtMcp = join15(worktreeDir, ".mcp.json");
-      const baseMcp = join15(PROJECT_ROOT, ".mcp.json");
+      const baseMcp = join14(PROJECT_ROOT, ".mcp.json");
+      try {
+        const claudeHooksDir = process.env.CLAUDE_HOOKS_DIR || join14(HOME, ".claude-hooks");
+        const claudeHooksMcp = join14(claudeHooksDir, "mcp/index.ts");
+        if (existsSync11(claudeHooksMcp)) {
+          let mcpCfg = { mcpServers: {} };
+          if (existsSync11(baseMcp)) {
+            try {
+              mcpCfg = JSON.parse(readFileSync11(baseMcp, "utf-8"));
+            } catch {}
+          }
+          if (!mcpCfg.mcpServers)
+            mcpCfg.mcpServers = {};
+          const bunPath = process.execPath || join14(HOME, ".bun/bin/bun");
+          mcpCfg.mcpServers["claude-hooks"] = {
+            command: bunPath,
+            args: ["run", claudeHooksMcp],
+            env: {
+              HOOKS_DIR: join14(FLEET_DIR, name, "hooks"),
+              HOOKS_IDENTITY: name,
+              HOOKS_PERMISSIONS: join14(PROJECT_ROOT, ".claude/workers", name, "permissions.json")
+            }
+          };
+          writeFileSync11(baseMcp, JSON.stringify(mcpCfg, null, 2) + `
+`);
+        }
+      } catch {}
+      const wtMcp = join14(worktreeDir, ".mcp.json");
       if (existsSync11(baseMcp)) {
         try {
           unlinkSync2(wtMcp);
@@ -23146,17 +23089,17 @@ async function handleFleetCreate(params) {
           symlinkSync3(baseMcp, wtMcp);
         } catch {}
       }
-      const setupScript = join15(PROJECT_ROOT, ".claude/scripts/worker/setup-worktree.sh");
+      const setupScript = join14(PROJECT_ROOT, ".claude/scripts/worker/setup-worktree.sh");
       if (existsSync11(setupScript)) {
         try {
-          execSync7(`bash "${setupScript}" "${worktreeDir}"`, { timeout: 5000 });
+          execSync6(`bash "${setupScript}" "${worktreeDir}"`, { timeout: 5000 });
         } catch {}
       }
-      const wtWorkerDir = join15(worktreeDir, ".claude/workers", name);
-      mkdirSync10(wtWorkerDir, { recursive: true });
-      const wtMissionPath = join15(wtWorkerDir, "mission.md");
+      const wtWorkerDir = join14(worktreeDir, ".claude/workers", name);
+      mkdirSync11(wtWorkerDir, { recursive: true });
+      const wtMissionPath = join14(wtWorkerDir, "mission.md");
       try {
-        writeFileSync10(wtMissionPath, mission.trim() + `
+        writeFileSync11(wtMissionPath, mission.trim() + `
 `);
       } catch {}
     } catch {}
@@ -23177,15 +23120,15 @@ async function handleFleetCreate(params) {
               const callerCwd = process.cwd();
               const parentSlug = callerCwd.replace(/\//g, "-");
               const newSlug = worktreeDir.replace(/\//g, "-");
-              const parentProj = join15(HOME, ".claude/projects", parentSlug);
-              const newProj = join15(HOME, ".claude/projects", newSlug);
-              mkdirSync10(newProj, { recursive: true });
-              const jsonlSrc = join15(parentProj, `${sessionId}.jsonl`);
+              const parentProj = join14(HOME, ".claude/projects", parentSlug);
+              const newProj = join14(HOME, ".claude/projects", newSlug);
+              mkdirSync11(newProj, { recursive: true });
+              const jsonlSrc = join14(parentProj, `${sessionId}.jsonl`);
               if (existsSync11(jsonlSrc))
-                copyFileSync3(jsonlSrc, join15(newProj, `${sessionId}.jsonl`));
-              const subdirSrc = join15(parentProj, sessionId);
+                copyFileSync4(jsonlSrc, join14(newProj, `${sessionId}.jsonl`));
+              const subdirSrc = join14(parentProj, sessionId);
               if (existsSync11(subdirSrc))
-                cpSync(subdirSrc, join15(newProj, sessionId), { recursive: true });
+                cpSync(subdirSrc, join14(newProj, sessionId), { recursive: true });
             } catch {}
           }
           try {
@@ -23195,9 +23138,9 @@ async function handleFleetCreate(params) {
   Launch: SKIPPED \u2014 pane creation failed. Run manually.`;
             } else {
               registerPane(childPaneId);
-              const forkScript = join15(CLAUDE_FLEET, "scripts/fork-worker.sh");
+              const forkScript = join14(CLAUDE_FLEET, "scripts/fork-worker.sh");
               const workerModel = selectedModel || "opus";
-              const workerDir2 = join15(PROJECT_ROOT, ".claude/workers", name);
+              const workerDir2 = join14(PROJECT_ROOT, ".claude/workers", name);
               const cwdFlag = worktreeReady ? `--cwd ${worktreeDir}` : "";
               const wrapperPath = `/tmp/fork-launch-${name}-${Date.now()}.sh`;
               const wrapperContent = [
@@ -23207,8 +23150,8 @@ async function handleFleetCreate(params) {
                 `rm -f "${wrapperPath}"`
               ].join(`
 `);
-              writeFileSync10(wrapperPath, wrapperContent, { mode: 493 });
-              execSync7(`tmux send-keys -t "${childPaneId}" "bash ${wrapperPath}" && tmux send-keys -t "${childPaneId}" -H 0d`, { timeout: 5000 });
+              writeFileSync11(wrapperPath, wrapperContent, { mode: 493 });
+              execSync6(`tmux send-keys -t "${childPaneId}" "bash ${wrapperPath}" && tmux send-keys -t "${childPaneId}" -H 0d`, { timeout: 5000 });
               launchInfo = `
   Launched (fork from ${sessionId}): pane ${childPaneId}`;
             }
@@ -23338,7 +23281,7 @@ function registerFleetTools(server) {
 
 // mcp/worker-fleet/tools/mail.ts
 import { readdirSync as readdirSync5 } from "fs";
-import { execSync as execSync8 } from "child_process";
+import { execSync as execSync7 } from "child_process";
 function registerMailTools(server) {
   server.registerTool("mail_send", {
     description: `Send a message to another worker, the human operator, or the entire fleet. Messages are durably stored in Fleet Mail (persist across restarts, searchable, threaded) and delivered instantly via tmux overlay if the recipient's pane is live.
@@ -23363,16 +23306,19 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
       labels: exports_external.array(exports_external.string()).optional().describe("Additional labels (e.g. URGENT, MERGE-REQUEST)")
     }
   }, async ({ to, subject, body, cc, thread_id, in_reply_to, reply_by, labels }) => {
+    if (!to || !to.trim()) {
+      return { content: [{ type: "text", text: `Error: 'to' field is empty. Provide a worker name, "user", "all", or pane ID.` }], isError: true };
+    }
     if (to === "user") {
       let msgId = "";
       try {
         const toIds = await resolveFleetMailRecipients(["user"]);
-        const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
+        const ccIds2 = cc ? await resolveFleetMailRecipients(cc) : [];
         const result = await fleetMailRequest("POST", "/api/messages/send", {
           to: toIds,
           subject,
           body,
-          cc: ccIds,
+          cc: ccIds2,
           thread_id: thread_id || null,
           in_reply_to: in_reply_to || null,
           reply_by: reply_by || null,
@@ -23384,7 +23330,7 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
         return { content: [{ type: "text", text: `Error sending to operator via Fleet Mail: ${e.message}` }], isError: true };
       }
       try {
-        execSync8(`terminal-notifier -title "Worker Escalation" -message ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} -sound default 2>/dev/null || osascript -e 'display notification ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} with title "Worker Escalation" sound name "default"'`, { timeout: 5000, shell: "/bin/bash" });
+        execSync7(`terminal-notifier -title "Worker Escalation" -message ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} -sound default 2>/dev/null || osascript -e 'display notification ${JSON.stringify(`[${WORKER_NAME}] ${subject}`)} with title "Worker Escalation" sound name "default"'`, { timeout: 5000, shell: "/bin/bash" });
       } catch {}
       return withLint({ content: [{ type: "text", text: `Sent to operator via Fleet Mail [${msgId}] + desktop notification` }] });
     }
@@ -23422,29 +23368,34 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
     if (recipientNames.length === 0) {
       return { content: [{ type: "text", text: "No recipients resolved" }], isError: true };
     }
+    const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
     const mailSuccesses = [];
     const mailFailures = [];
     const tmuxDelivered = [];
     let lastMsgId = "";
-    for (const name of recipientNames) {
-      try {
-        const toIds = await resolveFleetMailRecipients([name]);
-        const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
-        const result = await fleetMailRequest("POST", "/api/messages/send", {
-          to: toIds,
-          subject,
-          body,
-          cc: ccIds,
-          thread_id: thread_id || null,
-          in_reply_to: in_reply_to || null,
-          reply_by: reply_by || null,
-          labels: labels || [],
-          attachments: []
-        });
-        lastMsgId = result?.id || "";
-        mailSuccesses.push(name);
-      } catch (e) {
-        mailFailures.push(`${name}: ${e.message?.slice(0, 80)}`);
+    const sendResults = await Promise.allSettled(recipientNames.map(async (name) => {
+      const toIds = await resolveFleetMailRecipients([name]);
+      const result = await fleetMailRequest("POST", "/api/messages/send", {
+        to: toIds,
+        subject,
+        body,
+        cc: ccIds,
+        thread_id: thread_id || null,
+        in_reply_to: in_reply_to || null,
+        reply_by: reply_by || null,
+        labels: labels || [],
+        attachments: []
+      });
+      return { name, id: result?.id || "" };
+    }));
+    for (const r of sendResults) {
+      if (r.status === "fulfilled") {
+        mailSuccesses.push(r.value.name);
+        lastMsgId = r.value.id;
+      } else {
+        const reason = r.reason?.message?.slice(0, 80) || "unknown";
+        const idx = sendResults.indexOf(r);
+        mailFailures.push(`${recipientNames[idx]}: ${reason}`);
       }
     }
     const registry2 = (() => {
@@ -23640,6 +23591,216 @@ Your token: ${token}
   curl -sf "${FLEET_MAIL_URL}/api/analytics" -H "Authorization: Bearer $TOKEN"
 `);
   });
+}
+// mcp/worker-fleet/seed.ts
+import { readFileSync as readFileSync12, existsSync as existsSync12 } from "fs";
+import { join as join15 } from "path";
+function loadSeedContext(branch, missionAuthority, workerName) {
+  const name = workerName || WORKER_NAME;
+  const tmplPath = join15(CLAUDE_FLEET, "templates/seed-context.md");
+  try {
+    return readFileSync12(tmplPath, "utf-8").replace(/\{\{WORKER_NAME\}\}/g, name).replace(/\{\{BRANCH\}\}/g, branch).replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
+  } catch {
+    return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;
+  }
+}
+function generateSeedContent(handoff, workerName) {
+  const effectiveName = workerName || WORKER_NAME;
+  const workerDir2 = join15(PROJECT_ROOT, ".claude/workers", effectiveName);
+  const fleetWorkerDir = join15(FLEET_DIR, effectiveName);
+  const worktreeDir = getWorktreeDir();
+  const branch = `worker/${effectiveName}`;
+  const _seedConfig = readRegistry()._config;
+  const _missionAuth = getMissionAuthorityLabel(_seedConfig);
+  let stateBlock = "";
+  let proposalBlock = "";
+  try {
+    const reg = readRegistry();
+    const entry = reg[effectiveName];
+    if (entry?.custom && Object.keys(entry.custom).length > 0) {
+      stateBlock = `
+
+## Persisted State
+\`\`\`json
+${JSON.stringify(entry.custom, null, 2)}
+\`\`\`
+These values were saved by your previous instance via \`update_state()\`. Use them to resume context.`;
+    }
+    if (entry?.custom?.proposal_required) {
+      const instrPath = join15(CLAUDE_FLEET, "templates/proposal-instructions.md");
+      const tmplPath = join15(CLAUDE_FLEET, "templates/proposal-template.html");
+      try {
+        let instrContent = readFileSync12(instrPath, "utf-8");
+        instrContent = instrContent.replace(/\{\{WORKER_NAME\}\}/g, effectiveName).replace(/\{\{MISSION_AUTHORITY\}\}/g, _missionAuth).replace(/\{\{TEMPLATE_PATH\}\}/g, tmplPath);
+        proposalBlock = `
+
+` + instrContent;
+      } catch {}
+    }
+  } catch {}
+  let handoffBlock = "";
+  if (handoff) {
+    handoffBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+${handoff}`;
+  } else {
+    const checkpointLatest = join15(WORKERS_DIR, effectiveName, "checkpoints", "latest.json");
+    if (existsSync12(checkpointLatest)) {
+      try {
+        const cpRaw = readFileSync12(checkpointLatest, "utf-8").trim();
+        const cp = JSON.parse(cpRaw);
+        let cpBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+`;
+        cpBlock += `**Summary**: ${cp.summary || "No summary"}
+`;
+        if (cp.git_state?.branch) {
+          cpBlock += `**Git**: ${cp.git_state.branch} @ ${cp.git_state.sha || "?"} (${cp.git_state.dirty_count || 0} dirty, ${cp.git_state.staged_count || 0} staged)
+`;
+        }
+        if (cp.key_facts?.length > 0) {
+          cpBlock += `**Key facts**:
+${cp.key_facts.map((f) => `- ${f}`).join(`
+`)}
+`;
+        }
+        if (cp.dynamic_hooks?.length > 0) {
+          const pending = cp.dynamic_hooks.filter((h) => !h.completed);
+          if (pending.length > 0) {
+            cpBlock += `**Pending hooks**: ${pending.map((h) => `${h.id} (${h.event}: ${h.description})`).join(", ")}
+`;
+          }
+        }
+        if (cp.transcript_ref) {
+          cpBlock += `**Transcript**: ${cp.transcript_ref} \u2014 Read this if you need details from before recycling
+`;
+        }
+        handoffBlock = cpBlock;
+      } catch {
+        const handoffPath = join15(WORKERS_DIR, effectiveName, "handoff.md");
+        if (existsSync12(handoffPath)) {
+          try {
+            const handoffContent = readFileSync12(handoffPath, "utf-8").trim();
+            if (handoffContent) {
+              handoffBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+${handoffContent}`;
+            }
+          } catch {}
+        }
+      }
+    } else {
+      const handoffPath = join15(WORKERS_DIR, effectiveName, "handoff.md");
+      if (existsSync12(handoffPath)) {
+        try {
+          const handoffContent = readFileSync12(handoffPath, "utf-8").trim();
+          if (handoffContent) {
+            handoffBlock = `
+## HANDOFF FROM PREVIOUS CYCLE \u2014 READ FIRST
+
+${handoffContent}`;
+          }
+        } catch {}
+      }
+    }
+  }
+  let seed = `You are worker **${effectiveName}**.
+Worktree: ${worktreeDir} (branch: ${branch})
+Worker config: ${workerDir2}/
+${handoffBlock}
+Read these files NOW in this order:
+1. ${existsSync12(join15(workerDir2, "mission.md")) ? workerDir2 : fleetWorkerDir}/mission.md \u2014 your mission and goals (you own this file \u2014 update it as your mission evolves)
+2. Call \`mail_inbox()\` \u2014 check for messages before anything else
+3. Check \`.claude/scripts/${effectiveName}/\` for existing scripts
+
+**Code > Memory**: Encode domain knowledge as hooks, scripts, and automation\u2014not memory notes. Hooks fire automatically; memory requires you to remember to read it. If you do something twice, automate it.
+
+If your inbox has a message from the user or ${_missionAuth} (mission_authority), prioritize it over your current work.${stateBlock}${proposalBlock}
+
+${loadSeedContext(branch, _missionAuth)}`;
+  return seed;
+}
+// mcp/worker-fleet/runtime.ts
+var CLAUDE_RUNTIME = {
+  type: "claude",
+  binary: "claude",
+  defaultModel: "opus",
+  buildLaunchCmd({ model, permissionMode, disallowedTools, workerDir: workerDir2, reasoningEffort }) {
+    let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
+    if (permissionMode === "bypassPermissions")
+      cmd += " --dangerously-skip-permissions";
+    if (reasoningEffort)
+      cmd += ` --effort ${reasoningEffort}`;
+    if (disallowedTools)
+      cmd += ` --disallowed-tools "${disallowedTools}"`;
+    cmd += ` --add-dir ${workerDir2}`;
+    return cmd;
+  },
+  buildResumeCmd({ model, permissionMode, workerDir: workerDir2, sessionId }) {
+    let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
+    if (permissionMode === "bypassPermissions")
+      cmd += " --dangerously-skip-permissions";
+    cmd += ` --add-dir ${workerDir2} --resume ${sessionId}`;
+    return cmd;
+  },
+  buildForkCmd({ model, permissionMode, workerDir: workerDir2, sessionId }) {
+    let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
+    if (permissionMode === "bypassPermissions")
+      cmd += " --dangerously-skip-permissions";
+    cmd += ` --add-dir ${workerDir2} --resume ${sessionId} --fork-session`;
+    return cmd;
+  },
+  exitCommand: "/exit",
+  processPattern: /claude/,
+  tuiReadyPattern: /bypass permissions|Context left/,
+  buildEnv() {
+    return { CLAUDE_CODE_SKIP_PROJECT_LOCK: "1" };
+  }
+};
+var CODEX_RUNTIME = {
+  type: "codex",
+  binary: "codex",
+  defaultModel: "gpt-5.4",
+  buildLaunchCmd({ model, permissionMode, reasoningEffort }) {
+    let cmd = `codex -m ${model}`;
+    if (permissionMode === "bypassPermissions")
+      cmd += " --dangerously-bypass-approvals-and-sandbox";
+    else
+      cmd += " -s workspace-write -a on-request";
+    if (reasoningEffort)
+      cmd += ` -c model_reasoning_effort=${reasoningEffort}`;
+    cmd += " --no-alt-screen";
+    return cmd;
+  },
+  buildResumeCmd({ sessionId }) {
+    return `codex resume ${sessionId}`;
+  },
+  buildForkCmd({ sessionId }) {
+    return `codex fork ${sessionId}`;
+  },
+  exitCommand: "/exit",
+  processPattern: /codex/,
+  tuiReadyPattern: /codex|ready/i,
+  buildEnv() {
+    return {};
+  }
+};
+var RUNTIMES = {
+  claude: CLAUDE_RUNTIME,
+  codex: CODEX_RUNTIME
+};
+function getWorkerRuntime(workerName) {
+  const name = workerName || WORKER_NAME;
+  try {
+    const entry = getWorkerEntry(name);
+    const rt = entry?.custom?.runtime || "claude";
+    return RUNTIMES[rt] || CLAUDE_RUNTIME;
+  } catch {
+    return CLAUDE_RUNTIME;
+  }
 }
 
 // mcp/worker-fleet/index.ts

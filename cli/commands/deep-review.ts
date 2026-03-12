@@ -28,6 +28,7 @@ import {
   launchVerifiers,
   printSummary,
 } from "../lib/deep-review/tmux";
+import { improveReviewMd } from "../lib/deep-review/review-improver";
 import { provisionReviewFleet } from "../lib/deep-review/fleet-provisioning";
 import type { DeepReviewConfig, SessionContext, RoleDesignerResult } from "../lib/deep-review/types";
 
@@ -53,6 +54,7 @@ export function register(program: Command): void {
     .option("--v1", "Use v1 mode (static focus areas, no role designer, no worktree)")
     .option("--max-workers <n>", "Max worker budget for role designer")
     .option("--no-worktree", "Skip worktree isolation")
+    .option("--no-improve-review", "Skip REVIEW.md improvement phase")
     .action(async (opts: Record<string, any>) => {
       try {
         await runDeepReview(opts);
@@ -102,6 +104,7 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     v1Mode: !!opts.v1,
     maxWorkers: opts.maxWorkers ? parseInt(opts.maxWorkers, 10) : null,
     noWorktree: opts.worktree === false, // commander inverts --no-worktree
+    noImproveReview: opts.improveReview === false, // commander inverts --no-improve-review
     sessionName: opts.sessionName || "",
     notifyTarget: opts.notify || "",
     workerModel: process.env.DEEP_REVIEW_WORKER_MODEL || "opus",
@@ -352,6 +355,14 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
       coordModel: config.coordModel,
       tmuxSession: reviewSession,
     });
+  }
+
+  // Phase 0.5: REVIEW.md improvement
+  if (!config.noImproveReview && !config.v1Mode) {
+    const improved = improveReviewMd(config, material, ctx, roleResult);
+    if (improved !== ctx.reviewConfig) {
+      ctx.reviewConfig = improved;
+    }
   }
 
   // Context pre-pass

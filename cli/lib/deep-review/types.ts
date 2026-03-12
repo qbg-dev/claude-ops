@@ -17,6 +17,7 @@ export interface DeepReviewConfig {
   v1Mode: boolean;
   maxWorkers: number | null;
   noWorktree: boolean;
+  noImproveReview: boolean;
   sessionName: string;
   notifyTarget: string;
   workerModel: string;

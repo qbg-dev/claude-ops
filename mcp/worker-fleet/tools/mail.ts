@@ -46,6 +46,11 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
     to: string; subject: string; body: string; cc?: string[]; thread_id?: string;
     in_reply_to?: string; reply_by?: string; labels?: string[];
   }) => {
+    // Validate recipient
+    if (!to || !to.trim()) {
+      return { content: [{ type: "text" as const, text: `Error: 'to' field is empty. Provide a worker name, "user", "all", or pane ID.` }], isError: true };
+    }
+
     // Operator escalation path: send via Fleet Mail to "user" account + desktop notification
     if (to === "user") {
       let msgId = "";
