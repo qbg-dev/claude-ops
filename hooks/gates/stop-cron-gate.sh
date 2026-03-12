@@ -68,7 +68,8 @@ for i in $(seq 0 $((_count - 1))); do
   if hook_tool_log_has "$SESSION_ID" "CronCreate" "\"cron\":\"${_cron}\""; then
     _found=$((_found + 1))
   else
-    _prompt=$(echo "$_cron_schedule" | jq -r ".[$i].prompt // \"\"" 2>/dev/null || echo "")
+    _prompt=$(echo "$_cron_schedule" | jq -r ".[$i].prompt // empty" 2>/dev/null || echo "")
+    [ -z "$_prompt" ] && _prompt="Wake up. Re-read your mission (fleet get ${_wname}). Check mail_inbox(). Continue working."
     _missing="${_missing}\n- \`CronCreate(cron=\"${_cron}\", prompt=\"${_prompt}\")\`"
   fi
 done

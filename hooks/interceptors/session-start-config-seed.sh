@@ -62,6 +62,24 @@ for _frag in "$_FRAGMENTS_DIR"/*.md; do
   # Append fragment content
   _content=$(<"$_frag")
   _context="${_context}${_content}\n\n"
+
+  # Special handling: cron_schedule — generate specific CronCreate calls
+  if [ "$_field" = "cron_schedule" ]; then
+    _count=$(echo "$_val" | jq -r 'length' 2>/dev/null || echo "0")
+    if [ "$_count" -gt 0 ]; then
+      _context="${_context}**Call these now:**\n\`\`\`\n"
+      for _i in $(seq 0 $((_count - 1))); do
+        _cron=$(echo "$_val" | jq -r ".[$_i].cron" 2>/dev/null || echo "")
+        _prompt=$(echo "$_val" | jq -r ".[$_i].prompt // empty" 2>/dev/null || echo "")
+        # Default prompt: re-read seed context + check mail
+        if [ -z "$_prompt" ]; then
+          _prompt="Wake up. Re-read your mission (fleet get ${_wname}). Check mail_inbox(). Continue working."
+        fi
+        _context="${_context}CronCreate(cron: \"${_cron}\", prompt: \"${_prompt}\")\n"
+      done
+      _context="${_context}\`\`\`\n\n"
+    fi
+  fi
 done
 
 [ -z "$_context" ] && { echo '{}'; exit 0; }
