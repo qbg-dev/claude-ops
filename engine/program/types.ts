@@ -47,6 +47,8 @@ export interface Program {
   phases: Phase[];
   defaults?: ProgramDefaults;
   material?: ProgramMaterial;
+  /** If present, the compiler uses the graph instead of phases */
+  graph?: ProgramGraph;
 }
 
 export interface ProgramDefaults {
@@ -118,6 +120,44 @@ export interface BridgeAction {
   handler?: string;
 }
 
+// ── Graph-based Program ─────────────────────────────────────────
+
+/** A node in the program graph (replaces indexed Phase) */
+export interface ProgramNode {
+  description?: string;
+  agents: AgentSpec[] | DynamicAgents;
+  gate?: string | "all";
+  layout?: PhaseLayout;
+  prelaunch?: BridgeAction[];
+  hooks?: PipelineHook[];
+}
+
+/** An edge between nodes */
+export interface ProgramEdge {
+  from: string;
+  to: string;
+  /** Bash check: exit 0 = take this edge */
+  condition?: string;
+  /** For manifest readability */
+  label?: string;
+  /** Evaluation order (lower = first). Default 0. */
+  priority?: number;
+  /** Safety valve for back-edges (cycles) */
+  maxIterations?: number;
+}
+
+/** Graph-based program (the primary program format) */
+export interface ProgramGraph {
+  name: string;
+  description?: string;
+  nodes: Record<string, ProgramNode>;
+  edges: ProgramEdge[];
+  /** Starting node name */
+  entry: string;
+  defaults?: ProgramDefaults;
+  material?: ProgramMaterial;
+}
+
 // ── Compiled Artifacts ─────────────────────────────────────────
 
 export interface CompiledPlan {
@@ -148,6 +188,8 @@ export interface CompiledPhase {
   dynamic: boolean;
   /** Estimate for deferred phases */
   estimate?: number;
+  /** For graph-based programs: the node name */
+  nodeName?: string;
 }
 
 export interface CompiledWindow {
@@ -188,6 +230,8 @@ export interface CompiledHook {
   sessionDirPath: string;
   /** For gate:"all" — expected done marker count */
   gateCount?: number;
+  /** For graph-based programs: target node name */
+  targetNodeName?: string;
 }
 
 // ── Pipeline State (persisted across phases) ───────────────────
@@ -213,10 +257,12 @@ export interface ProgramPipelineState {
   sessionHash: string;
   /** Program defaults */
   defaults: ProgramDefaults;
-  /** Per-phase state (outputs, done markers, etc.) */
-  phaseState: Record<number, Record<string, unknown>>;
+  /** Per-phase state (outputs, done markers, etc.) — keyed by index or node name */
+  phaseState: Record<number | string, Record<string, unknown>>;
   /** Compiled phases (updated as deferred phases compile) */
   compiledPhases: CompiledPhase[];
+  /** For graph-based programs: maps node name → stable index */
+  nodeIndexMap?: Record<string, number>;
   /** Template directory */
   templateDir: string;
   /** Validator path */

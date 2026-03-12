@@ -19,6 +19,9 @@ export type {
   PipelineHook,
   ConvergenceSpec,
   HookEvent,
+  ProgramGraph,
+  ProgramNode,
+  ProgramEdge,
   CompiledPlan,
   CompiledPhase,
   CompiledWindow,
@@ -27,6 +30,9 @@ export type {
   ProgramPipelineState,
 } from "./types";
 export { isDynamic, isStaticAgents } from "./types";
+
+// Graph builder
+export { graph, ProgramBuilder, phasesToGraph, topologicalSort, buildNodeIndexMap, outgoingEdges, END_SENTINEL } from "./graph";
 
 // Compiler
 export { compile, compilePhase, savePipelineState, loadPipelineState } from "./compiler";
