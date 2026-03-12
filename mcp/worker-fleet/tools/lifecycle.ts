@@ -10,7 +10,7 @@ import { HOME, WORKERS_DIR, WORKER_NAME, getWorktreeDir } from "../config";
 import { readRegistry, withRegistryLocked, type RegistryConfig, type RegistryWorkerEntry } from "../registry";
 import { _captureHooksSnapshot } from "../hooks";
 import { _captureGitState, _writeCheckpoint } from "../helpers";
-import { fleetMailRequest, resolveFleetMailRecipients, getFleetMailToken } from "../mail-client";
+import { fleetMailRequest, resolveFleetMailRecipients, getFleetMailToken, subscribeMonitor, unsubscribeMonitor } from "../mail-client";
 
 export function registerLifecycleTools(server: McpServer): void {
 
@@ -142,6 +142,35 @@ server.registerTool(
         text: `Checkpoint saved: ${filepath}\nGit: ${gitState.branch || "?"} @ ${gitState.sha || "?"} (${gitState.dirty_count || 0} dirty, ${gitState.staged_count || 0} staged)\nHooks: ${hooks.length} active\nFacts: ${(key_facts || []).length} saved`,
       }],
     };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// MONITOR TOOL — Erlang-style worker monitoring
+// ═══════════════════════════════════════════════════════════════════
+
+server.registerTool(
+  "monitor_worker",
+  {
+    description: `Subscribe to DOWN notifications for a target worker (Erlang-style monitor). When the target dies, crash-loops, or restarts, you receive a Fleet Mail message with label DOWN-SIGNAL containing the reason and timestamp. Monitors are persistent (survive restarts). Unsubscribe by setting subscribe=false.`,
+    inputSchema: {
+      target: z.string().describe("Worker to monitor (e.g. 'merger', 'bugfix-v2')"),
+      subscribe: z.boolean().optional().describe("true to subscribe (default), false to unsubscribe"),
+    },
+  },
+  async ({ target, subscribe }) => {
+    const shouldSubscribe = subscribe !== false;
+    try {
+      if (shouldSubscribe) {
+        subscribeMonitor(WORKER_NAME, target);
+        return { content: [{ type: "text" as const, text: `Monitoring ${target} — you will receive DOWN-SIGNAL messages when it dies or restarts` }] };
+      } else {
+        unsubscribeMonitor(WORKER_NAME, target);
+        return { content: [{ type: "text" as const, text: `Unsubscribed from ${target} — no more DOWN notifications` }] };
+      }
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+    }
   }
 );
 

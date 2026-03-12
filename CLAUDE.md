@@ -54,7 +54,7 @@ Flags: `--model opus|sonnet|haiku`, `--effort high|max`, `--save`, `--json`, `-p
 
 Resolution: CLI flag > worker `config.json` > `defaults.json` > hardcoded
 
-## MCP tools (16)
+## MCP tools (17)
 
 Available inside every worker session via `mcp__worker-fleet__*`:
 
@@ -75,6 +75,7 @@ Available inside every worker session via `mcp__worker-fleet__*`:
 | `save_checkpoint(summary)` | Snapshot state for crash recovery |
 | `create_worker(name, mission, type?)` | Spawn worker from within a session |
 | `fleet_help()` | Fleet reference docs |
+| `monitor_worker(target, subscribe?)` | Erlang-style DOWN notifications on worker death |
 | `deep_review(scope, spec)` | Adversarial multi-pass code review |
 
 ## Worker types

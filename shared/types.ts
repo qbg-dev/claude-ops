@@ -16,6 +16,8 @@ export interface WorkerConfig {
   hooks: SystemHook[];
   /** Ephemeral workers skip watchdog respawn and are auto-cleaned after completion (e.g. deep-review workers) */
   ephemeral?: boolean;
+  /** Workers that receive DOWN notifications when this worker dies (Erlang-style monitors) */
+  monitors?: string[];
   meta: {
     created_at: string;
     created_by: string;

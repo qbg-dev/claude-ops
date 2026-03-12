@@ -461,8 +461,13 @@ function checkDeepReview(): CheckResult {
 }
 
 function checkWatchdog(): CheckResult {
-  const watchdogScript = join(FLEET_DIR, "extensions/watchdog/src/watchdog.ts");
-  if (!existsSync(watchdogScript)) {
+  // Prefer Rust binary (boring-watchdog), fall back to TypeScript
+  const rustBinary = join(FLEET_DIR, "extensions/watchdog-rs/target/release/boring-watchdog");
+  const tsScript = join(FLEET_DIR, "extensions/watchdog/src/watchdog.ts");
+  const hasRust = existsSync(rustBinary);
+  const hasTs = existsSync(tsScript);
+
+  if (!hasRust && !hasTs) {
     return {
       name: "Watchdog",
       status: "skip",
@@ -471,17 +476,22 @@ function checkWatchdog(): CheckResult {
     };
   }
 
+  const impl = hasRust ? "Rust" : "TypeScript";
+
   // Check launchd agent (macOS)
   const plistPath = join(HOME, "Library/LaunchAgents/com.tmux-agents.watchdog.plist");
   const legacyPlist = join(HOME, "Library/LaunchAgents/com.claude-fleet.harness-watchdog.plist");
 
   if (!existsSync(plistPath) && !existsSync(legacyPlist)) {
+    const fix = hasRust
+      ? `Run: ${rustBinary} install`
+      : `Run: bash ${join(FLEET_DIR, "extensions/watchdog/install.sh")}`;
     return {
       name: "Watchdog",
       status: "skip",
-      message: "script found but launchd agent not loaded",
+      message: `${impl} binary found but launchd agent not loaded`,
       optional: true,
-      fix: `Run: bash ${join(FLEET_DIR, "extensions/watchdog/install.sh")}`,
+      fix,
     };
   }
 
@@ -507,10 +517,25 @@ function checkWatchdog(): CheckResult {
     }
   }
 
+  // Check if the plist points to the Rust binary (upgrade hint)
+  if (hasRust && existsSync(plistPath)) {
+    try {
+      const plistContent = readFileSync(plistPath, "utf-8");
+      if (!plistContent.includes("boring-watchdog")) {
+        return {
+          name: "Watchdog",
+          status: "pass",
+          message: `launchd agent loaded (${impl} binary available — run: boring-watchdog install to upgrade)`,
+          optional: true,
+        };
+      }
+    } catch {}
+  }
+
   return {
     name: "Watchdog",
     status: "pass",
-    message: "launchd agent loaded",
+    message: `launchd agent loaded (${impl})`,
     optional: true,
   };
 }

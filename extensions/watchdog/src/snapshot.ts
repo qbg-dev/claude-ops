@@ -69,6 +69,7 @@ export function buildSnapshot(name: string, projectName: string, config: Watchdo
     reasoningEffort: cfg.reasoning_effort || "high",
     runtime: (state?.custom?.runtime as string) || "claude",
     ephemeral: !!cfg.ephemeral,
+    monitors: Array.isArray(cfg.monitors) ? cfg.monitors : [],
   };
 }
 

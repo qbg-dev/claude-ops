@@ -95,6 +95,8 @@ export interface WorkerSnapshot {
   runtime: string;
   /** Ephemeral workers (deep-review) — skip watchdog entirely */
   ephemeral: boolean;
+  /** Workers that receive DOWN notifications when this worker dies (Erlang-style monitors) */
+  monitors: string[];
 }
 
 // ── Watchdog Config ──

@@ -116,12 +116,42 @@ export function register(parent: Command): void {
       );
       if (!existsSync(watchdogPlist)) {
         info("Installing watchdog daemon...");
-        const installScript = join(FLEET_DIR, "extensions/watchdog/install.sh");
-        if (existsSync(installScript)) {
-          Bun.spawnSync(["bash", installScript], {
-            stdout: "inherit", stderr: "inherit",
-            env: { ...process.env, PROJECT_ROOT: process.cwd() },
-          });
+        // Prefer Rust binary (boring-watchdog) over TypeScript
+        const rustBinary = join(FLEET_DIR, "extensions/watchdog-rs/target/release/boring-watchdog");
+        const rustCargoDir = join(FLEET_DIR, "extensions/watchdog-rs");
+        if (existsSync(join(rustCargoDir, "Cargo.toml"))) {
+          // Build Rust watchdog if not already built
+          if (!existsSync(rustBinary)) {
+            info("Building Rust watchdog (boring-watchdog)...");
+            const build = Bun.spawnSync(
+              ["cargo", "build", "--release"],
+              { cwd: rustCargoDir, stdout: "inherit", stderr: "inherit" },
+            );
+            if (build.exitCode !== 0) {
+              warn("Rust build failed — falling back to TypeScript watchdog");
+            }
+          }
+          if (existsSync(rustBinary)) {
+            const install = Bun.spawnSync(
+              [rustBinary, "install"],
+              { stdout: "inherit", stderr: "inherit" },
+            );
+            if (install.exitCode === 0) {
+              ok("Rust watchdog (boring-watchdog) installed");
+            } else {
+              warn("Rust watchdog install failed — falling back to TypeScript");
+            }
+          }
+        }
+        // Fallback to TypeScript watchdog
+        if (!existsSync(watchdogPlist)) {
+          const installScript = join(FLEET_DIR, "extensions/watchdog/install.sh");
+          if (existsSync(installScript)) {
+            Bun.spawnSync(["bash", installScript], {
+              stdout: "inherit", stderr: "inherit",
+              env: { ...process.env, PROJECT_ROOT: process.cwd() },
+            });
+          }
         }
       } else {
         ok("Watchdog already installed");

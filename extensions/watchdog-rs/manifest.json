@@ -1,0 +1,10 @@
+{
+  "name": "watchdog-rs",
+  "version": "0.1.0",
+  "description": "Rust watchdog daemon with plugin system for worker crash recovery",
+  "binary": "target/release/boring-watchdog",
+  "install": "boring-watchdog install",
+  "scripts": {
+    "liveness-heartbeat": "../watchdog/liveness-heartbeat.sh"
+  }
+}

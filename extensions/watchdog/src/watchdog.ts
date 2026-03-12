@@ -17,7 +17,7 @@ import { checkWorkerAsync } from "./worker-checker";
 import { markCrashLoop } from "./crash-tracker";
 import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow } from "./pane-manager";
 import { resumeInPane, relaunchInPane, killAgentInPane } from "./process-manager";
-import { desktopNotify, notifyDeadWorker, clearCosNotified, checkStaleInput, notifyUnreadMail } from "./notifications";
+import { desktopNotify, notifyDeadWorker, clearCosNotified, clearMonitorsNotified, notifyMonitorsOfDeath, checkStaleInput, notifyUnreadMail } from "./notifications";
 import { buildAllSnapshots } from "./snapshot";
 import { printStatus } from "./status-display";
 import { createProductionEffects } from "./effects";
@@ -72,6 +72,7 @@ async function runOnce(): Promise<void> {
 
         case "ok":
           clearCosNotified(snap.name);
+          clearMonitorsNotified(snap.name);
           break;
 
         case "resume": {
@@ -87,6 +88,7 @@ async function runOnce(): Promise<void> {
 
         case "relaunch": {
           logInfo("RELAUNCH", action.reason, snap.name);
+          await notifyMonitorsOfDeath(snap.name, snap.monitors, "relaunch", projectName);
           // Determine relaunch strategy
           const session = snap.tmuxSession || "w";
           if (!sessionExists(session)) {
@@ -140,6 +142,7 @@ async function runOnce(): Promise<void> {
           }
           updateStateInactive(snap.name);
           await notifyDeadWorker(snap.name, "inactive", action.reason, projectName);
+          await notifyMonitorsOfDeath(snap.name, snap.monitors, "inactive", projectName);
           break;
         }
 
@@ -148,6 +151,7 @@ async function runOnce(): Promise<void> {
             markCrashLoop(snap.name);
             logError("CRASH-LOOP", `${action.count} crashes in last hour, stopping retries`, snap.name);
             desktopNotify(`Crash loop: ${snap.name} (${action.count} crashes/hr) — manual intervention needed`, "Watchdog Alert");
+            await notifyMonitorsOfDeath(snap.name, snap.monitors, "crash-loop", projectName);
           }
           break;
         }

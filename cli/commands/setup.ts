@@ -354,19 +354,34 @@ export function register(parent: Command): void {
       // 10. Optional plugins
       info("Detecting optional plugins...");
 
-      // Watchdog plugin
+      // Watchdog plugin — prefer Rust binary over TypeScript
+      const rustBinary = join(fleetDir, "extensions/watchdog-rs/target/release/boring-watchdog");
       const watchdogPlugin = join(fleetDir, "extensions/watchdog/src/watchdog.ts");
-      if (existsSync(watchdogPlugin)) {
+      const hasRustWatchdog = existsSync(rustBinary);
+      const hasTsWatchdog = existsSync(watchdogPlugin);
+      if (hasRustWatchdog || hasTsWatchdog) {
+        const impl = hasRustWatchdog ? "Rust (boring-watchdog)" : "TypeScript";
         const watchdogPlist = join(HOME, "Library/LaunchAgents/com.tmux-agents.watchdog.plist");
         const legacyPlist = join(HOME, "Library/LaunchAgents/com.claude-fleet.harness-watchdog.plist");
         if (existsSync(watchdogPlist) || existsSync(legacyPlist)) {
-          ok("Watchdog: installed (launchd daemon active)");
+          ok(`Watchdog: ${impl} — launchd daemon active`);
         } else {
-          warn("Watchdog: found but not installed as daemon");
-          console.log(`    Install: bash ${join(fleetDir, "extensions/watchdog/install.sh")}`);
+          warn(`Watchdog: ${impl} found but not installed as daemon`);
+          if (hasRustWatchdog) {
+            console.log(`    Install: ${rustBinary} install`);
+          } else {
+            console.log(`    Install: bash ${join(fleetDir, "extensions/watchdog/install.sh")}`);
+          }
         }
       } else {
-        info("Watchdog: not found (optional — supervises long-running workers)");
+        // Check if Cargo.toml exists but binary not built
+        const cargoToml = join(fleetDir, "extensions/watchdog-rs/Cargo.toml");
+        if (existsSync(cargoToml)) {
+          info("Watchdog: Rust source found but not built");
+          console.log(`    Build: cd ${join(fleetDir, "extensions/watchdog-rs")} && cargo build --release`);
+        } else {
+          info("Watchdog: not found (optional — supervises long-running workers)");
+        }
       }
 
       // Deep review

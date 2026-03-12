@@ -57,6 +57,69 @@ export async function notifyDeadWorker(
   writeFileSync(flag, new Date().toISOString());
 }
 
+/** Notify all monitors of a worker's death/restart via Fleet Mail (Erlang-style DOWN signal).
+ *  Debounced per incident — each monitor gets at most one notification per death event. */
+export async function notifyMonitorsOfDeath(
+  worker: string,
+  monitors: string[],
+  reason: "inactive" | "crash-loop" | "relaunch",
+  projectName: string,
+): Promise<void> {
+  if (monitors.length === 0) return;
+
+  const runtimeDir = join(RUNTIME_DIR, worker);
+  mkdirSync(runtimeDir, { recursive: true });
+  const flag = join(runtimeDir, "monitors-notified");
+
+  // Debounce — only notify once per incident (cleared when worker comes back alive)
+  if (existsSync(flag)) return;
+
+  const fleetMailUrl = process.env.FLEET_MAIL_URL || "http://127.0.0.1:8025";
+  const adminToken = process.env.FLEET_MAIL_TOKEN;
+  if (!adminToken) return;
+
+  const subject = `DOWN: ${worker} (${reason})`;
+  const body = [
+    `Worker '${worker}' is down.`,
+    `Reason: ${reason}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    reason === "relaunch" ? "Note: worker is being relaunched — this is a transient DOWN signal." : "",
+  ].filter(Boolean).join("\n");
+
+  const results = await Promise.allSettled(
+    monitors.map(async (monitor) => {
+      await fetch(`${fleetMailUrl}/api/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: [`${monitor}@${projectName}`],
+          subject,
+          body,
+          labels: ["DOWN-SIGNAL"],
+        }),
+        signal: AbortSignal.timeout(3000),
+      });
+      return monitor;
+    })
+  );
+
+  const sent = results.filter(r => r.status === "fulfilled").length;
+  const failed = results.filter(r => r.status === "rejected").length;
+  if (sent > 0) logInfo("MONITOR-DOWN", `sent DOWN to ${sent} monitor(s)${failed > 0 ? `, ${failed} failed` : ""}`, worker);
+  if (failed > 0 && sent === 0) logError("MONITOR-DOWN-ERR", `failed to send DOWN to all ${failed} monitor(s)`, worker);
+
+  writeFileSync(flag, new Date().toISOString());
+}
+
+/** Clear monitor notification flag when worker is alive again */
+export function clearMonitorsNotified(worker: string): void {
+  const flag = join(RUNTIME_DIR, worker, "monitors-notified");
+  try { unlinkSync(flag); } catch {}
+}
+
 /** Clear COS notification flag when worker is alive again */
 export function clearCosNotified(worker: string): void {
   const flag = join(RUNTIME_DIR, worker, "cos-notified");

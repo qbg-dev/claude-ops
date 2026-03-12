@@ -315,3 +315,36 @@ export async function resolveFleetMailAccountId(name: string): Promise<string> {
 export async function resolveFleetMailRecipients(names: string[]): Promise<string[]> {
   return Promise.all(names.map(resolveFleetMailAccountId));
 }
+
+// ── Monitor Subscriptions (Erlang-style) ──────────────────────────
+
+/** Subscribe a monitor to receive DOWN notifications when target dies.
+ *  Adds monitor to target's config.json.monitors[] (idempotent). */
+export function subscribeMonitor(monitor: string, target: string): void {
+  const configPath = join(FLEET_DIR, target, "config.json");
+  try {
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const monitors: string[] = Array.isArray(config.monitors) ? config.monitors : [];
+    if (!monitors.includes(monitor)) {
+      monitors.push(monitor);
+      config.monitors = monitors;
+      writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    }
+  } catch (e: any) {
+    throw new Error(`Failed to subscribe monitor '${monitor}' to '${target}': ${e.message}`);
+  }
+}
+
+/** Unsubscribe a monitor from target's DOWN notifications.
+ *  Removes monitor from target's config.json.monitors[]. */
+export function unsubscribeMonitor(monitor: string, target: string): void {
+  const configPath = join(FLEET_DIR, target, "config.json");
+  try {
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    if (!Array.isArray(config.monitors)) return;
+    config.monitors = config.monitors.filter((m: string) => m !== monitor);
+    writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  } catch (e: any) {
+    throw new Error(`Failed to unsubscribe monitor '${monitor}' from '${target}': ${e.message}`);
+  }
+}
