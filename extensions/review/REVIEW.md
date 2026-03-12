@@ -66,9 +66,21 @@ These are checked by the pre-commit hook whenever CLI, doc, completion, or test 
 
 21. **MCP tool count drift**: CLAUDE.md "MCP tools (N)" header must match actual tool count in `mcp/worker-fleet/index.ts`. Tool table rows in CLAUDE.md must match tool registrations.
 
+### Template & Seed Integrity
+
+23. **MCP tool reference staleness**: `templates/seed-context.md` must reference only MCP tools that are actually registered in `mcp/worker-fleet/tools/*.ts`. Newly registered tools must be documented in the seed context.
+
+24. **Hook event staleness**: Hook event names in template seeds must match events in `hooks/manifest.json`. Adding or renaming events requires updating all seed templates.
+
+25. **Worker type drift**: Every directory in `templates/flat-worker/types/` must have a corresponding row in the CLAUDE.md `## Worker types` table, and vice versa. Each type directory must contain a `mission.md`.
+
+26. **Key files table staleness**: Every path in the CLAUDE.md `## Key files` table must resolve to an existing file. Adding significant new files requires updating the table.
+
+27. **Hook count drift**: CLAUDE.md "N hooks across M events" must match the actual counts in `hooks/manifest.json`.
+
 ### Operational Safety
 
-22. **Idempotency regression**: `fleet setup`, `scripts/setup-hooks.sh`, and `fleet doctor --fix` must be idempotent. Running twice produces identical results — no duplicate hooks, no duplicate configs, no errors.
+28. **Idempotency regression**: `fleet setup`, `scripts/setup-hooks.sh`, and `fleet doctor --fix` must be idempotent. Running twice produces identical results — no duplicate hooks, no duplicate configs, no errors.
 
 ---
 
@@ -107,7 +119,12 @@ These are checked by the pre-commit hook whenever CLI, doc, completion, or test 
 | Secrets in staged diff (19) | critical (credential exposure) |
 | Import boundary violation (20) | high (runtime failure in prod) |
 | MCP tool count drift (21) | medium (worker confusion, not crash) |
-| Idempotency regression (22) | high (watchdog amplifies the failure) |
+| MCP tool reference staleness (23) | medium (worker confusion, not crash) |
+| Hook event staleness (24) | medium (hooks may silently not fire) |
+| Worker type drift (25) | low (cosmetic, no runtime impact) |
+| Key files table staleness (26) | low (documentation accuracy) |
+| Hook count drift (27) | low (documentation accuracy) |
+| Idempotency regression (28) | high (watchdog amplifies the failure) |
 
 ---
 
@@ -142,7 +159,7 @@ All checks must be `pass` or `skip` (with justification). Proof is hash-tied to 
 
 ### Automated Review Script
 
-Run `bash scripts/review.sh` for a deterministic scan of items 17–22. This complements `check-docs.sh` (items 1–5). Both are first-pass — the pre-commit hook still requires AI-verified proof XML for anything the scripts can't catch.
+Run `bash scripts/review.sh` for a deterministic scan of items 17–22 (renumbered to 17–22→17–28 with template checks). `bash scripts/check-templates.sh` scans items 23–27 (template & seed staleness). `bash scripts/check-docs.sh` covers items 1–5. All three run automatically in the **pre-push hook** — errors block the push, warnings are advisory. The pre-commit hook still requires AI-verified proof XML for anything the scripts can't catch.
 
 ---
 
