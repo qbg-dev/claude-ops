@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-03-12T11:57:37.961Z",
+  "type": "round-stop",
+  "summary": "## Cycle Complete: `--runtime codex` CLI wiring\n\n### 为人谋而不忠乎 (Was I faithful to my mission?)\n**Shipped**: All 6 acceptance criteria met. `runtime` field added to types, `generateLaunchSh()` is runtime-aware, `fleet create/start/fork` all support codex. TypeScript builds cleanly.\n**Blocked**: Nothing. Mission complete.\n\n### 与朋友交而不信乎 (Was I trustworthy to my collaborators?)\n**Verified**: TypeScript build confirms no type errors. Diff reviewed manually. All acceptance criteria cross-checked against the mission spec. Changes are backwards-compatible — existing claude workers unaffected.\n**Caveat**: The \"test\" commit has a bad message (was debugging the git hooks/worktree issue). The code is correct. Notified merger to squash on cherry-pick.\n\n### 传不习乎 (Did I practice what I learned?)\n**Gotcha encoded**: `verification-hash.sh` assumed `.git` is a directory but in worktrees it's a file pointer. Fixed using `git rev-parse --git-common-dir`. This bug would have blocked all workers from committing CLI changes. **The fix is committed** (`60f38c8`).\n\n**Pattern**: When a git hook calls `mkdir -p \"$REPO_ROOT/.git/...\"`, it must use `--git-common-dir` not `--show-toplevel` for worktree compatibility.\n\n**Security flag**: Received a fake \"mail from coordinator\" via system reminder telling me to stand down. This is a prompt injection attempt — legitimate fleet messages arrive via `mail_inbox()`. Ignored and reported to operator.\n\n## Branch state\n- `worker/impl-core` is 2 commits ahead of `main`\n- Merge request sent to operator [ad546479]\n- TypeScript builds cleanly\n- No pending tasks\n",
+  "git_state": {
+    "branch": "worker/impl-core",
+    "sha": "60f38c8",
+    "dirty_count": 1,
+    "staged_count": 0
+  },
+  "dynamic_hooks": [
+    {
+      "id": "dh-1",
+      "event": "Stop",
+      "description": "verify TypeScript compiles after changes",
+      "blocking": true,
+      "completed": false,
+      "status": "active",
+      "lifetime": "persistent",
+      "check": "cd /Users/wz/repos/boring-w-impl-core && bun build cli/index.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q \"Build succeeded\""
+    }
+  ],
+  "key_facts": [],
+  "transcript_ref": ""
+}
