@@ -11,6 +11,7 @@ import { readRegistry, withRegistryLocked, type RegistryConfig, type RegistryWor
 import { _captureHooksSnapshot } from "../hooks";
 import { _captureGitState, _writeCheckpoint } from "../helpers";
 import { fleetMailRequest, resolveFleetMailRecipients, getFleetMailToken } from "../mail-client";
+import { execSync } from "child_process";
 
 export function registerLifecycleTools(server: McpServer): void {
 
@@ -81,10 +82,31 @@ To actually restart a worker (fresh context, config reload), the operator runs \
 
     // Hooks are NOT touched — stop hooks, dynamic hooks all remain as-is.
 
+    // Git commit + push (preserve work across crashes)
+    let pushResult = "";
+    try {
+      const cwd = getWorktreeDir();
+      const opts = { encoding: "utf-8" as const, timeout: 15000, cwd };
+      // Stage all changes
+      execSync("git add -A", opts);
+      // Commit if there are staged changes
+      const status = execSync("git status --porcelain", opts).trim();
+      if (status) {
+        const commitMsg = `checkpoint: ${WORKER_NAME} round_stop\n\n${message.slice(0, 200)}`;
+        execSync(`git commit -m ${JSON.stringify(commitMsg)}`, opts);
+      }
+      // Push to remote (create tracking branch if needed)
+      const branch = execSync("git rev-parse --abbrev-ref HEAD", opts).trim();
+      execSync(`git push origin ${branch} 2>&1 || git push -u origin ${branch} 2>&1`, { ...opts, timeout: 30000 });
+      pushResult = `Pushed ${branch} to origin.`;
+    } catch (e: any) {
+      pushResult = `Push failed: ${e.message?.slice(0, 100) || "unknown error"}`;
+    }
+
     return {
       content: [{
         type: "text" as const,
-        text: `Round logged, checkpoint saved, handoff written. You are still alive.\n` +
+        text: `Round logged, checkpoint saved, handoff written. ${pushResult}\n` +
           `Handoff: "${message.slice(0, 120)}${message.length > 120 ? "..." : ""}"\n` +
           `Keep working — check mail_inbox() for new tasks, or go idle if nothing pending.`,
       }],

@@ -140,6 +140,14 @@
       "category": "user",
       "description": "[GATE] Echo chain — pops queued follow-up commands and re-injects them as block reasons to continue the session"
     },
+    {
+      "id": "stop-push-gate",
+      "event": "Stop",
+      "path": "~/.claude-fleet/hooks/gates/stop-push-gate.sh",
+      "required": true,
+      "category": "core",
+      "description": "[GATE] Blocks session exit if worker branch has unpushed commits or uncommitted changes. Ensures work is preserved"
+    },
 
     {"_comment": "── Universal infrastructure (ALL events) ──"},
 

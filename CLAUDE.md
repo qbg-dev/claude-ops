@@ -110,7 +110,7 @@ Templates: `templates/flat-worker/types/{type}/mission.md`
 
 ## Hooks
 
-29 hooks across 18 Claude Code events. Installed by `setup-hooks.sh` from `hooks/manifest.json`.
+30 hooks across 18 Claude Code events. Installed by `setup-hooks.sh` from `hooks/manifest.json`.
 
 Three ownership tiers: system (irremovable) > creator (worker can't remove) > self (worker manages).
 
