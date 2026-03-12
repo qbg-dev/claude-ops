@@ -21,9 +21,15 @@ my-worker   alive    worker/my-worker     %3
 merger      alive    worker/merger        %4
 ```
 
+## How it works
+
+The system is described by two prompts — read these to understand everything:
+
+- [**templates/seed-context.md**](templates/seed-context.md) — what every worker sees on launch. MCP tools, hooks, mail, git safety, verification, the perpetual loop. This is the canonical system description.
+- [**templates/onboarding-architect.md**](templates/onboarding-architect.md) — what the onboarding agent follows. 9-phase flow from discovery to fleet design to verification.
+
 ## Reference
 
-- [templates/seed-context.md](templates/seed-context.md) — how workers operate (canonical system description)
 - [CLAUDE.md](CLAUDE.md) — architecture, key files, development conventions
 - [plugins/](plugins/README.md) — available plugins (context orchestrator, Gmail, Calendar, spending tracker)
 - [extensions/](extensions/) — watchdog (auto-respawn), deep-review (adversarial code review)
