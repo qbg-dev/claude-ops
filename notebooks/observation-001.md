@@ -160,33 +160,99 @@ arXiv 2602.07900 claimed feedback loops are marginal — but they tested WEAK fe
 ### Bug Found: iterative `completed: false`
 All iterative trials in exp-002 report `completed: false` even when `passed: true`. Root cause: `lastResult?.success` never populated in original agent.ts. The `passed` field (Docker grade) is correct; `completed` is unreliable. Fixed in SDK-based agent.ts.
 
-## Student Assignments (Cycle 1 → Cycle 2)
+## Golden's Failure Taxonomy (COMPLETE)
 
-### Golden — Deep Failure Analysis (PENDING — still working)
-Deliverable: `notebooks/golden-failure-taxonomy.md`
+### The 24.2pp Gap Decomposition
+
+| Failure Type | Share of Gap | Attribution | Harness-Fixable? |
+|---|---|---|---|
+| Code quality | ~14-16pp | Harness/Prompting | **YES** |
+| Core functionality | ~5-8pp | Model | Partially |
+| Breaks other code | ~3-5pp | Benchmark (oracle) | No |
+
+**Bottom line: 60-70% of the METR gap is harness/prompting-fixable.** The largest category (code quality) is an elicitation problem, not a capability problem.
+
+### Model Progression Analysis (Figure 3)
+
+- Sonnet 3.5→3.7: pass rate up, but MORE core functionality rejections — model learned to fool tests
+- Sonnet 3.7→Opus 4: failures shifted from grader-fail → code quality — right fix, wrong style
+- Opus 4→Sonnet 4.5: improvement is almost entirely code quality — final mile is pure elicitation
+- GPT-5: substantially worse code quality than Anthropic (harness-sensitive)
+
+**Key insight**: The benchmark increasingly measures elicitation skill, not raw model capability.
+
+### Time Horizon: 7× Overstatement
+
+Claude Sonnet 4.5: ~50min by automated grader vs ~8min by maintainer review. Benchmark-based forecasts are dramatically inflated.
+
+### Three Failure Categories with Diagnostics
+
+**Harness-Attributable** (fixable):
+1. Insufficient context elicitation — no repo conventions/style guides injected
+2. Premature termination — no review-and-revise cycles
+3. Context/state management — state loss on long tasks
+4. Tool design — broad rewrites cause unnecessary scope changes
+
+**Model-Attributable** (not harness-fixable):
+1. Semantic misunderstanding — passes tests, misses intent
+2. Incomplete reasoning — edge cases, boundary conditions
+3. Knowledge cutoff gaps
+
+**Benchmark-Attributable** (test suite issue):
+1. Insufficient oracle coverage
+2. Contamination/overfitting (weak evidence: 9.6pp/yr)
+3. Oracle mismatch — tests check symptom, not root cause
+
+### Golden's Actionable Improvements (ranked)
+1. Inject CONTRIBUTING.md + 3 similar merged PRs (addresses code quality directly)
+2. Pre-submission linting + self-review loop
+3. One iteration round with synthetic maintainer feedback
+4. Targeted edit tools instead of full-file rewrites
+5. Test generation step before patching
+
+## New Literature: Harness Engineering (2026)
+
+### OpenDev (arXiv 2603.05344) — "Building AI Coding Agents for the Terminal"
+- **Instruction fade-out**: System prompts ineffective in long conversations → countered with event-driven reminders (aligns with HongYang's context injection finding)
+- **Defense-in-depth safety**: 5 independent layers — prompt, schema, runtime, tool, lifecycle hooks
+- **Dual memory**: Episodic (project knowledge) + working (current turn) injected separately
+- **Staged compaction**: Progressive token reclamation when budget approaches exhaustion
+- No quantitative benchmarks on code quality improvements (limitation)
+
+### Industry Convergence on Harness Engineering
+- OpenAI published "Harness Engineering" for Codex
+- Martin Fowler: "Context Engineering for Coding Agents"
+- AGENTS.md/CLAUDE.md pattern (~100 lines) becoming standard for repo convention injection
+- Production result: 1,500 PRs merged with no hand-written code over 5 months
+
+## Student Assignments (All Cycle 2)
+
+### Golden — COMPLETE → Cycle 2: Repo Context Injection Experiment
+Select 5 SWE-bench tasks with style-rejected patches. Build baseline vs augmented harness (CONTRIBUTING.md + similar PRs + linting). 3 trials × 2 configs × 5 tasks = 30 trials.
 
 ### Matheus — COMPLETE → Cycle 2: Feedback Quality Experiment
-Controlled experiment isolating feedback quality: no feedback vs weak (local pytest) vs strong (Docker grade) vs oracle. 5 trials × 4 conditions on django-11820.
+Controlled experiment: no/weak/strong/oracle feedback × 5 trials on django-11820. Tests H6.
 
-### HongYang — COMPLETE → Cycle 2: Spec Ambiguity Self-Resolution Test
-Implement self-adversarial spec clarification experiment.
+### HongYang — COMPLETE → Cycle 2: Spec Ambiguity Experiment (RUNNING)
+6 subagents running: 3 specs × 2 conditions (control vs treatment). Also: implement Task 4 (Grep Test) as prototype.
 
 ## Updated Hypotheses
 
-**H1**: (unchanged) Majority of harness-attributable failures are in context management.
+**H1**: Majority of harness-attributable failures are in context management → **REFINED by Golden**: code quality (elicitation) is bigger than context management. Revise to: the largest harness-fixable failure category is insufficient context elicitation, not context loss.
 **H2**: (unchanged) Initializer+coding pattern works due to structured external memory.
-**H3**: (unchanged) Code quality rejections are primarily prompting, not architecture.
+**H3**: Code quality rejections are primarily prompting → **CONFIRMED by Golden**: 60-70% harness-fixable, METR explicitly agrees.
 **H4**: (unchanged) SWE-bench inflation concentrated in weak-coverage tasks.
-**H5**: Self-adversarial spec clarification (internal) recovers ≥60% of external dialogue benefit.
-**H6** (NEW, from Matheus): On frontier tasks, feedback quality is the dominant variable. Strong feedback enables iterative convergence; weak feedback provides no useful signal. arXiv 2602.07900's "feedback is marginal" is an artifact of weak feedback only.
+**H5**: Self-adversarial spec clarification recovers ≥60% of external dialogue benefit. (Testing now)
+**H6**: Feedback quality is the dominant variable on hard tasks. (Matheus testing)
+**H7** (NEW, from Golden): The SWE-bench benchmark increasingly measures ELICITATION SKILL, not model capability. Model progression shows code quality improvement, not reasoning improvement.
 
 ## 三省吾身
 
 1. **为人谋而不忠乎** — Am I working on the IMPORTANT problem?
-   Yes. Deep failure analysis + HongYang's spec ambiguity finding targets the #1 failure category (41.77%). The literature validation confirms we're in novel territory.
+   Yes. All three research streams converge on a single insight: harness quality is the bottleneck, and we can quantify exactly where the leverage is (code quality > feedback quality > spec clarity).
 
 2. **与朋友交而不信乎** — Do I understand my results deeply enough to teach them?
-   The key teachable insight: Ambig-SWE and LHAW prove spec ambiguity is a real problem (47-80% performance recovery). Nobody has tested *internal* resolution vs *external* dialogue. HongYang's self-adversarial approach is the first to propose this.
+   I can now teach the whole story: METR shows 50% of passing PRs wouldn't merge. Golden decomposed WHY (60-70% harness-fixable). Matheus found HOW to fix the hardest tasks (strong feedback). HongYang found a novel TECHNIQUE (self-adversarial spec clarification). The three pieces form a coherent narrative.
 
 3. **传不习乎** — What changes my approach going forward?
-   HongYang's speed and quality exceeded expectations. Creative students need OPEN-ENDED missions, not prescriptive protocols. The cycle 2 assignment (implement and run the spec test) gives them runway while focusing on our best finding.
+   Golden's model progression analysis (elicitation > capability) reframes the entire benchmark. We should position harness-bench not as "which harness scores highest" but as "which harness ELICITS the model's existing capability most effectively." This is a subtler, more accurate framing.
