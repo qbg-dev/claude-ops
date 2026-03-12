@@ -432,11 +432,20 @@ git add <specific-files> && git commit -m "..."
     info("Generated AGENTS.md for codex instruction injection");
   }
 
-  // 4. Install codex hook scripts (git safety + audit)
-  const hookInstallerSrc = join(FLEET_DIR, ".claude/scripts/impl-codex/install-codex-hooks.sh");
-  if (existsSync(hookInstallerSrc)) {
+  // 4. Install codex hook scripts in .codex/hooks/
+  // Codex doesn't yet expose hook registration in config.toml — scripts are placed
+  // in .codex/hooks/ for when the hook API is available. Git hooks are also installed
+  // for audit-level enforcement.
+  const codexHooksDir = join(worktreeDir, ".codex", "hooks");
+  mkdirSync(codexHooksDir, { recursive: true });
+
+  // Copy git-safety hook script from fleet scripts/
+  const gitSafetyHookSrc = join(FLEET_DIR, "scripts/codex-git-safety-hook.sh");
+  const gitSafetyHookDst = join(codexHooksDir, "git-safety-gate.sh");
+  if (existsSync(gitSafetyHookSrc) && !existsSync(gitSafetyHookDst)) {
     try {
-      Bun.spawnSync(["bash", hookInstallerSrc, worktreeDir, name], { stderr: "pipe" });
+      copyFileSync(gitSafetyHookSrc, gitSafetyHookDst);
+      Bun.spawnSync(["chmod", "+x", gitSafetyHookDst]);
     } catch { /* non-fatal */ }
   }
 }
