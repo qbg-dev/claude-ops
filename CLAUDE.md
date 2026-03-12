@@ -50,7 +50,7 @@ fleet pipeline <program> [opts]         # launch a program-API pipeline
 fleet hook <add|rm|ls|complete>         # manage dynamic hooks
 fleet doctor                            # verify installation
 fleet nuke <name>                       # destroy worker
-fleet update                            # pull latest, reinstall, re-setup
+fleet update [--reload]                  # pull latest, reinstall, re-setup (--reload recycles workers)
 ```
 
 Flags: `--model opus|sonnet|haiku`, `--effort high|max`, `--save`, `--json`, `-p <project>`

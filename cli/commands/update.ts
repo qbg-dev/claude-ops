@@ -1,13 +1,17 @@
 import type { Command } from "commander";
+import { readdirSync } from "node:fs";
 import chalk from "chalk";
-import { FLEET_DIR } from "../lib/paths";
-import { ok, info, fail } from "../lib/fmt";
+import { FLEET_DIR, FLEET_DATA } from "../lib/paths";
+import { getState, writeJsonLocked } from "../lib/config";
+import { listPaneIds, killPane } from "../lib/tmux";
+import { ok, info, warn, fail } from "../lib/fmt";
 
 export function register(parent: Command): void {
   parent
     .command("update")
     .description("Pull latest fleet code, install deps, re-run setup")
-    .action(async () => {
+    .option("--reload", "Recycle all running workers after update")
+    .action(async (opts: { reload?: boolean }) => {
       console.log(`${chalk.bold("fleet update")} — updating fleet infrastructure\n`);
 
       // 1. git pull
@@ -37,6 +41,55 @@ export function register(parent: Command): void {
         stderr: "inherit",
       });
       if (setup.exitCode !== 0) fail("fleet setup failed");
+
+      // 4. Recycle all running workers if --reload
+      if (opts.reload) {
+        console.log("");
+        info("Reloading workers...");
+        const panes = listPaneIds();
+        let recycled = 0;
+
+        let projects: string[];
+        try {
+          projects = readdirSync(FLEET_DATA, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name);
+        } catch { projects = []; }
+
+        for (const project of projects) {
+          let workers: string[];
+          try {
+            workers = readdirSync(`${FLEET_DATA}/${project}`, { withFileTypes: true })
+              .filter(d => d.isDirectory() && !["missions", "_user", "_config"].includes(d.name))
+              .map(d => d.name);
+          } catch { continue; }
+
+          for (const name of workers) {
+            const state = getState(project, name);
+            const paneId = state?.pane_id;
+            if (paneId && panes.has(paneId)) {
+              // Set status to recycling so watchdog respawns with fresh config
+              const { join } = require("node:path");
+              const statePath = join(FLEET_DATA, project, name, "state.json");
+              try {
+                const stateData = JSON.parse(require("node:fs").readFileSync(statePath, "utf-8"));
+                stateData.status = "recycling";
+                delete stateData.sleep_until;
+                writeJsonLocked(statePath, stateData);
+              } catch {}
+              killPane(paneId);
+              info(`  Recycled ${name} (${project})`);
+              recycled++;
+            }
+          }
+        }
+
+        if (recycled > 0) {
+          ok(`Recycled ${recycled} worker(s) — watchdog will respawn with new config`);
+        } else {
+          warn("No running workers found to reload");
+        }
+      }
 
       console.log("");
       ok(chalk.bold("Fleet updated successfully."));
