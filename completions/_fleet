@@ -1,60 +1,91 @@
 #compdef fleet
-# Fleet CLI — zsh completions
-# Install: add `fpath=(~/.tmux-agents/completions $fpath)` to .zshrc, then `compinit`
+# Fleet CLI — zsh completions (auto-generated, do not hand-edit)
+# Reload: exec zsh  |  Install: fleet completion >> ~/.zshrc
 
 _fleet_workers() {
-  local project
+  local project dir
   project=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename | sed 's/-w-.*//')
-  if [[ -z "$project" ]]; then
-    project=$(ls -1 ~/.claude/fleet/ 2>/dev/null | head -1)
-  fi
+  [[ -z "$project" ]] && project=$(command ls -1 ~/.claude/fleet/ 2>/dev/null | grep -v -E '^\.|defaults\.json' | head -1)
   [[ -z "$project" ]] && return
+  dir="$HOME/.claude/fleet/$project"
+  [[ -d "$dir" ]] || return
 
   local -a workers
-  workers=($(ls -1 ~/.claude/fleet/$project/ 2>/dev/null | grep -v -E '^(_user|missions|fleet\.json|registry\.json)$'))
+  local w status desc
+  for w in "$dir"/*(/:t); do
+    [[ "$w" =~ ^(_user|missions|fleet\.json|registry\.json)$ ]] && continue
+    # Try to show status from state.json
+    if [[ -f "$dir/$w/state.json" ]]; then
+      status=$(command grep -o '"status":"[^"]*"' "$dir/$w/state.json" 2>/dev/null | head -1 | cut -d'"' -f4)
+    fi
+    if [[ -n "$status" ]]; then
+      workers+=("$w:$status")
+    else
+      workers+=("$w")
+    fi
+  done
   _describe 'worker' workers
 }
 
 _fleet_windows() {
   local -a windows
-  windows=($(tmux list-windows -F '#{window_name}' 2>/dev/null))
+  windows=(${(f)"$(tmux list-windows -F '#{window_name}' 2>/dev/null)"})
   _describe 'window' windows
 }
 
 _fleet_projects() {
   local -a projects
-  projects=($(ls -1 ~/.claude/fleet/ 2>/dev/null | grep -v '^\.' | grep -v 'defaults\.json'))
+  projects=(${(f)"$(command ls -1 ~/.claude/fleet/ 2>/dev/null | grep -v -E '^\.|defaults\.json')"})
   _describe 'project' projects
 }
+
+_fleet_hook_events() {
+  local -a events
+  events=(
+    'Stop:Before agent stops'
+    'PreToolUse:Before a tool runs'
+    'PostToolUse:After a tool runs'
+    'PreCompact:Before context compaction'
+    'SubagentStop:When subagent finishes'
+    'SessionStart:When session begins'
+    'UserPromptSubmit:When user sends input'
+  )
+  _describe 'event' events
+}
+
+_fleet_models() { compadd opus sonnet haiku; }
+_fleet_efforts() { compadd high max; }
+_fleet_permmodes() { compadd default plan acceptEdits bypassPermissions; }
+_fleet_types() { compadd implementer optimizer monitor merger chief-of-staff verifier reviewer; }
 
 _fleet() {
   local -a commands
   commands=(
-    'setup:Bootstrap fleet infrastructure'
     'create:Create and launch a worker'
-    'run:Launch an interactive worker'
     'start:Start or restart a worker'
-    'restart:Start or restart a worker'
-    'stop:Graceful stop a worker'
+    'stop:Graceful stop'
+    'run:Interactive worker session'
     'ls:List all workers'
-    'list:List all workers'
     'status:Fleet overview dashboard'
-    'attach:Focus a worker tmux pane'
+    'attach:Focus worker tmux pane'
+    'log:Tail worker output'
     'config:Get/set worker config'
-    'cfg:Get/set worker config'
     'defaults:Get/set global defaults'
-    'log:Tail worker tmux pane output'
-    'logs:Tail worker tmux pane output'
-    'mail:Check worker Fleet Mail inbox'
-    'mail-server:Fleet Mail server management'
     'fork:Fork from existing session'
-    'mcp:Manage MCP server registration'
-    'setup-agent:Launch fleet configuration agent'
-    'nuke:Remove all fleet artifacts'
+    'recycle:Restart with fresh context'
+    'mail:Check Fleet Mail inbox'
+    'mail-server:Fleet Mail server management'
+    'mcp:MCP server registration'
+    'hook:Manage dynamic hooks'
+    'layout:Save/restore tmux layouts'
+    'tui:Fleet Mail TUI client'
+    'deep-review:Adversarial code review'
+    'pipeline:Program-API pipeline'
     'doctor:Verify fleet health'
-    'onboard:Setup + launch fleet architect'
-    'tui:Launch Fleet Mail TUI client'
-    'layout:Save/restore tmux window layouts'
+    'onboard:Setup + launch architect'
+    'setup:Bootstrap fleet infrastructure'
+    'nuke:Remove all fleet artifacts'
+    'completion:Output shell completions'
   )
 
   _arguments -C \
@@ -66,37 +97,86 @@ _fleet() {
     '*::arg:->args'
 
   case $state in
-    cmd)
-      _describe 'command' commands
-      ;;
+    cmd) _describe 'command' commands ;;
     args)
       case $words[1] in
+
+        # --- Worker lifecycle ---
         create)
           _arguments \
-            '(-m --model)'{-m,--model}'[Model]:model:(opus sonnet haiku)' \
-            '(-e --effort)'{-e,--effort}'[Reasoning effort]:effort:(high max)' \
-            '--save[Save as template]' \
+            '--model[Model]:model:_fleet_models' \
+            '--effort[Effort]:effort:_fleet_efforts' \
+            '--permission-mode[Permission mode]:mode:_fleet_permmodes' \
+            '--type[Worker archetype]:type:_fleet_types' \
+            '--window[tmux window group]:window:_fleet_windows' \
+            '--window-index[Window position]:index:' \
+            '--no-launch[Create only, skip launch]' \
             '1:name:' \
             '2:mission:'
           ;;
         start|restart)
           _arguments \
-            '--all[Start all workers]' \
-            '(-m --model)'{-m,--model}'[Model override]:model:(opus sonnet haiku)' \
+            '(-a --all)'{-a,--all}'[Start all workers]' \
+            '(-c --concurrency)'{-c,--concurrency}'[Max concurrent launches]:n:' \
+            '(-f --force)'{-f,--force}'[Force restart running workers]' \
+            '--model[Model]:model:_fleet_models' \
+            '--effort[Effort]:effort:_fleet_efforts' \
+            '--permission-mode[Permission mode]:mode:_fleet_permmodes' \
+            '--window[tmux window group]:window:_fleet_windows' \
+            '--window-index[Window position]:index:' \
+            '--save[Persist overrides to config]' \
             '1:worker:_fleet_workers'
           ;;
         stop)
           _arguments \
-            '--all[Stop all workers]' \
+            '(-a --all)'{-a,--all}'[Stop all workers]' \
             '1:worker:_fleet_workers'
           ;;
-        attach|log|logs|mail)
+        run)
+          _arguments \
+            '--model[Model]:model:_fleet_models' \
+            '--effort[Effort]:effort:_fleet_efforts' \
+            '--permission-mode[Permission mode]:mode:_fleet_permmodes' \
+            '--window[tmux window group]:window:_fleet_windows' \
+            '--window-index[Window position]:index:' \
+            '--type[Worker archetype]:type:_fleet_types' \
+            '1:worker:_fleet_workers'
+          ;;
+        recycle)
+          _arguments \
+            '(-a --all)'{-a,--all}'[Recycle all workers]' \
+            '1:worker:_fleet_workers'
+          ;;
+        fork)
+          _arguments \
+            '--model[Model]:model:_fleet_models' \
+            '1:parent:_fleet_workers' \
+            '2:child name:' \
+            '3:mission:'
+          ;;
+
+        # --- Inspect ---
+        attach)
           _arguments '1:worker:_fleet_workers'
           ;;
+        log|logs)
+          _arguments \
+            '-n[Number of lines]:lines:' \
+            '1:worker:_fleet_workers'
+          ;;
+        ls|list)
+          _arguments '--json[JSON output]'
+          ;;
+        status)
+          _arguments '--json[JSON output]'
+          ;;
+
+        # --- Config ---
         config|cfg)
           _arguments \
+            '--full[Show full config including hooks]' \
             '1:worker:_fleet_workers' \
-            '2:key:(model reasoning_effort permission_mode sleep_duration window worktree branch)' \
+            '2:key:(model reasoning_effort permission_mode sleep_duration window worktree branch type)' \
             '3:value:'
           ;;
         defaults)
@@ -104,38 +184,128 @@ _fleet() {
             '1:key:(model effort permission_mode sleep_duration fleet_mail_url fleet_mail_token)' \
             '2:value:'
           ;;
-        fork)
+
+        # --- Mail ---
+        mail)
           _arguments \
-            '1:parent:_fleet_workers' \
-            '2:child:' \
-            '3:mission:'
-          ;;
-        run)
-          _arguments \
-            '1:worker:_fleet_workers' \
-            '2:command:'
+            '(-l --label)'{-l,--label}'[Filter by label]:label:(UNREAD INBOX TASK ALL)' \
+            '1:worker:_fleet_workers'
           ;;
         mail-server)
-          _arguments '1:action:(connect disconnect status start)'
-          ;;
-        mcp)
-          _arguments '1:action:(register status)'
+          _arguments \
+            '(-t --token)'{-t,--token}'[Auth token]:token:' \
+            '--port[Server port]:port:' \
+            '1:action:(connect disconnect status start)' \
+            '2:url:'
           ;;
         tui)
           _arguments \
-            '(-a --account)'{-a,--account}'[Account name]:worker:_fleet_workers' \
-            '--control[Open in control window pane]'
+            '(-a --account)'{-a,--account}'[Account name]:account:_fleet_workers' \
+            '--control[Open in control pane]'
           ;;
+
+        # --- Hooks ---
+        hook)
+          local -a hook_cmds
+          hook_cmds=(
+            'add:Register a dynamic hook'
+            'rm:Remove a hook'
+            'ls:List active hooks'
+            'complete:Mark blocking hook done'
+          )
+          _arguments -C '1:subcommand:->hooksub' '*::arg:->hookargs'
+          case $state in
+            hooksub) _describe 'hook command' hook_cmds ;;
+            hookargs)
+              case $words[1] in
+                add)
+                  _arguments \
+                    '--event[Hook event]:event:_fleet_hook_events' \
+                    '--desc[Purpose]:description:' \
+                    '--blocking[Block until completed]' \
+                    '--no-blocking[Inject mode]' \
+                    '--script[Shell script]:script:_files' \
+                    '--content[Content to inject]:content:' \
+                    '--condition[Condition JSON]:json:' \
+                    '--agent-id[Scope to subagent]:id:'
+                  ;;
+                rm)
+                  _arguments '1:hook id:(all)'
+                  ;;
+                ls)
+                  _arguments '--event[Filter by event]:event:_fleet_hook_events'
+                  ;;
+                complete)
+                  _arguments \
+                    '--result[Outcome text]:result:' \
+                    '1:hook id:(all)'
+                  ;;
+              esac
+              ;;
+          esac
+          ;;
+
+        # --- Review & pipeline ---
+        deep-review|dr)
+          _arguments \
+            '--scope[Git diff scope]:scope:(uncommitted HEAD)' \
+            '--content[Files to review]:files:_files' \
+            '--spec[Review focus]:spec:' \
+            '--passes[Passes per area]:n:' \
+            '--focus[Focus areas]:areas:' \
+            '--session-name[tmux session name]:name:' \
+            '--notify[Notify on completion]:target:_fleet_workers' \
+            '--max-workers[Worker budget]:n:' \
+            '--no-judge[Skip judge validation]' \
+            '--no-context[Skip context pre-pass]' \
+            '--force[Force review]' \
+            '--verify[Enable verification]' \
+            '--verify-roles[User roles to test]:roles:' \
+            '--v1[Legacy v1 mode]'
+          ;;
+        pipeline|pipe)
+          _arguments \
+            '--scope[Git diff scope]:scope:' \
+            '--content[Files to review]:files:_files' \
+            '--spec[Review focus]:spec:' \
+            '--passes[Passes per area]:n:' \
+            '--verify[Enable verification]' \
+            '--verify-roles[User roles to test]:roles:' \
+            '--no-judge[Skip judge]' \
+            '--no-context[Skip context pre-pass]' \
+            '--no-improve-review[Skip REVIEW.md improvement]' \
+            '--max-workers[Worker budget]:n:' \
+            '--session-name[tmux session name]:name:' \
+            '--notify[Notify on completion]:target:_fleet_workers' \
+            '1:program:(deep-review)'
+          ;;
+
+        # --- Infra ---
         layout)
           _arguments \
-            '1:action:(save restore list ls delete rm)' \
+            '1:action:(save restore list delete)' \
             '2:window:_fleet_windows'
+          ;;
+        mcp)
+          _arguments \
+            '(-q --quiet)'{-q,--quiet}'[Suppress output]' \
+            '1:action:(register status)'
           ;;
         doctor)
           _arguments '--fix[Auto-fix issues]'
           ;;
-        ls|list)
-          _arguments '--json[JSON output]'
+        nuke)
+          _arguments \
+            '--dry-run[Show what would be removed]' \
+            '(-y --yes)'{-y,--yes}'[Skip confirmation]' \
+            '--keep-data[Preserve worker configs]' \
+            '--keep-mail[Preserve Fleet Mail data]'
+          ;;
+        onboard)
+          _arguments \
+            '--model[Model]:model:_fleet_models' \
+            '--effort[Effort]:effort:_fleet_efforts' \
+            '--skip-setup[Skip fleet setup]'
           ;;
       esac
       ;;
