@@ -1,19 +1,25 @@
 /**
  * fleet deep-review — Multi-pass adversarial code review pipeline.
  *
- * 1:1 port of scripts/deep-review.sh to TypeScript/Bun.
- * Same architecture, same tmux session structure, same templates, same dr-context binary.
+ * Architecture: hook-chained async phases.
+ *   Phase 0 (role designer, Opus) → Stop hook → Phase 0.5 (REVIEW.md improver, Opus)
+ *   → Stop hook → context pre-pass + worker launch (Sonnet)
+ *
+ * The orchestrator launches Phase 0 and returns immediately.
+ * Everything else is driven by Stop hooks via pipeline-bridge.ts.
  */
 import type { Command } from "commander";
-import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import { addGlobalOpts } from "../index";
 import { fail } from "../lib/fmt";
 import { resolveProjectRoot, resolveProject } from "../lib/paths";
+import { FLEET_DATA } from "../lib/paths";
 import { DEFAULT_DIFF_FOCUS, DEFAULT_CONTENT_FOCUS, DEFAULT_MIXED_FOCUS } from "../lib/deep-review/args";
 import { collectMaterial, shouldAutoSkip } from "../lib/deep-review/material";
-import { runContextPrePass } from "../lib/deep-review/context";
-import { designRoles } from "../lib/deep-review/roles";
+import { generateRoleDesignerSeed } from "../lib/deep-review/roles";
+import { serializePipelineState } from "../lib/deep-review/pipeline-bridge";
+import { buildMailEnvExport } from "../lib/deep-review/fleet-provisioning";
 import {
   generateWorkerSeeds,
   generateCoordinatorSeed,
@@ -28,8 +34,8 @@ import {
   launchVerifiers,
   printSummary,
 } from "../lib/deep-review/tmux";
-import { improveReviewMd } from "../lib/deep-review/review-improver";
-import { provisionReviewFleet } from "../lib/deep-review/fleet-provisioning";
+// provisionReviewFleet is now called by pipeline-bridge.ts (async)
+import { runContextPrePass } from "../lib/deep-review/context";
 import type { DeepReviewConfig, SessionContext, RoleDesignerResult } from "../lib/deep-review/types";
 
 const HOME = process.env.HOME || "/tmp";
@@ -135,18 +141,16 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
 
   console.log(`Focus areas (${numFocus}): ${config.focusAreas.join(" ")}`);
   console.log(`Passes per focus: ${config.passesPerFocus}`);
-  console.log(`Total workers: ${totalWorkers}`);
+  console.log(`Total workers (estimate): ${totalWorkers}`);
 
   // Detect REVIEW.md
   let reviewConfig = "";
   const searchRoots = [projectRoot];
 
-  // Check main worktree
   const mainWorktreeResult = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { cwd: projectRoot, stderr: "pipe" });
   const mainWorktree = mainWorktreeResult.stdout.toString().split("\n")[0]?.replace("worktree ", "").trim();
   if (mainWorktree && mainWorktree !== projectRoot) searchRoots.push(mainWorktree);
 
-  // Check sibling base repo (Wechat-w-merger → Wechat)
   const baseName = basename(projectRoot);
   const baseRepo = baseName.replace(/-w-[^/]*$/, "");
   if (baseRepo !== baseName) {
@@ -256,11 +260,9 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     }
   }
 
-  // Build fleet names (populated after role design, placeholders for now)
   const sessionHash = hashStr(sessionId).slice(0, 8);
   const fleetProject = resolveProject(projectRoot);
 
-  // Build session context (fleet names populated after role design)
   const ctx: SessionContext = {
     sessionId,
     sessionDir,
@@ -274,7 +276,6 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     claudeOps,
     reviewConfig,
     validatorPath,
-    // Fleet fields — populated after role design determines worker count
     sessionHash,
     coordinatorName: "",
     judgeName: "",
@@ -289,9 +290,9 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     material = collectMaterial(config, sessionDir, projectRoot);
   } catch (e: any) {
     rmSync(sessionDir, { recursive: true, force: true });
-    fail(e.message); // calls process.exit
+    fail(e.message);
   }
-  if (!material) return; // unreachable, satisfies TS
+  if (!material) return;
 
   // Auto-skip check
   const skipReason = shouldAutoSkip(material, config);
@@ -306,63 +307,172 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     config.spec = "Review this material thoroughly for issues, gaps, and improvements.";
   }
 
-  // Phase 0: Dynamic role designer (v2 only)
-  let roleResult: RoleDesignerResult;
-
-  if (!config.v1Mode) {
-    roleResult = designRoles(config, material, ctx);
-    // Update config focus areas from role result
-    config.focusAreas = roleResult.focusAreas;
-  } else {
-    roleResult = {
-      useDynamicRoles: false,
-      focusAreas: config.focusAreas,
-      numFocus: config.focusAreas.length,
-      totalWorkers: config.passesPerFocus * config.focusAreas.length,
-      passesPerFocus: config.passesPerFocus,
-      roleNames: "",
-    };
+  // ══════════════════════════════════════════════════════════════════
+  // V1 mode: synchronous pipeline (no hooks, no planning phases)
+  // ══════════════════════════════════════════════════════════════════
+  if (config.v1Mode) {
+    return runV1Pipeline(config, material, ctx);
   }
+
+  // ══════════════════════════════════════════════════════════════════
+  // V2 mode: async hook-chained pipeline
+  // ══════════════════════════════════════════════════════════════════
+
+  // Generate role designer seed
+  const roleDesignerSeed = generateRoleDesignerSeed(config, material, ctx);
+  if (!roleDesignerSeed) {
+    console.log("Role designer seed not available, falling back to v1 pipeline");
+    return runV1Pipeline(config, material, ctx);
+  }
+
+  // Serialize pipeline state for bridge scripts
+  serializePipelineState({ config, material, ctx }, sessionDir);
+
+  // Provision role designer worker
+  const roleDesignerName = `dr-${sessionHash}-role-designer`;
+  const projectDir = join(FLEET_DATA, fleetProject);
+  mkdirSync(join(projectDir, roleDesignerName), { recursive: true });
+
+  const nowIso = new Date().toISOString();
+  writeFileSync(join(projectDir, roleDesignerName, "config.json"), JSON.stringify({
+    model: "opus",
+    reasoning_effort: "high",
+    permission_mode: "bypassPermissions",
+    sleep_duration: null,
+    window: null,
+    worktree: workDir,
+    branch: "HEAD",
+    mcp: {},
+    hooks: [],
+    ephemeral: true,
+    meta: { created_at: nowIso, created_by: "deep-review", forked_from: null, project: fleetProject },
+  }, null, 2));
+
+  writeFileSync(join(projectDir, roleDesignerName, "state.json"), JSON.stringify({
+    status: "active",
+    pane_id: null,
+    pane_target: null,
+    tmux_session: reviewSession,
+    session_id: `dr-${sessionHash}`,
+    past_sessions: [],
+    last_relaunch: null,
+    relaunch_count: 0,
+    cycles_completed: 0,
+    last_cycle_at: null,
+    custom: { role: "role-designer", session_hash: sessionHash },
+  }, null, 2));
+
+  writeFileSync(join(projectDir, roleDesignerName, "token"), "");
+  writeFileSync(join(projectDir, roleDesignerName, "mission.md"),
+    "# Role Designer\nDeep review role designer (ephemeral, Opus)");
+
+  // Write Stop hook: Phase 0 → Phase 0.5
+  const phase0StopScript = join(claudeOps, "scripts/deep-review/phase0-stop.sh");
+  const hooksDir = join(projectDir, roleDesignerName, "hooks");
+  mkdirSync(hooksDir, { recursive: true });
+  copyFileSync(phase0StopScript, join(hooksDir, "phase0-stop.sh"));
+  writeFileSync(join(hooksDir, "session-dir.txt"), sessionDir);
+  writeFileSync(join(hooksDir, "hooks.json"), JSON.stringify({
+    hooks: [{
+      id: "dh-1",
+      event: "Stop",
+      description: "Bridge: Phase 0 (role designer) → Phase 0.5 (REVIEW.md improver)",
+      blocking: false,
+      completed: false,
+      status: "active",
+      lifetime: "persistent",
+      script_path: "phase0-stop.sh",
+      registered_by: "deep-review",
+      ownership: "creator",
+      added_at: nowIso,
+    }],
+  }, null, 2));
+
+  // Generate launch wrapper for role designer
+  const seedPath = join(sessionDir, "role-designer-seed.md");
+  const fleetEnv = buildMailEnvExport(roleDesignerName, fleetProject);
+  const launchScript = `#!/usr/bin/env bash
+cd "${workDir}"
+${fleetEnv}
+export PROJECT_ROOT="${workDir}"
+export HOOKS_DIR="${hooksDir}"
+export CLAUDE_FLEET_DIR="${claudeOps}"
+exec claude --model opus --dangerously-skip-permissions "$(cat '${seedPath}')"
+`;
+  const launchPath = join(sessionDir, `run-${roleDesignerName}.sh`);
+  writeFileSync(launchPath, launchScript, { mode: 0o755 });
+
+  // Create tmux session with planning window
+  console.log(`Creating tmux session: ${reviewSession}`);
+  Bun.spawnSync(["tmux", "new-session", "-d", "-s", reviewSession, "-n", "planning", "-c", projectRoot], { stderr: "pipe" });
+  Bun.sleepSync(500);
+
+  // Launch Phase 0 in planning window
+  console.log("");
+  console.log("Phase 0: Launching role designer (Opus, async)...");
+  const { stdout } = Bun.spawnSync(["tmux", "list-panes", "-t", `${reviewSession}:planning`, "-F", "#{pane_id}"], { stderr: "pipe" });
+  const planningPane = stdout.toString().trim().split("\n")[0];
+
+  if (planningPane) {
+    Bun.spawnSync(["tmux", "send-keys", "-t", planningPane, `bash '${launchPath}'`, "Enter"], { stderr: "pipe" });
+
+    // Track pane ID
+    try {
+      const stateFile = join(projectDir, roleDesignerName, "state.json");
+      const s = JSON.parse(readFileSync(stateFile, "utf-8"));
+      s.pane_id = planningPane;
+      s.pane_target = `${reviewSession}:planning`;
+      writeFileSync(stateFile, JSON.stringify(s, null, 2));
+    } catch {}
+
+    console.log(`  Role designer → ${planningPane} (${roleDesignerName})`);
+  }
+
+  // Print async summary
+  console.log("");
+  console.log("════════════════════════════════════════════════════════════");
+  console.log("  DEEP REVIEW — ASYNC PIPELINE STARTED");
+  console.log("");
+  console.log(`  Session:     ${reviewSession}`);
+  console.log(`  Dir:         ${sessionDir}`);
+  console.log(`  Material:    ${material.materialTypesStr} (${material.materialType})`);
+  console.log(`  Reviewing:   ${material.diffDesc} (${material.diffLines} lines)`);
+  if (config.spec && config.spec !== "Review this material thoroughly for issues, gaps, and improvements.") {
+    console.log(`  Spec:        ${config.spec}`);
+  }
+  if (worktreeDir) {
+    console.log(`  Worktree:    ${worktreeDir}`);
+  }
+  console.log("");
+  console.log("  Pipeline phases (hook-chained, no timeouts):");
+  console.log("  1. Phase 0:   Role designer (Opus) ← running now");
+  console.log("  2. Phase 0.5: REVIEW.md improver (Opus) ← auto-launches on Phase 0 completion");
+  console.log("  3. Workers:   Review workers (Sonnet) ← auto-launch on Phase 0.5 completion");
+  console.log("");
+  console.log(`  Attach: tmux switch-client -t ${reviewSession}`);
+  console.log(`          tmux a -t ${reviewSession}`);
+  console.log(`  Report: ${sessionDir}/report.md (after completion)`);
+  console.log("════════════════════════════════════════════════════════════");
+}
+
+/** V1 synchronous pipeline (no hooks, static focus areas, no planning phases) */
+function runV1Pipeline(
+  config: DeepReviewConfig,
+  material: ReturnType<typeof collectMaterial>,
+  ctx: SessionContext,
+): void {
+  const roleResult: RoleDesignerResult = {
+    useDynamicRoles: false,
+    focusAreas: config.focusAreas,
+    numFocus: config.focusAreas.length,
+    totalWorkers: config.passesPerFocus * config.focusAreas.length,
+    passesPerFocus: config.passesPerFocus,
+    roleNames: "",
+  };
 
   // Smart focus auto-detection (v1 only)
-  if (!config.customFocus && material.hasDiff && !roleResult.useDynamicRoles) {
+  if (!config.customFocus && material.hasDiff) {
     applySmartFocus(config, material, ctx, roleResult);
-  }
-
-  // Populate fleet names now that we know worker count
-  if (!config.v1Mode) {
-    ctx.coordinatorName = `dr-${sessionHash}-coord`;
-    ctx.judgeName = config.noJudge ? "" : `dr-${sessionHash}-judge`;
-    ctx.workerNames = [];
-    for (let i = 1; i <= roleResult.totalWorkers; i++) {
-      ctx.workerNames.push(`dr-${sessionHash}-${i}`);
-    }
-    ctx.verifierNames = config.verify
-      ? ["chrome", "curl", "test", "script"].map((t) => `dr-${sessionHash}-v-${t}`)
-      : [];
-
-    // Fleet provisioning
-    console.log(`Provisioning fleet (${ctx.workerNames.length + 1 + (ctx.judgeName ? 1 : 0) + ctx.verifierNames.length} workers)...`);
-    await provisionReviewFleet({
-      sessionHash,
-      project: fleetProject,
-      workerNames: ctx.workerNames,
-      coordinatorName: ctx.coordinatorName,
-      judgeName: ctx.judgeName || null,
-      verifierNames: ctx.verifierNames,
-      sharedWorktree: workDir,
-      workerModel: config.workerModel,
-      coordModel: config.coordModel,
-      tmuxSession: reviewSession,
-    });
-  }
-
-  // Phase 0.5: REVIEW.md improvement
-  if (!config.noImproveReview && !config.v1Mode) {
-    const improved = improveReviewMd(config, material, ctx, roleResult);
-    if (improved !== ctx.reviewConfig) {
-      ctx.reviewConfig = improved;
-    }
   }
 
   // Context pre-pass
@@ -371,17 +481,17 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
   }
 
   // Shuffle material
-  console.log(`Generating ${roleResult.totalWorkers} randomized orderings...`);
-  const drContext = join(claudeOps, "bin", "dr-context");
+  const drContext = join(ctx.claudeOps, "bin", "dr-context");
   if (existsSync(drContext)) {
-    Bun.spawnSync([drContext, "shuffle", material.materialFile, sessionDir, String(roleResult.totalWorkers)], {
-      cwd: projectRoot,
+    console.log(`Generating ${roleResult.totalWorkers} randomized orderings...`);
+    Bun.spawnSync([drContext, "shuffle", material.materialFile, ctx.sessionDir, String(roleResult.totalWorkers)], {
+      cwd: ctx.projectRoot,
       stderr: "pipe",
       timeout: 60_000,
     });
   }
 
-  // Generate seeds
+  // Generate seeds + launch wrappers
   console.log("Generating seed prompts...");
   generateWorkerSeeds(config, material, ctx, roleResult);
   generateCoordinatorSeed(config, material, ctx, roleResult);
@@ -389,15 +499,13 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
   if (!config.noJudge) {
     generateJudgeSeed(ctx, roleResult);
   }
-
   if (config.verify) {
     generateVerifierSeeds(config, ctx);
   }
 
-  // Generate launch wrappers
   generateLaunchWrappers(config, ctx, roleResult);
 
-  // Create tmux session and launch everything
+  // Create tmux session and launch
   createTmuxSession(config, ctx, roleResult);
   launchWorkers(config, ctx, roleResult);
   launchCoordinator(ctx);
@@ -406,21 +514,6 @@ async function runDeepReview(opts: Record<string, any>): Promise<void> {
     launchVerifiers(ctx);
   }
 
-  // Write cleanup script for post-completion (coordinator or manual invocation)
-  if (!config.v1Mode && ctx.coordinatorName) {
-    const provisioningModule = join(claudeOps, "cli/lib/deep-review/fleet-provisioning.ts");
-    const cleanupScript = `#!/usr/bin/env bash
-# Auto-cleanup for deep-review fleet workers (dr-${sessionHash}-*)
-# Run after review completes, or manually if session is abandoned.
-cd "${projectRoot}"
-exec bun -e "
-import('${provisioningModule}').then(m => m.cleanupReviewFleet('${sessionHash}', '${fleetProject}')).then(() => console.log('Cleanup complete'));
-"
-`;
-    writeFileSync(join(sessionDir, "cleanup-fleet.sh"), cleanupScript, { mode: 0o755 });
-  }
-
-  // Print summary
   printSummary(config, ctx, material, roleResult);
 }
 
@@ -434,7 +527,6 @@ function applySmartFocus(
   const materialContent = readFileSync(material.materialFile, "utf-8");
   let changed = false;
 
-  // Auto-include claude-md if >50% TS/JS + CLAUDE.md present
   const hasClaudeMd = ctx.reviewConfig ||
     existsSync(join(ctx.projectRoot, "CLAUDE.md")) ||
     existsSync(join(ctx.projectRoot, ".claude", "CLAUDE.md"));
@@ -453,7 +545,6 @@ function applySmartFocus(
     }
   }
 
-  // Auto-include silent-failure if ≥3 try/catch patterns
   const catchCount = (materialContent.match(/(try\s*\{|\.catch\(|catch\s*\()/g) || []).length;
   if (catchCount >= 3) {
     const idx = config.focusAreas.indexOf("completeness");

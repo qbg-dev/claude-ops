@@ -65,3 +65,11 @@ export interface RoleDesignerResult {
   passesPerFocus: number;
   roleNames: string;
 }
+
+/** Serialized pipeline state for async hook-chained phases */
+export interface PipelineState {
+  config: DeepReviewConfig;
+  material: MaterialResult;
+  ctx: SessionContext;
+  roleResult?: RoleDesignerResult;
+}

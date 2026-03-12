@@ -17,23 +17,27 @@ function getPaneId(target: string, index: number): string {
   return panes[index] || "";
 }
 
-/** Create the tmux session with coordinator + worker windows */
+/** Create the tmux session with coordinator + worker windows.
+ *  If the session already exists (e.g. planning window from async pipeline),
+ *  adds windows to it instead of recreating.
+ */
 export function createTmuxSession(
   config: DeepReviewConfig,
   ctx: SessionContext,
   roleResult: RoleDesignerResult,
 ): void {
   const numWorkerWindows = Math.ceil(roleResult.totalWorkers / 4);
-  console.log(`Creating tmux session: ${ctx.reviewSession} (1 coordinator + ${numWorkerWindows} worker windows)...`);
+  const sessionExists = tmux("has-session", "-t", ctx.reviewSession).ok;
 
-  // Kill existing session
-  if (tmux("has-session", "-t", ctx.reviewSession).ok) {
-    console.log(`Killing existing session: ${ctx.reviewSession}`);
-    tmux("kill-session", "-t", ctx.reviewSession);
+  if (sessionExists) {
+    console.log(`Adding windows to existing session: ${ctx.reviewSession} (1 coordinator + ${numWorkerWindows} worker windows)...`);
+    // Add coordinator window to existing session
+    tmux("new-window", "-d", "-t", ctx.reviewSession, "-n", "coordinator", "-c", ctx.projectRoot);
+  } else {
+    console.log(`Creating tmux session: ${ctx.reviewSession} (1 coordinator + ${numWorkerWindows} worker windows)...`);
+    // Create new session with coordinator window
+    tmux("new-session", "-d", "-s", ctx.reviewSession, "-n", "coordinator", "-c", ctx.projectRoot);
   }
-
-  // Create session with coordinator window
-  tmux("new-session", "-d", "-s", ctx.reviewSession, "-n", "coordinator", "-c", ctx.projectRoot);
 
   // Create worker windows (4 panes each, tiled layout)
   let workersRemaining = roleResult.totalWorkers;

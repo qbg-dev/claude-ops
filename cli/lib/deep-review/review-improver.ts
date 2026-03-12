@@ -1,30 +1,27 @@
 /**
  * REVIEW.md Improver — Phase 0.5 of deep review pipeline.
  * Runs after role designer, before context pre-pass and worker launch.
- * Generates an improved REVIEW.md tuned for the specific material being reviewed.
+ * Split into seed generation (orchestrator) and result parsing (bridge).
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DeepReviewConfig, MaterialResult, SessionContext, RoleDesignerResult } from "./types";
 
 /**
- * Improve REVIEW.md before review workers launch.
- * Uses Sonnet to analyze material + roles and produce better review rules.
- * Returns updated reviewConfig content (or original on failure).
+ * Generate the REVIEW.md improver seed prompt (template-substituted).
+ * Returns the seed content string, or null if template not found.
  */
-export function improveReviewMd(
+export function generateImproverSeed(
   config: DeepReviewConfig,
   material: MaterialResult,
   ctx: SessionContext,
   roleResult: RoleDesignerResult,
-): string {
+): string | null {
   const templatePath = join(ctx.templateDir, "review-improver-seed.md");
   if (!existsSync(templatePath)) {
     console.log("  WARN: review-improver-seed.md not found, skipping improvement");
-    return ctx.reviewConfig;
+    return null;
   }
-
-  console.log("Phase 0.5: Improving REVIEW.md for this review...");
 
   const outputFile = join(ctx.sessionDir, "review-md-improved.md");
 
@@ -51,7 +48,6 @@ export function improveReviewMd(
     roleSummary = `Focus areas: ${roleResult.focusAreas.join(", ")}\nTotal workers: ${roleResult.totalWorkers}`;
   }
 
-  // Build seed from template
   let template = readFileSync(templatePath, "utf-8");
   const replacements: Record<string, string> = {
     "{{MATERIAL_FILE}}": material.materialFile,
@@ -69,16 +65,20 @@ export function improveReviewMd(
 
   const seedPath = join(ctx.sessionDir, "review-improver-seed.md");
   writeFileSync(seedPath, template);
+  return template;
+}
 
-  // Run Opus non-interactively (180s timeout — needs to read material + produce full REVIEW.md)
-  const result = Bun.spawnSync(
-    ["claude", "-p", "--model", "opus", "--dangerously-skip-permissions", readFileSync(seedPath, "utf-8")],
-    { cwd: ctx.projectRoot, stderr: "pipe", stdout: "pipe", timeout: 180_000 },
-  );
+/**
+ * Parse the improved REVIEW.md output.
+ * Returns the improved content, or the original on failure.
+ */
+export function parseImproverResult(
+  ctx: SessionContext,
+): string {
+  const outputFile = join(ctx.sessionDir, "review-md-improved.md");
 
-  if (result.exitCode !== 0 || !existsSync(outputFile)) {
-    const stderr = result.stderr?.toString().trim() || "";
-    console.log(`  WARN: REVIEW.md improver failed (${stderr || "timeout"}), using original`);
+  if (!existsSync(outputFile)) {
+    console.log("  WARN: REVIEW.md improver did not produce output, using original");
     return ctx.reviewConfig;
   }
 
@@ -88,7 +88,7 @@ export function improveReviewMd(
     return ctx.reviewConfig;
   }
 
-  // Save both versions for comparison
+  // Save original for comparison
   if (ctx.reviewConfig) {
     writeFileSync(join(ctx.sessionDir, "review-md-original.md"), ctx.reviewConfig);
   }
@@ -99,7 +99,6 @@ export function improveReviewMd(
   const deltaStr = delta > 0 ? `+${delta}` : String(delta);
 
   console.log(`  REVIEW.md improved: ${originalLines} → ${improvedLines} lines (${deltaStr})`);
-  console.log(`  Saved: ${outputFile}`);
 
   return improved;
 }
