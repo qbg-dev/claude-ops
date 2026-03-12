@@ -148,6 +148,14 @@
       "category": "core",
       "description": "[GATE] Blocks session exit if worker branch has unpushed commits or uncommitted changes. Ensures work is preserved"
     },
+    {
+      "id": "stop-cron-gate",
+      "event": "Stop",
+      "path": "~/.claude-fleet/hooks/gates/stop-cron-gate.sh",
+      "required": true,
+      "category": "core",
+      "description": "[GATE] Blocks session exit if worker has cron_schedule configured but hasn't called CronCreate with expected parameters"
+    },
 
     {"_comment": "── Liveness heartbeat (ALL events) ──"},
 

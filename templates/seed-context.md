@@ -458,6 +458,8 @@ Three tools for time-based scheduling within a live session:
 
 Cron expressions use standard 5-field format in local time: `minute hour day-of-month month day-of-week`. Jobs only fire while the REPL is idle (won't interrupt mid-query). Recurring jobs auto-expire after 3 days. Avoid `:00` and `:30` minutes to prevent thundering herd across workers.
 
+**Enforced cron_schedule**: If your `config.json` has a `cron_schedule` array, the Stop hook (`stop-cron-gate`) blocks session exit until you've called `CronCreate` for each entry. Call all expected crons at session start—the gate checks `tools.jsonl` for matching calls.
+
 ```
 # Poll inbox every 3 minutes for merge requests
 CronCreate("*/3 * * * *", "Check Fleet Mail for new messages and act on them")

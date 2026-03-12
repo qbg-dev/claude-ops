@@ -435,6 +435,40 @@ hook_pass() {
   echo '{}'
 }
 
+# ═══════════════════════════════════════════════════════════════
+# TOOL LOG — shared tools.jsonl access for all hooks
+# ═══════════════════════════════════════════════════════════════
+# Claude Code logs every tool call to ~/.claude/tool-logs/<project>/tools.jsonl
+# with fields: session_id, tool, cron, prompt, etc.
+
+# Resolve tools.jsonl path for the current project.
+# Usage: TOOL_LOG=$(hook_tool_log)
+#        TOOL_LOG=$(hook_tool_log "project-name")
+hook_tool_log() {
+  local project="${1:-$(basename "${PROJECT_ROOT:-$(pwd)}")}"
+  echo "$HOME/.claude/tool-logs/$project/tools.jsonl"
+}
+
+# Search tools.jsonl for matching tool calls in a session.
+# Usage: hook_tool_log_grep <session_id> <tool_name> [<extra_pattern>]
+# Returns matching lines, exit 1 if no file or no match.
+hook_tool_log_grep() {
+  local session_id="$1" tool_name="$2" extra="${3:-}"
+  local log
+  log=$(hook_tool_log)
+  [ ! -f "$log" ] && return 1
+  local pattern="\"session_id\":\"${session_id}\".*\"tool\":\"${tool_name}\""
+  [ -n "$extra" ] && pattern="${pattern}.*${extra}"
+  grep -E "$pattern" "$log" 2>/dev/null
+}
+
+# Check if a specific tool was called in this session.
+# Usage: hook_tool_log_has <session_id> <tool_name> [<extra_pattern>]
+# Returns 0 if found, 1 if not.
+hook_tool_log_has() {
+  hook_tool_log_grep "$@" >/dev/null 2>&1
+}
+
 # ── Portable file mtime (macOS + Linux) ──
 _file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
 

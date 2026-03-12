@@ -1,21 +1,23 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { FLEET_DATA, workerDir, resolveProject } from "../lib/paths";
-import { getState, writeJsonLocked } from "../lib/config";
+import { FLEET_DATA, DEFAULT_SESSION, workerDir, resolveProject } from "../lib/paths";
+import { getConfig, getFleetConfig, getState, writeJsonLocked } from "../lib/config";
 import { info, ok, warn, fail } from "../lib/fmt";
 import { listPaneIds, killPane } from "../lib/tmux";
+import { launchInTmux } from "../lib/launch";
+import { syncWorktree } from "../lib/worktree";
 import { addGlobalOpts } from "../index";
 
 /**
- * fleet recycle <name> — Kill a worker's session so the watchdog immediately respawns it.
- * Unlike `fleet start --force`, this sets status to "recycling" so the watchdog
- * picks it up on the next poll (30s max) with a fresh seed + config reload.
+ * fleet recycle <name> — Stop + restart a worker with fresh context.
+ * Kills the existing pane, then immediately relaunches (no watchdog race).
+ * The watchdog sees the new pane as alive and skips it.
  */
 export function register(parent: Command): void {
   const sub = parent
     .command("recycle [name]")
-    .description("Restart a worker with fresh context (watchdog respawns immediately)")
+    .description("Restart a worker with fresh context (stop + start, no watchdog race)")
     .option("-a, --all", "Recycle all workers");
   addGlobalOpts(sub)
     .action(async (name: string | undefined, opts: { all?: boolean }, cmd: Command) => {
@@ -29,18 +31,18 @@ export function register(parent: Command): void {
           .filter(d => d.isDirectory() && !["missions", "_user", "_config"].includes(d.name))
           .map(d => d.name);
         for (const w of workers) {
-          recycleOne(w, project);
+          await recycleOne(w, project);
         }
         ok(`Recycled ${workers.length} workers`);
         return;
       }
 
       if (!name) return fail("Provide a worker name or use --all");
-      recycleOne(name, project);
+      await recycleOne(name, project);
     });
 }
 
-function recycleOne(name: string, project: string): void {
+async function recycleOne(name: string, project: string): Promise<void> {
   const dir = workerDir(project, name);
   if (!existsSync(dir)) { warn(`Worker '${name}' not found`); return; }
 
@@ -48,22 +50,43 @@ function recycleOne(name: string, project: string): void {
   const panes = listPaneIds();
   const paneId = state?.pane_id;
 
-  // Clear sleep timer so watchdog respawns immediately
+  // 1. Kill existing pane if alive
+  if (paneId && panes.has(paneId)) {
+    killPane(paneId);
+    info(`Killed pane ${paneId}`);
+  }
+
+  // 2. Clear sleep/recycling state so it launches clean
   const statePath = join(dir, "state.json");
   if (existsSync(statePath)) {
     try {
       const stateData = JSON.parse(require("node:fs").readFileSync(statePath, "utf-8"));
-      stateData.status = "recycling";
+      stateData.status = "active";
       delete stateData.sleep_until;
+      if (stateData.custom) delete stateData.custom.sleep_until;
       writeJsonLocked(statePath, stateData);
     } catch {}
   }
 
-  if (paneId && panes.has(paneId)) {
-    // Kill the pane — watchdog will detect dead pane and respawn
-    killPane(paneId);
-    ok(`Recycled '${name}' (killed pane ${paneId}) — watchdog will respawn`);
-  } else {
-    info(`Worker '${name}' not running — watchdog will start it on next poll`);
+  // 3. Immediately relaunch (no watchdog dependency)
+  const config = getConfig(project, name);
+  if (!config) { warn(`No config for '${name}', skipping relaunch`); return; }
+
+  const window = config.window || name;
+  const fleetConfig = getFleetConfig(project);
+  const session = fleetConfig?.tmux_session || DEFAULT_SESSION;
+
+  // Re-sync worktree files before relaunch
+  if (config.worktree) {
+    const projectRoot = config.worktree.replace(/-w-[^/]+$/, "");
+    syncWorktree({ name, project, projectRoot, worktreeDir: config.worktree });
+  }
+
+  try {
+    await launchInTmux(name, project, session, window);
+    ok(`Recycled '${name}' (stop + start)`);
+  } catch (e) {
+    warn(`Killed '${name}' but relaunch failed: ${e}`);
+    info("Watchdog will pick it up on next poll");
   }
 }

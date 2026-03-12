@@ -16,6 +16,8 @@ export interface WorkerConfig {
   hooks: SystemHook[];
   /** Ephemeral workers skip watchdog respawn and are auto-cleaned after completion (e.g. deep-review workers) */
   ephemeral?: boolean;
+  /** Expected CronCreate calls — Stop hook blocks until all are registered */
+  cron_schedule?: { cron: string; prompt: string }[];
   meta: {
     created_at: string;
     created_by: string;
