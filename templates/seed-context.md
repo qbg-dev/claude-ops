@@ -394,25 +394,75 @@ LOOP FOREVER:
 
 > **NEVER `sleep N` to wait between cycles.** If you're idle, just stay idle — the operator or watchdog handles restarts.
 
-## Polling with CronCreate
+## Scheduled Polling (Cron)
 
-Use `CronCreate` to poll for events on a schedule (new mail, deploy status, external APIs). Cron jobs run independently of your main loop — they fire even while you're deep in a task.
+Three tools for time-based scheduling within a live session:
+
+| Tool | What |
+|------|------|
+| `CronCreate(cron, prompt)` | Schedule a recurring or one-shot prompt on a cron expression. Returns a job ID. |
+| `CronList()` | List all active cron jobs in this session. |
+| `CronDelete(id)` | Cancel a job by ID. |
+
+Cron expressions use standard 5-field format in local time: `minute hour day-of-month month day-of-week`. Jobs only fire while the REPL is idle (won't interrupt mid-query). Recurring jobs auto-expire after 3 days. Avoid `:00` and `:30` minutes to prevent thundering herd across workers.
 
 ```
 # Poll inbox every 3 minutes for merge requests
-CronCreate("*/3 * * * *", "Check Fleet Mail inbox for new merge requests",
-  command="MAIL_TOKEN=$(cat ~/.claude/fleet/$PROJECT_NAME/$WORKER_NAME/token) && curl -sf -H 'Authorization: Bearer $MAIL_TOKEN' '${FLEET_MAIL_URL}/api/messages?label=UNREAD' | jq -r '.messages[] | .id + \" \" + .subject'")
+CronCreate("*/3 * * * *", "Check Fleet Mail for new messages and act on them")
 
-# Check deploy health every 5 minutes
-CronCreate("*/5 * * * *", "Health check test server",
-  command="curl -sf https://test.baoyuansmartlife.com/health || echo 'UNHEALTHY'")
+# Health check every 5 minutes
+CronCreate("*/5 * * * *", "curl -sf https://test.baoyuansmartlife.com/health || mail_send(to='user', subject='UNHEALTHY', body='test server down')")
+
+# One-shot reminder (recurring: false → fires once, then auto-deletes)
+CronCreate("30 14 9 3 *", "Remind me to check deploy status", recurring=false)
+
+# List and clean up
+CronList()           # see all active jobs
+CronDelete("abc123") # cancel a specific job
 ```
 
-**CronCreate does not conflict with the watchdog.** They operate at different layers:
-- **Cron**: lightweight scheduled commands within a live session (polling, health checks, reminders)
-- **Watchdog**: process-level supervisor that restarts dead workers, kills stuck ones, enforces crash-loop limits
+### Cron + Hooks + Watchdog (Three Layers)
 
-The watchdog is a safety net on top — it ensures your process stays alive so your cron jobs keep running.
+Cron, hooks, and the watchdog are complementary — they cover different trigger dimensions:
+
+| Layer | Trigger | Scope | Persistence |
+|-------|---------|-------|-------------|
+| **Hooks** | Events (tool use, stop, compaction) | React to what you do | Survives recycles |
+| **Cron** | Time (every N minutes, at specific times) | Notice what changes around you | Session-only (3-day max) |
+| **Watchdog** | Process death (crash, stuck, timeout) | Ensures the process stays alive | Permanent (launchd) |
+
+**Hooks are reflexes. Cron is senses. Watchdog is the immune system.**
+
+- Hooks fire when something happens inside your session (you edited a file, you're about to stop, context is compacting)
+- Cron fires on a clock, regardless of what you're doing — it watches the external world (new mail, server health, deploy status)
+- The watchdog ensures your process stays alive so both hooks and cron keep running
+
+They don't conflict — they stack. A well-configured worker uses all three:
+
+```
+# HOOKS — react to internal events
+add_hook(event="Stop", description="verify TypeScript compiles",
+  check="cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'")
+
+add_hook(event="PreToolUse", content="Check inbox before starting new work",
+  condition={tool: "Agent"})
+
+# CRON — poll the external world
+CronCreate("*/3 * * * *", "Check Fleet Mail inbox and handle new messages")
+CronCreate("*/5 * * * *", "Verify test server is healthy")
+
+# WATCHDOG — process-level safety net (configured externally, not by you)
+# sleep_duration > 0 → watchdog auto-restarts you if you crash
+```
+
+**Synergy patterns:**
+
+| Pattern | How |
+|---------|-----|
+| **Cron discovers, hook enforces** | Cron polls inbox, finds new MR → you process it → Stop hook ensures you verified before finishing |
+| **Hook triggers, cron monitors** | After deploying (PostToolUse), start a health-check cron to watch for regressions |
+| **Cron as external sensor** | Hooks can't see things outside your session (server health, new mail, CI status) — cron fills that gap |
+| **Cron as reminder** | One-shot cron for "check back on this in 30 minutes" — hooks can't do time-based triggers |
 
 ## Respawn Configuration
 
