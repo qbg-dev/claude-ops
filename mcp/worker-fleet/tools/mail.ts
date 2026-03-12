@@ -77,8 +77,8 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
     if (to === "user") {
       let msgId = "";
       try {
-        const toIds = await resolveFleetMailRecipients(["user"]);
-        const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
+        const toIds = await resolveFleetMailRecipients(["user"], subject);
+        const ccIds = cc ? await resolveFleetMailRecipients(cc, subject) : [];
         const result = await fleetMailRequest("POST", "/api/messages/send", {
           to: toIds, subject, body,
           cc: ccIds, thread_id: thread_id || null, in_reply_to: in_reply_to || null,
@@ -141,7 +141,7 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
     }
 
     // Resolve CC once (not per-recipient)
-    const ccIds = cc ? await resolveFleetMailRecipients(cc) : [];
+    const ccIds = cc ? await resolveFleetMailRecipients(cc, subject) : [];
 
     // Send via Fleet Mail (durable delivery) — parallel fan-out
     const mailSuccesses: string[] = [];
@@ -151,7 +151,7 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
 
     const sendResults = await Promise.allSettled(
       recipientNames.map(async (name) => {
-        const toIds = await resolveFleetMailRecipients([name]);
+        const toIds = await resolveFleetMailRecipients([name], subject);
         const result = await fleetMailRequest("POST", "/api/messages/send", {
           to: toIds, subject, body,
           cc: ccIds, thread_id: thread_id || null, in_reply_to: in_reply_to || null,

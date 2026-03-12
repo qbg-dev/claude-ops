@@ -235,7 +235,7 @@ let _fleetMailDirectoryCache: Record<string, string> | null = null;
 let _fleetMailDirCacheTime = 0;
 const FLEET_MAIL_DIR_CACHE_TTL = 60_000; // 1 minute
 
-export async function resolveFleetMailAccountId(name: string): Promise<string> {
+export async function resolveFleetMailAccountId(name: string, messageHint?: string): Promise<string> {
   // If it looks like a UUID already, pass through
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) return name;
   // If it's a list: prefix, pass through
@@ -262,56 +262,104 @@ export async function resolveFleetMailAccountId(name: string): Promise<string> {
   }
 
   // Look up by namespaced name (e.g. "merger@wechat")
-  // Return NAME (not UUID) — boring-mail v0.1.x send handler resolves names internally.
-  // The UUID lookup validates the account exists; we return nsName for API compat.
   const id = _fleetMailDirectoryCache?.[nsName];
   if (id) return nsName;
 
-  // Auto-provision "user" account if it doesn't exist
-  if (name === "user") {
-    const nsUserName = mailAccountName("user");
-    try {
-      const provResp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nsUserName, display_name: "operator", bio: `Human operator (${FLEET_MAIL_PROJECT})` }),
-      });
-      if (provResp.ok) {
-        const acct = await provResp.json() as any;
-        // Save token to registry
-        try {
-          withRegistryLocked((reg) => {
-            if (!reg.user) (reg as any).user = {};
-            (reg.user as any).bms_token = acct.bearerToken;
-            (reg.user as any).bms_id = acct.id;
-            (reg.user as any).status = "active";
-          });
-        } catch {}
-        if (!_fleetMailDirectoryCache) _fleetMailDirectoryCache = {};
-        _fleetMailDirectoryCache[nsUserName] = acct.id;
-        return nsUserName;
-      }
-      // 409 = already exists but not in cache — refresh (max 1 retry)
-      if (provResp.status === 409) {
-        if ((resolveFleetMailAccountId as any)._retrying) {
-          delete (resolveFleetMailAccountId as any)._retrying;
-          throw new Error(`Fleet Mail account '${nsName}' exists but cannot be resolved after retry`);
-        }
-        (resolveFleetMailAccountId as any)._retrying = true;
-        _fleetMailDirectoryCache = null;
-        _fleetMailDirCacheTime = 0;
-        try {
-          return await resolveFleetMailAccountId(name);
-        } finally {
-          delete (resolveFleetMailAccountId as any)._retrying;
-        }
-      }
-    } catch {}
-  }
-
-  throw new Error(`Fleet Mail account '${nsName}' not found in directory`);
+  // Auto-provision any missing recipient account
+  return await autoProvisionAccount(name, nsName, messageHint);
 }
 
-export async function resolveFleetMailRecipients(names: string[]): Promise<string[]> {
-  return Promise.all(names.map(resolveFleetMailAccountId));
+/** Auto-provision a Fleet Mail account for a missing recipient.
+ *  On 409 (name taken), appends a suffix from the messageHint to make it unique. */
+async function autoProvisionAccount(localName: string, nsName: string, messageHint?: string): Promise<string> {
+  const displayName = localName === "user" ? "operator" : localName;
+  const bio = localName === "user"
+    ? `Human operator (${FLEET_MAIL_PROJECT})`
+    : `Auto-provisioned Fleet worker: ${localName} (${FLEET_MAIL_PROJECT})`;
+
+  const provResp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nsName, display_name: displayName, bio }),
+  });
+
+  if (provResp.ok) {
+    const acct = await provResp.json() as any;
+    // Save token to registry for "user" and known workers
+    try {
+      withRegistryLocked((reg) => {
+        if (!reg[localName]) (reg as any)[localName] = {};
+        (reg[localName] as any).bms_token = acct.bearerToken;
+        (reg[localName] as any).bms_id = acct.id;
+        (reg[localName] as any).status = "active";
+      });
+    } catch {}
+    // Also persist token file for the worker
+    try {
+      const tokenPath = join(FLEET_DIR, localName, "token");
+      mkdirSync(join(FLEET_DIR, localName), { recursive: true });
+      writeFileSync(tokenPath, acct.bearerToken);
+    } catch {}
+    if (!_fleetMailDirectoryCache) _fleetMailDirectoryCache = {};
+    _fleetMailDirectoryCache[nsName] = acct.id;
+    return nsName;
+  }
+
+  // 409 = name taken — try with a message-based suffix to make unique
+  if (provResp.status === 409) {
+    // First: refresh directory cache and retry lookup (might just be stale cache)
+    _fleetMailDirectoryCache = null;
+    _fleetMailDirCacheTime = 0;
+    const token = await getFleetMailToken();
+    const dirResp = await fetch(`${FLEET_MAIL_URL}/api/directory`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (dirResp.ok) {
+      const data = await dirResp.json() as any;
+      _fleetMailDirectoryCache = {};
+      for (const acct of data.directory || []) {
+        _fleetMailDirectoryCache[acct.name] = acct.id;
+      }
+      _fleetMailDirCacheTime = Date.now();
+      // Check if it's now in the cache
+      if (_fleetMailDirectoryCache[nsName]) return nsName;
+    }
+
+    // Still not found — create with a unique suffix from the message hint
+    if (messageHint) {
+      const suffix = messageHint
+        .slice(0, 15)
+        .replace(/\s+/g, "_")
+        .replace(/[^a-zA-Z0-9_-]/g, "")
+        .toLowerCase();
+      const uniqueName = `${localName}-${suffix}`;
+      const nsUniqueName = mailAccountName(uniqueName);
+      const retryResp = await fetch(`${FLEET_MAIL_URL}/api/accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nsUniqueName, display_name: localName, bio }),
+      });
+      if (retryResp.ok) {
+        const acct = await retryResp.json() as any;
+        try {
+          const tokenPath = join(FLEET_DIR, uniqueName, "token");
+          mkdirSync(join(FLEET_DIR, uniqueName), { recursive: true });
+          writeFileSync(tokenPath, acct.bearerToken);
+        } catch {}
+        if (!_fleetMailDirectoryCache) _fleetMailDirectoryCache = {};
+        _fleetMailDirectoryCache[nsUniqueName] = acct.id;
+        return nsUniqueName;
+      }
+    }
+
+    throw new Error(`Fleet Mail account '${nsName}' already exists but could not be resolved or de-duplicated`);
+  }
+
+  const errText = await provResp.text().catch(() => "");
+  throw new Error(`Fleet Mail auto-provision failed (${provResp.status}): ${errText}`);
+}
+
+export async function resolveFleetMailRecipients(names: string[], messageHint?: string): Promise<string[]> {
+  return Promise.all(names.map(n => resolveFleetMailAccountId(n, messageHint)));
 }
