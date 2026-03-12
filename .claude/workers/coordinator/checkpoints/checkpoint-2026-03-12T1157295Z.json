@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-03-12T11:57:29.553Z",
+  "type": "manual",
+  "summary": "Codex runtime support implemented and committed (426707f). All 12 files changed across CLI, MCP, watchdog. Moving to Phase 3: end-to-end testing of every CLI surface with --runtime codex.",
+  "git_state": {
+    "branch": "worker/coordinator",
+    "sha": "426707f",
+    "dirty_count": 2,
+    "staged_count": 0
+  },
+  "dynamic_hooks": [],
+  "key_facts": [
+    "Commit 426707f: codex runtime support across CLI/MCP/watchdog",
+    "WorkerConfig now has runtime field",
+    "generateLaunchSh() handles both claude and codex",
+    "--runtime flag added to create, start, fork",
+    "fleet ls shows RUNTIME column when codex workers exist",
+    "verification-hash.sh fixed for git worktrees",
+    "impl-core told to stand down — doing it all directly",
+    "Pre-commit hook requires doc sync proof for cli/ changes"
+  ],
+  "transcript_ref": "/Users/wz/.claude/projects/-Users-wz-repos-boring-w-coordinator/5631804d-8576-47c1-8553-b09e65c9883a.jsonl"
+}

@@ -1,11 +1,1 @@
-{
-  "mcpServers": {
-    "worker-fleet": {
-      "command": "bun",
-      "args": ["run", "/Users/wz/repos/boring/mcp/worker-fleet/index.ts"],
-      "env": {
-        "PROJECT_ROOT": "/var/folders/4f/dbqb1zb917q0cl536rtn4k0m0000gn/T/tmp.nulzUzLowu"
-      }
-    }
-  }
-}
+/Users/wz/repos/boring/.mcp.json

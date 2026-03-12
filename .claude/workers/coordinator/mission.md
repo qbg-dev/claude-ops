@@ -1,0 +1,1 @@
+/Users/wz/.claude/fleet/boring/coordinator/mission.md
