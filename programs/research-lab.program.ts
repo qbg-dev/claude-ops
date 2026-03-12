@@ -162,6 +162,8 @@ export default function researchLab(opts: ResearchLabOpts): Program {
               "- Are your students getting better at their jobs? Are YOU getting better at directing them?",
               "- What's the compound knowledge you're building cycle over cycle?",
               "- If you're not growing, you're stagnating. What concrete change will you make next cycle?",
+              "- How can you grow FASTER? What's the rate-limiter on your learning?",
+              "- Can you compress two cycles of learning into one? What would that take?",
               "",
               "Write this reflection NOW, then call round_stop().",
             ].join("\n"),
