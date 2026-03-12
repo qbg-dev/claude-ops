@@ -16,7 +16,7 @@ import { logInfo, logWarn, logError, setQuiet } from "./logger";
 import { checkWorkerAsync } from "./worker-checker";
 import { markCrashLoop } from "./crash-tracker";
 import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow } from "./pane-manager";
-import { resumeInPane, relaunchInPane, killAgentInPane } from "./process-manager";
+import { resumeInPane, relaunchInPane, killAgentInPane, gracefulShutdown } from "./process-manager";
 import { desktopNotify, notifyDeadWorker, clearCosNotified, checkStaleInput, notifyUnreadMail } from "./notifications";
 import { buildAllSnapshots } from "./snapshot";
 import { printStatus } from "./status-display";
@@ -130,6 +130,19 @@ async function runOnce(): Promise<void> {
           }
           updateStateRelaunch(snap.name, "bare-shell");
           if (action.stagger) await stagger(snap.name);
+          break;
+        }
+
+        case "graceful-kill": {
+          // round_stop() set status=sleeping. Gracefully kill the session
+          // so the worker gets a fresh context on next respawn.
+          // Don't relaunch — the next pass will see sleeping+dead pane
+          // and wait for sleep_until to expire before respawning.
+          logInfo("GRACEFUL-KILL", action.reason, snap.name);
+          if (snap.paneId) {
+            await gracefulShutdown(snap.paneId, snap.name, action.reason);
+            killAgentInPane(snap.paneId);
+          }
           break;
         }
 

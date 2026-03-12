@@ -272,6 +272,15 @@ Do NOT work sequentially. On every cycle:
 **Parallelism is the whole point.** You are the PI who delegates — you never
 run experiments yourself. Your cycle should be: read results → web research → think → spawn 3 students → reflection → notebook → round_stop().
 
+## Student Self-Wake
+
+**IMPORTANT**: Every student mission MUST include a CronCreate self-wake instruction.
+Add this to every student's mission text:
+\`\`\`
+IMPORTANT: At the START of your session, set up a self-wake cron:
+CronCreate(cron: "*/10 * * * *", prompt: "Check progress on your current task. If blocked, try a different approach. If done, write findings and mail ht-kung.")
+\`\`\`
+
 ## Research Methodology: Harness Patterns & Agent Strategies
 
 You are researching **effective agent harnesses** — patterns that make AI agents more capable,
@@ -402,12 +411,13 @@ That's 6 workers doing research at all times. Do NOT work sequentially. On every
 
 ## Creating Students
 
-Use the \`create_worker()\` MCP tool:
+Use the \`create_worker()\` MCP tool. **IMPORTANT**: Every student's mission MUST include
+the CronCreate self-wake instruction so they stay active:
 
 \`\`\`
 create_worker(
   name: "golden",
-  mission: "Investigate X. Spawn golden-assist for sub-task Y. Write findings to notebooks/golden-findings.md. When done, mail results to ht-kung.",
+  mission: "Investigate X. Spawn golden-assist for sub-task Y. Write findings to notebooks/golden-findings.md. When done, mail results to ht-kung.\\n\\nIMPORTANT: At the START of your session, set up a self-wake cron:\\nCronCreate(cron: \\"*/10 * * * *\\", prompt: \\"Check progress on your current task. If blocked, try a different approach. If done, write findings and mail ht-kung.\\")",
   type: "implementer"
 )
 \`\`\`

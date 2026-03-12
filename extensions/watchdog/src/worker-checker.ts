@@ -90,9 +90,22 @@ export function checkWorker(
 function handleSleeping(
   snap: WorkerSnapshot,
   _config: WatchdogConfig,
-  _effects: WatchdogEffects,
+  effects: WatchdogEffects,
   now: number,
 ): WorkerAction {
+  // If pane is still alive, gracefully kill it first.
+  // round_stop() set status="sleeping" but the session is still running.
+  // We need to kill it so the worker gets a fresh context on respawn.
+  if (snap.paneId) {
+    const paneAlive = effects.isPaneAlive(snap.paneId);
+    if (paneAlive) {
+      // Gracefully kill the session — don't relaunch yet.
+      // The next watchdog pass will see a dead pane + sleeping status,
+      // wait for sleep_until to expire, then fleet-start with a fresh context.
+      return { type: "graceful-kill", reason: "round_stop() → sleeping, killing session for clean restart" };
+    }
+  }
+
   if (snap.sleepUntil) {
     const wakeEpoch = parseIsoEpoch(snap.sleepUntil);
     if (wakeEpoch > 0 && now < wakeEpoch) {

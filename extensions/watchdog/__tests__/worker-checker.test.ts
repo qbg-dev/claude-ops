@@ -107,18 +107,29 @@ describe("checkWorker — sleeping", () => {
     rmSync(process.env.CLAUDE_FLEET_DIR!, { recursive: true, force: true });
   });
 
-  test("sleeping with future timer → skip", () => {
+  test("sleeping with alive pane → graceful-kill (session must die for clean restart)", () => {
     const snap = makeSnapshot({
       status: "sleeping",
+      sleepUntil: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const action = checkWorker(snap, makeConfig(), makeMockEffects());
+    expect(action.type).toBe("graceful-kill");
+  });
+
+  test("sleeping with future timer (pane dead) → skip", () => {
+    const snap = makeSnapshot({
+      status: "sleeping",
+      paneId: null,
       sleepUntil: new Date(Date.now() + 60_000).toISOString(),
     });
     const action = checkWorker(snap, makeConfig(), makeMockEffects());
     expect(action.type).toBe("skip");
   });
 
-  test("sleeping with expired timer → fleet-start", () => {
+  test("sleeping with expired timer (pane dead) → fleet-start", () => {
     const snap = makeSnapshot({
       status: "sleeping",
+      paneId: null,
       sleepUntil: new Date(Date.now() - 60_000).toISOString(),
     });
     const action = checkWorker(snap, makeConfig(), makeMockEffects());
@@ -128,6 +139,7 @@ describe("checkWorker — sleeping", () => {
   test("sleeping with no timer and no duration → fleet-start", () => {
     const snap = makeSnapshot({
       status: "sleeping",
+      paneId: null,
       sleepUntil: null,
       sleepDuration: null,
       perpetual: false,
@@ -139,6 +151,7 @@ describe("checkWorker — sleeping", () => {
   test("sleeping with no timer but has duration → skip (needs calculation)", () => {
     const snap = makeSnapshot({
       status: "sleeping",
+      paneId: null,
       sleepUntil: null,
       sleepDuration: 300,
       perpetual: true,
@@ -284,14 +297,15 @@ describe("checkWorker — pane alive", () => {
     expect(action.type).toBe("ok");
   });
 
-  test("sleeping worker wakes after sleep_until expires", () => {
-    // After round_stop() sets status="sleeping" + sleep_until, the watchdog
-    // should wake the worker when the timer expires.
+  test("sleeping worker wakes after sleep_until expires (pane dead)", () => {
+    // After round_stop() → graceful-kill, the pane is dead.
+    // Watchdog sees sleeping + dead pane + expired timer → fleet-start.
     const now = Math.floor(Date.now() / 1000);
     const expiredWake = new Date((now - 60) * 1000).toISOString(); // expired 60s ago
     const effects = makeMockEffects({ nowEpoch: () => now });
     const snap = makeSnapshot({
       perpetual: true,
+      paneId: null,
       status: "sleeping",
       sleepUntil: expiredWake,
       sleepDuration: 1200,
@@ -399,12 +413,13 @@ describe("checkWorkerAsync — early wake", () => {
     rmSync(process.env.CLAUDE_FLEET_DIR!, { recursive: true, force: true });
   });
 
-  test("sleeping worker with unread mail → fleet-start (early wake)", async () => {
+  test("sleeping worker with unread mail → fleet-start (early wake, pane dead)", async () => {
     const effects = makeMockEffects({
       workerHasUnreadMail: async () => true,
     });
     const snap = makeSnapshot({
       status: "sleeping",
+      paneId: null,
       sleepUntil: new Date(Date.now() + 60_000).toISOString(),
     });
     const action = await checkWorkerAsync(snap, makeConfig(), effects);
@@ -412,12 +427,13 @@ describe("checkWorkerAsync — early wake", () => {
     if (action.type === "fleet-start") expect(action.reason).toContain("early-wake");
   });
 
-  test("sleeping worker without mail → skip", async () => {
+  test("sleeping worker without mail → skip (pane dead)", async () => {
     const effects = makeMockEffects({
       workerHasUnreadMail: async () => false,
     });
     const snap = makeSnapshot({
       status: "sleeping",
+      paneId: null,
       sleepUntil: new Date(Date.now() + 60_000).toISOString(),
     });
     const action = await checkWorkerAsync(snap, makeConfig(), effects);

@@ -96,7 +96,7 @@ const GRACEFUL_POLL_MS = 5_000;
  * The agent can `touch <readyFile>` to signal immediate readiness.
  * Otherwise waits the full grace period before returning.
  */
-async function gracefulShutdown(paneId: string, workerName: string, reason: string): Promise<void> {
+export async function gracefulShutdown(paneId: string, workerName: string, reason: string): Promise<void> {
   const nonce = randomBytes(4).toString("hex");
   const readyFile = `/tmp/worker-${workerName}-ready-${nonce}.signal`;
   const graceSec = Math.round(GRACEFUL_TIMEOUT_MS / 1000);

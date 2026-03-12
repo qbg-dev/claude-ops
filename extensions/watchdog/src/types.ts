@@ -13,6 +13,7 @@ export type WorkerAction =
   | { type: "move-inactive"; reason: string }
   | { type: "crash-loop"; count: number }
   | { type: "bare-shell-restart"; reason: string; stagger: boolean }
+  | { type: "graceful-kill"; reason: string }
   | { type: "ok" };
 
 // ── Watchdog Effects (dependency injection for testability) ──
