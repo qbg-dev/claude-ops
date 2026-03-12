@@ -4,6 +4,8 @@
  */
 
 import { join } from "path";
+import { writeFileSync, unlinkSync, existsSync } from "fs";
+import { randomBytes } from "crypto";
 import { logInfo, logWarn } from "./logger";
 import { FLEET_DATA } from "./config";
 import type { WorkerSnapshot } from "./types";
@@ -82,9 +84,75 @@ function tuiPattern(runtime: string): string {
   return runtime === "codex" ? "codex" : "bypass permissions";
 }
 
+/** Grace period before resume-killing an agent (ms) */
+const GRACEFUL_TIMEOUT_MS = 90_000; // 1.5 minutes
+const GRACEFUL_POLL_MS = 5_000;
+
+/**
+ * Graceful shutdown: warn the agent it's about to be restarted,
+ * give it time to save state, and allow early readiness signaling.
+ *
+ * Injects a message into the pane telling the agent to wrap up.
+ * The agent can `touch <readyFile>` to signal immediate readiness.
+ * Otherwise waits the full grace period before returning.
+ */
+async function gracefulShutdown(paneId: string, workerName: string, reason: string): Promise<void> {
+  const nonce = randomBytes(4).toString("hex");
+  const readyFile = `/tmp/worker-${workerName}-ready-${nonce}.signal`;
+  const graceSec = Math.round(GRACEFUL_TIMEOUT_MS / 1000);
+
+  const message = [
+    `GRACEFUL RESTART NOTICE (reason: ${reason})`,
+    ``,
+    `You will be restarted in ${graceSec} seconds. Please:`,
+    `1. Save important state via update_state() or save_checkpoint()`,
+    `2. Commit any in-progress work`,
+    `3. Note down anything you need to remember`,
+    ``,
+    `To signal you're ready for immediate restart, run:`,
+    `touch ${readyFile}`,
+  ].join("\n");
+
+  // Inject warning message via tmux buffer
+  const msgFile = `/tmp/worker-${workerName}-graceful-msg.txt`;
+  writeFileSync(msgFile, message);
+  try {
+    const bufName = `graceful-${workerName}-${process.pid}`;
+    tmux("delete-buffer", "-b", bufName);
+    const load = tmux("load-buffer", "-b", bufName, msgFile);
+    if (!load.ok) {
+      logWarn("GRACEFUL", "failed to load warning into tmux buffer, skipping grace period", workerName);
+      return;
+    }
+    tmux("paste-buffer", "-b", bufName, "-t", paneId, "-d");
+    await Bun.sleep(500);
+    tmux("send-keys", "-t", paneId, "-H", "0d");
+  } finally {
+    try { unlinkSync(msgFile); } catch {}
+  }
+
+  logInfo("GRACEFUL", `sent restart warning, waiting up to ${graceSec}s (ready file: ${readyFile})`, workerName);
+
+  // Poll for readiness signal or timeout
+  const start = Date.now();
+  while (Date.now() - start < GRACEFUL_TIMEOUT_MS) {
+    await Bun.sleep(GRACEFUL_POLL_MS);
+    if (existsSync(readyFile)) {
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      logInfo("GRACEFUL", `worker signaled readiness after ${elapsed}s`, workerName);
+      try { unlinkSync(readyFile); } catch {}
+      return;
+    }
+  }
+
+  logInfo("GRACEFUL", `grace period expired (${graceSec}s), proceeding with restart`, workerName);
+  try { unlinkSync(readyFile); } catch {}
+}
+
 /**
  * Resume a worker in its existing pane (unstick or sleep-respawn).
- * Waits for TUI, then executes on_spawn hooks (default: seed-inject).
+ * Sends a graceful shutdown warning, waits for readiness, then restarts
+ * with TUI + on_spawn hooks (default: seed-inject).
  */
 export async function resumeInPane(
   snap: WorkerSnapshot,
@@ -94,17 +162,20 @@ export async function resumeInPane(
 ): Promise<void> {
   const paneId = snap.paneId!;
 
-  // 1. Kill existing agent
+  // 1. Graceful shutdown: warn agent, wait for readiness or timeout
+  await gracefulShutdown(paneId, snap.name, reason);
+
+  // 2. Kill existing agent
   killAgentInPane(paneId);
 
-  // 2. Build and send agent command
+  // 3. Build and send agent command
   const cmd = buildAgentCmd(snap, projectName);
   tmux("send-keys", "-t", paneId, cmd);
   tmux("send-keys", "-t", paneId, "-H", "0d");
 
   logInfo("RESUME", `${snap.runtime} — fresh start in pane ${paneId} (reason: ${reason})`, snap.name);
 
-  // 3. Wait for TUI, then execute spawn hooks
+  // 4. Wait for TUI, then execute spawn hooks
   const ctx: SpawnHookContext = {
     workerName: snap.name,
     paneId,
