@@ -1,6 +1,6 @@
 # claude-fleet
 
-claude-fleet runs persistent, parallel Claude Code agents on your codebase. Each worker gets its own git worktree, tmux pane, and mailbox — coordinated by hooks and a watchdog that keeps them alive.
+claude-fleet runs persistent, parallel Claude Code agents on your codebase. Each worker gets its own git worktree, tmux pane, and mailbox — coordinated by hooks and a watchdog that keeps them alive. It aims to be minimal, and does not rebuilt any native claude code features, but orchestrates on top of subagents and agent teams.
 
 ## Quick start
 
@@ -23,10 +23,10 @@ merger      alive    worker/merger        %4
 
 ## How it works
 
-The system is described by two prompts — read these to understand everything:
+The system is described by two prompts. See them for more detailed explanations:
 
-- [**templates/seed-context.md**](templates/seed-context.md) — what every worker sees on launch. MCP tools, hooks, mail, git safety, verification, the perpetual loop. This is the canonical system description.
-- [**templates/onboarding-architect.md**](templates/onboarding-architect.md) — what the onboarding agent follows. 9-phase flow from discovery to fleet design to verification.
+- [**templates/seed-context.md**](templates/seed-context.md) — what every worker sees on launch. MCP tools, hooks, mail, git safety, verification, the perpetual loop.
+- [**templates/onboarding-architect.md**](templates/onboarding-architect.md) — what the onboarding agent follows.
 
 ## Reference
 
