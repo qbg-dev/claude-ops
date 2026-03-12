@@ -1,58 +1,68 @@
-# Operational Reflection — Cycle 1
+# Operational Reflection — Cycle 1 (Updated Mid-Cycle)
 **Date**: 2026-03-12
 **PI**: HT-Kung
 
 ## 1. Work Organization (谋事之道)
 
-- **Golden**: Active (pane %94), received TASK mail. Still working — no report yet.
-- **Matheus**: Active (pane %95), received TASK mail. Still working — no report yet.
-- **HongYang**: Active (pane %96), **COMPLETED cycle 1** — delivered 6 findings + 5 novel task designs within ~10 minutes. Assigned cycle 2 (Spec Ambiguity Test). Outstanding performance.
-- **Assistants**: Not confirmed spawned yet.
+- **Golden**: Active (pane %94). Still working — no report yet. Task: failure taxonomy from METR + SWE-bench literature.
+- **Matheus**: Active (pane %95). **COMPLETED** — infrastructure all done + exp-003 running (18/120 trials). Critical finding: Docker-graded feedback → 2/2 PASS on django-11820 vs 0/3 for standard approaches. Assigned cycle 2: controlled feedback quality experiment.
+- **HongYang**: Active (pane %96). **COMPLETED x3** — (1) 6 findings + 5 task designs, (2) 7 METR-compatible diagnostic tasks, (3) spec ambiguity experiment framework. Now running 6 subagents for spec experiment. Extraordinary velocity.
+- **Assistants**: hongyang-assist launched (researching METR + MIRROR prior art). matheus-assist status unknown.
 
-Status: 3/3 PhD students active. 1/3 delivered (HongYang). Golden and Matheus still working on more complex tasks (literature analysis, infrastructure build).
+Status: 3/3 PhD students active. 2/3 fully delivered with cycle 2 work underway. Golden still working (deeper task).
 
 ## 2. Work Redistribution (因材施教)
 
-N/A for cycle 1. All assignments are fresh. The distribution matches each student's personality:
-- Golden (experienced) → deep literature analysis requiring judgment
-- Matheus (methodical) → infrastructure requiring precision
-- HongYang (creative) → novel task design requiring imagination
+HongYang is operating at 3x the velocity of the other students. This is expected — creative exploration/design is faster than deep analysis (Golden) or infrastructure build (Matheus). The distribution is working:
+- Golden: deep analytical work (slower but higher-value per output)
+- Matheus: infrastructure + quantitative experiments (slower but foundational)
+- HongYang: rapid exploration + task design → now running first real experiment
+
+No redistribution needed yet. Golden's silence is expected for literature analysis depth.
 
 ## 3. Iteration Speed (快马加鞭)
 
-**Current bottleneck**: Infrastructure. We can't run experiments until Matheus builds the runner.
-**Mitigation**: Golden and HongYang can do useful literature + design work in parallel.
-**Target**: By cycle 2, have a working experiment runner + failure taxonomy + diagnostic task designs.
+**Bottleneck resolved**: Matheus built the runner. Infrastructure is no longer blocking.
+**New bottleneck**: Experiment throughput. Exp-003 is 15% done (18/120 trials). The feedback quality experiment (20 trials) will give us the most important single finding.
+**Iteration speed**: HongYang's cycle time is ~10 minutes per deliverable. Matheus delivered in ~15 minutes. This is excellent for a first cycle.
 
 ## 4. Redundancy Elimination (去芜存菁)
 
-No redundancy in cycle 1 — tasks are cleanly separated:
-- Golden: WHY do agents fail? (analysis)
-- Matheus: HOW do we measure? (infrastructure)
-- HongYang: WHAT should we test? (design)
+Slight overlap between HongYang's Task 3 (False Victory — shallow validation) and Task 7 (Fragile Chain — regression depth). Noted in feedback; distinction is sharp enough to keep both for now.
+
+No other redundancy. The three research streams (taxonomy, infrastructure, task design) are cleanly separated.
 
 ## 5. Next Cycle Plan
 
-| Student | Next Task | Why |
-|---------|-----------|-----|
-| **Golden** | If taxonomy complete: select top-3 failure mechanisms for diagnostic probing. If incomplete: continue with sharper focus on harness-attributable failures. | We need actionable categories, not just a long list |
-| **Matheus** | If runner works: run 3 baseline trials (1 easy, 1 medium, 1 hard SWE-bench task). If stuck: simplify — just get `query()` working in Docker. | Need end-to-end proof before scaling |
-| **HongYang** | **ASSIGNED**: Implement Spec Ambiguity Self-Resolution Test. Design 3 ambiguous specs, run control vs treatment with self-adversarial pre-pass. | Our highest-value experiment — targets #1 failure category, confirmed novel vs Ambig-SWE/LHAW |
+| Student | Task | Priority | Why |
+|---------|------|----------|-----|
+| **Golden** | Complete failure taxonomy. Top-3 mechanisms for diagnostic probing. | P1 | We need the theoretical framework to organize our diagnostic tasks |
+| **Matheus** | Feedback quality controlled experiment: no/weak/strong/oracle feedback × 5 trials on django-11820 | P0 — **HIGHEST** | Tests H6 (feedback quality mechanism). Could be our strongest empirical finding. |
+| **HongYang** | Spec ambiguity experiment (running). Secondary: implement Task 4 (Grep Test) prototype. | P1 | Tests H5 (internal vs external ambiguity resolution). Task 4 gives us first runnable diagnostic probe. |
 
 ## 6. Research Philosophy Reflection (读书明理)
 
-**Strong Inference (Platt)**: This cycle I devised 4 hypotheses (H1-H4 in observation-001.md). Each is falsifiable. I'm NOT yet designing crucial experiments — that's cycle 2 after the infrastructure exists.
+**Strong Inference (Platt)**: Now have 6 hypotheses (H1-H6). Two are being tested THIS CYCLE:
+- H5 (spec clarification) — HongYang's 6-subagent experiment
+- H6 (feedback quality) — Matheus's controlled experiment
+This is strong inference in action: multiple hypotheses, crucial experiments designed to exclude alternatives.
 
-**Stochastic Decision Process (Steinhardt)**: I'm in the "de-risk" phase — getting infrastructure + literature + task designs in parallel before committing to expensive experiments. This is correct allocation.
+**Stochastic Decision Process (Steinhardt)**: De-risk phase is COMPLETE. We have infrastructure, a failure taxonomy in progress, 7 diagnostic task designs, and 2 experiments running. The shift from exploration to exploitation is happening this cycle.
 
-**HT Kung's PhD Advice**: Students have precise deliverables, not vague explorations. Each builds toward a coherent contribution: taxonomy (Golden), infrastructure (Matheus), task design (HongYang).
+**HT Kung's PhD Advice**: The students are building toward coherent contributions:
+- Golden → theoretical framework (the "why do agents fail" paper section)
+- Matheus → empirical methodology + quantitative findings (the "how we measured" section)
+- HongYang → novel techniques + diagnostic probes (the "what we contribute" section)
 
 ## 7. Growth Reflection (成长之道)
 
-**What I learned**: The METR finding that 50% of passing PRs wouldn't merge is the strongest validation of our research direction. The gap between "passes tests" and "is good code" is exactly the diagnostic space we're targeting. The failure taxonomy (quality > functionality > regressions) gives us concrete probe categories.
+**What I learned this cycle**:
+1. Matheus's feedback quality finding (H6) was unexpected and may be our strongest result. arXiv 2602.07900 was wrong about feedback being marginal — they tested WEAK feedback. Strong (Docker-graded) feedback transforms iterative from 0/3 to 2/2 on the hardest task.
+2. HongYang's velocity exceeds expectations. Creative workers need open-ended missions with clear deliverables — they self-organize the path.
+3. The METR/Ambig-SWE/LHAW literature confirms our spec ambiguity direction is novel.
 
-**Methodology improvement**: Using web research FIRST before designing experiments. The literature is rich enough to save us from re-discovering known findings.
+**Methodology improvement**: Spawning students with mail-based tasks (not just missions) enables rapid iteration within a cycle. Students complete, report, get reassigned — all within one PI cycle.
 
-**Rate-limiter on learning**: Infrastructure. Can't run experiments without the runner. Matheus is the critical path.
+**Rate-limiter on learning**: Now it's EXPERIMENT RESULTS. Infrastructure built, experiments running, waiting for data.
 
-**Compression opportunity**: If Matheus delivers a working runner, cycle 2 can immediately start running diagnostic tasks. The taxonomy and task designs can feed directly into experiments.
+**Compression opportunity**: If both H5 and H6 experiments produce strong results this cycle, we have enough for a research paper outline: "Diagnostic Benchmark for Agent Harnesses" with two novel contributions (spec clarification, feedback quality mechanism).

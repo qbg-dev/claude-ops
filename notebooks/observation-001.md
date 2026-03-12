@@ -123,18 +123,53 @@ Confirmed details: Planner Agent + Tool Agent + Answer Agent. Intra-reflection (
 
 MIRROR applies reflection to TOOL SELECTION. Nobody has applied the same pre-execution reflection to SPEC INTERPRETATION. This is HongYang's contribution.
 
-## Student Assignments (Cycle 1)
+## Matheus Infrastructure Report + Mechanism Finding
 
-### Golden — Deep Failure Analysis (PENDING)
-Read the METR paper and SWE-bench inflation literature. Build a structured failure analysis framework.
+### Infrastructure (all complete)
+- Claude Agent SDK v0.2.74 installed, `query()` integrated into `agent.ts`
+- Experiment runner: `src/runner.ts` + `src/harnesses/tool-ablation.ts`
+- Docker grading via `swebench-venv` + `ghcr.io/epoch-research`
+- Resume support, per-trial artifacts (patch.diff, test-output.txt, meta.json)
+- Bug fix: `delete process.env.CLAUDECODE` before `query()` for nested sessions
+
+### Exp-003 Tool Ablation (18/120 trials, early signal)
+
+| Harness | Tools removed | Pass rate | Avg cost | Avg time |
+|---------|--------------|-----------|----------|----------|
+| cc-no-search | Glob, Grep | 3/6 (50%) | $0.265 | 141s |
+| cc-bash-only | All except Bash | 3/6 (50%) | $0.274 | 137s |
+| cc-no-edit | Write, Edit | 3/3 (100%) | $0.109 | 60s |
+| cc-no-bash | Bash only | 3/3 (100%) | $0.114 | 70s |
+
+**Early insight**: Removing edit/bash tools makes agents 2x FASTER and CHEAPER. Fewer exploratory calls = more direct execution. But this is on ceiling tasks only (astropy-7671: 12/12 all harnesses). django-11820: 0/6 all harnesses so far.
+
+### **CRITICAL MECHANISM FINDING: Feedback Quality**
+
+django-11820 results across harnesses:
+- claude-code (no feedback): **0/3**
+- plan-execute: **1/3**
+- iterative (broken feedback on main): **0/3**
+- iterative (Docker-graded feedback, HongYang's): **2/2 PASS**
+
+**This suggests the bottleneck on hard tasks is FEEDBACK QUALITY, not orchestration.**
+
+arXiv 2602.07900 claimed feedback loops are marginal — but they tested WEAK feedback (local pytest). Docker-graded feedback is STRONG feedback (the actual ground truth). The difference is enormous.
+
+**New Hypothesis H6**: On frontier tasks (where models struggle), feedback quality is the dominant variable. Strong feedback (ground-truth test results) enables iterative convergence; weak feedback (local partial tests) provides no useful signal. The arXiv 2602.07900 finding that "feedback is marginal" is an artifact of testing weak feedback only.
+
+### Bug Found: iterative `completed: false`
+All iterative trials in exp-002 report `completed: false` even when `passed: true`. Root cause: `lastResult?.success` never populated in original agent.ts. The `passed` field (Docker grade) is correct; `completed` is unreliable. Fixed in SDK-based agent.ts.
+
+## Student Assignments (Cycle 1 → Cycle 2)
+
+### Golden — Deep Failure Analysis (PENDING — still working)
 Deliverable: `notebooks/golden-failure-taxonomy.md`
 
-### Matheus — Experiment Infrastructure (PENDING)
-Install Claude Agent SDK. Build Docker-based experiment runner. Test with one SWE-bench task.
-Deliverable: working runner script + `notebooks/matheus-infrastructure.md`
+### Matheus — COMPLETE → Cycle 2: Feedback Quality Experiment
+Controlled experiment isolating feedback quality: no feedback vs weak (local pytest) vs strong (Docker grade) vs oracle. 5 trials × 4 conditions on django-11820.
 
-### HongYang — Diagnostic Task Design (COMPLETE)
-Delivered 6 findings + 5 novel task designs. Assigned cycle 2: implement Spec Ambiguity Self-Resolution Test.
+### HongYang — COMPLETE → Cycle 2: Spec Ambiguity Self-Resolution Test
+Implement self-adversarial spec clarification experiment.
 
 ## Updated Hypotheses
 
@@ -142,7 +177,8 @@ Delivered 6 findings + 5 novel task designs. Assigned cycle 2: implement Spec Am
 **H2**: (unchanged) Initializer+coding pattern works due to structured external memory.
 **H3**: (unchanged) Code quality rejections are primarily prompting, not architecture.
 **H4**: (unchanged) SWE-bench inflation concentrated in weak-coverage tasks.
-**H5** (NEW): Self-adversarial spec clarification (internal) recovers ≥60% of the performance gap that external dialogue achieves (~80% recovery in Ambig-SWE), because most spec ambiguity is resolvable through reasoning about risk rather than acquiring new information from an oracle.
+**H5**: Self-adversarial spec clarification (internal) recovers ≥60% of external dialogue benefit.
+**H6** (NEW, from Matheus): On frontier tasks, feedback quality is the dominant variable. Strong feedback enables iterative convergence; weak feedback provides no useful signal. arXiv 2602.07900's "feedback is marginal" is an artifact of weak feedback only.
 
 ## 三省吾身
 
