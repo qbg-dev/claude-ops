@@ -58,6 +58,8 @@ import { register as registerRecycle } from "./commands/recycle";
 import { register as registerPipeline } from "./commands/pipeline";
 import { register as registerCompletion } from "./commands/completion";
 import { register as registerUpdate } from "./commands/update";
+import { register as registerLaunch } from "./commands/launch";
+import { register as registerDeploy } from "./commands/deploy";
 
 registerSetup(program);
 registerCreate(program);
@@ -85,5 +87,7 @@ registerRecycle(program);
 registerPipeline(program);
 registerCompletion(program);
 registerUpdate(program);
+registerLaunch(program);
+registerDeploy(program);
 
 program.parse();

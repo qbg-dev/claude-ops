@@ -49,6 +49,8 @@ fleet layout <save|restore|list|delete> # tmux layout persistence
 fleet deep-review <scope>               # adversarial code review
 fleet pipeline <program> [opts]         # launch a program-API pipeline
 fleet hook <add|rm|ls|complete>         # manage dynamic hooks
+fleet launch                            # launch fleet from .fleet/manifest.yaml
+fleet deploy <host> <repo-url>          # deploy fleet to remote machine via SSH
 fleet doctor                            # verify installation
 fleet nuke <name>                       # destroy worker
 fleet update [--reload] [--extensions]    # pull + reinstall + setup (--reload recycles workers, --extensions installs all)

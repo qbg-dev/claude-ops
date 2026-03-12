@@ -12,6 +12,12 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 
 BUN_PATH="$(which bun 2>/dev/null || echo /opt/homebrew/bin/bun)"
 
+# Auto-detect PATH for launchd (which has a minimal default PATH)
+DETECTED_PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+[ -d "$HOME/.bun/bin" ] && DETECTED_PATH="$HOME/.bun/bin:$DETECTED_PATH"
+[ -d "$HOME/.local/bin" ] && DETECTED_PATH="$HOME/.local/bin:$DETECTED_PATH"
+[ -d "/opt/homebrew/bin" ] && DETECTED_PATH="/opt/homebrew/bin:$DETECTED_PATH"
+
 if [ ! -f "$WATCHDOG_SCRIPT" ]; then
   echo "ERROR: watchdog.ts not found at $WATCHDOG_SCRIPT"
   echo "Install claude-fleet first: git clone ... ~/.claude-fleet"
@@ -42,7 +48,7 @@ cat > "$PLIST_PATH" <<EOPLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key><string>$HOME</string>
-    <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    <key>PATH</key><string>$DETECTED_PATH</string>
     <key>PROJECT_ROOT</key><string>$PROJECT_ROOT</string>
     <key>CLAUDE_FLEET_DIR</key><string>$FLEET_DIR</string>
   </dict>

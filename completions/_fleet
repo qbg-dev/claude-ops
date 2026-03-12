@@ -87,6 +87,8 @@ _fleet() {
     'nuke:Destroy a worker or all fleet artifacts'
     'update:Pull latest, reinstall, re-setup'
     'completion:Output shell completions'
+    'launch:Launch fleet from manifest'
+    'deploy:Deploy fleet to remote machine'
   )
 
   _arguments -C \
@@ -305,6 +307,23 @@ _fleet() {
             '1:worker:_fleet_workers'
           ;;
         update)
+          ;;
+
+        launch)
+          _arguments \
+            '--manifest[Path to manifest YAML]:file:_files' \
+            '--dry-run[Show what would happen]' \
+            '--only[Comma-separated worker names]:names:_fleet_workers' \
+            '(-f --force)'{-f,--force}'[Restart running workers]'
+          ;;
+        deploy)
+          _arguments \
+            '--branch[Git branch]:branch:' \
+            '--unlock-keychain[Unlock macOS keychain]' \
+            '--dir[Remote directory]:dir:' \
+            '--dry-run[Show what would happen]' \
+            '1:host:_hosts' \
+            '2:repo-url:'
           ;;
 
         onboard)

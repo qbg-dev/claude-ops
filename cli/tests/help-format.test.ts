@@ -40,6 +40,8 @@ const ALL_COMMANDS = [
   "hook",
   "recycle",
   "update",
+  "launch",
+  "deploy",
 ] as const;
 
 describe("fleet --help", () => {
@@ -54,7 +56,7 @@ describe("fleet --help", () => {
     expect(help.stdout).toContain("persistent Claude Code agents");
   });
 
-  test("contains all 26 commands", () => {
+  test("contains all 28 commands", () => {
     for (const cmd of ALL_COMMANDS) {
       expect(help.stdout).toContain(cmd);
     }
