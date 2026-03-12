@@ -74,6 +74,57 @@ agents: {
 
 The generator function signature: `(state: ProgramPipelineState, defaults: ProgramDefaults) => AgentSpec[]`
 
+## Graph-Native Programs
+
+Programs can use the graph API instead of `Phase[]` for more flexible topologies (conditional edges, cycles, composition).
+
+```typescript
+import type { Program } from "../engine/program/types";
+import { graph } from "../engine/program/graph";
+
+export default function myProgram(opts: MyOpts): Program {
+  const g = graph("my-program", "description")
+    .node("step-a", { agents: [...] })
+    .node("step-b", { agents: [...] })
+    .edge("step-a", "step-b")
+    .edge("step-b", "$end")  // $end = pipeline complete
+    .defaults({ model: "sonnet" })
+    .build();
+
+  return { name: g.name, phases: [], graph: g, defaults: g.defaults };
+}
+```
+
+### Conditional Edges
+
+```typescript
+.edge("evaluate", "generate", {
+  condition: `test $(cat score.txt) -lt 80`,  // bash: exit 0 = take edge
+  maxIterations: 5,                           // cycle safety valve
+  label: "score below threshold",
+})
+.edge("evaluate", "$end", { label: "converged", priority: 1 })
+```
+
+Edges from a node are evaluated in priority order (lower = first). First condition that exits 0 wins. `maxIterations` prevents infinite back-edge cycles.
+
+### Composition via embed()
+
+```typescript
+const full = graph("meta-pipeline")
+  .embed(subGraphA, { prefix: "a" })   // nodes become a.nodeX
+  .embed(subGraphB, { prefix: "b" })
+  .edge("a.output", "b.input")         // explicit cross-subgraph wiring
+  .entry("a.start")
+  .build();
+```
+
+`embed()` flattens a sub-graph's nodes with prefixed names and preserves internal edges. No auto-wiring — all cross-subgraph connections must be explicit.
+
+### Legacy Compatibility
+
+Programs using `Phase[]` work unchanged. The compiler auto-converts via `phasesToGraph()` when needed. Programs can migrate to graph-native at their own pace.
+
 ## Seeds
 
 Three forms:
@@ -84,10 +135,13 @@ Three forms:
 | `inline` | `{ inline: "You are a reviewer..." }` | One-off prompts |
 | `generator` | `{ generator: "buildSeed" }` | Complex prompt logic |
 
-Templates support `{{VAR}}` substitution from `agent.vars` and state variables:
-- `{{SESSION_DIR}}`, `{{WORK_DIR}}`, `{{PROJECT_ROOT}}`
-- `{{MATERIAL_FILE}}`, `{{SCOPE}}`, `{{SPEC}}`
-- Any key from `agent.vars`
+Templates use Handlebars (`noEscape: true` for markdown). Features:
+- `{{VAR}}` substitution from `agent.vars` and state variables
+- `{{> partial}}` includes from `templates/fragments/*.md` (e.g. `{{> fleet-tools}}`, `{{> severity-guide}}`)
+- `{{#if VAR}}...{{/if}}`, `{{#each items}}...{{/each}}` for conditionals/loops
+- Unresolved `{{VAR}}` preserved literally (resolved later at bridge time)
+
+Standard variables: `{{SESSION_DIR}}`, `{{WORK_DIR}}`, `{{PROJECT_ROOT}}`, `{{MATERIAL_FILE}}`, `{{SCOPE}}`, `{{SPEC}}`, plus any key from `agent.vars`.
 
 ## Hook Types
 
@@ -220,7 +274,8 @@ fleet pipeline <name> [opts]
 |---------|---------|-------------|
 | `deep-review` | Dynamic + linear | Role designer → workers (dynamic count) → verification |
 | `pre-release` | Linear + check gate | Audit → parallel checks (with TS compile gate) → deploy verdict |
-| `eval-loop` | Cyclic + convergence | Generate tests → evaluate → cycle until score threshold |
+| `eval-loop` | Graph: cyclic | Generate → evaluate → cycle back (conditional back-edge + $end) |
+| `full-release` | Graph: composed | embed(eval-loop) → embed(pre-release), cross-subgraph wiring |
 | `guard-rails` | Per-agent hooks | Read-only reader, guarded writer, full-access coordinator |
 | `research-lab` | Linear (simple) | Parallel research workers → coordinator summary |
 
