@@ -183,28 +183,13 @@ function handlePaneAlive(
       return { type: "move-inactive", reason: `non-perpetual idle ${sinceActive}s` };
     }
 
-    // ── Sleep-complete detection (perpetual with sleep_duration) ──
-    // Check this before liveness threshold gate — sleep_duration may be < livenessThreshold
-    if (snap.perpetual && snap.sleepDuration && snap.sleepDuration > 0) {
-      if (sinceActive >= snap.sleepDuration) {
-        // Verify TUI is still running — if bare shell, the agent crashed
-        const paneContent = effects.capturePane(snap.paneId!, 30);
-        if (!TUI_INDICATORS.test(paneContent)) {
-          return { type: "bare-shell-restart", reason: "Claude not running in pane", stagger: true };
-        }
-        return { type: "resume", reason: `sleep-complete (${sinceActive}s of ${snap.sleepDuration}s)`, stagger: true };
-      }
-    }
+    // sleep_duration is a POST-CYCLE sleep interval, not a max runtime.
+    // The watchdog only uses it in handleSleeping() after round_stop() sets
+    // status="sleeping" + sleep_until. Do NOT restart active workers based
+    // on sleep_duration — let them work until they call round_stop().
 
     // Liveness threshold — if recently active, skip further checks
-    let livenessThreshold = 300;
-    if (snap.perpetual) {
-      livenessThreshold = 1200;
-      const sleepDur = snap.sleepDuration || 0;
-      if (sleepDur > livenessThreshold) {
-        livenessThreshold = sleepDur;
-      }
-    }
+    const livenessThreshold = snap.perpetual ? 1200 : 300;
 
     if (sinceActive < livenessThreshold) {
       effects.clearStuckCandidate(snap.name);
@@ -228,12 +213,11 @@ function handlePaneAlive(
   // ── Stuck detection (scrollback diff) ──
   const idleSec = checkScrollbackStuck(snap.paneId!, snap.name, now, effects);
 
-  // Effective threshold: for perpetual, use max(sleep_duration, 1200, configured)
+  // Effective threshold: for perpetual, use max(1200, configured)
+  // sleep_duration is NOT used here — it's a post-cycle sleep interval, not a stuck threshold
   let effectiveThreshold = config.stuckThresholdSec;
   if (snap.perpetual) {
-    const minPerp = 1200;
-    const sleepDur = snap.sleepDuration || 0;
-    effectiveThreshold = Math.max(effectiveThreshold, minPerp, sleepDur);
+    effectiveThreshold = Math.max(effectiveThreshold, 1200);
   }
 
   if (idleSec > effectiveThreshold) {

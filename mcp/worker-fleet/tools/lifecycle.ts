@@ -45,12 +45,21 @@ To actually restart a worker (fresh context, config reload), the operator runs \
       });
     } catch {}
 
-    // Update registry cycle marker
+    // Update registry cycle marker + set sleeping status for watchdog
     withRegistryLocked((registry) => {
       const w = registry[WORKER_NAME] as RegistryWorkerEntry;
       if (w) {
         w.custom = w.custom || {};
         w.custom.last_cycle_at = new Date().toISOString();
+
+        // If perpetual (sleep_duration > 0), enter sleeping state.
+        // The watchdog will wake us after sleep_duration expires.
+        const sleepDuration = w.sleep_duration;
+        if (sleepDuration && sleepDuration > 0) {
+          w.status = "sleeping";
+          const wakeAt = new Date(Date.now() + sleepDuration * 1000).toISOString();
+          w.custom.sleep_until = wakeAt;
+        }
       }
     });
 
@@ -103,12 +112,22 @@ To actually restart a worker (fresh context, config reload), the operator runs \
       pushResult = `Push failed: ${e.message?.slice(0, 100) || "unknown error"}`;
     }
 
+    // Check if we entered sleeping state
+    let sleepNote = "Keep working — check mail_inbox() for new tasks, or go idle if nothing pending.";
+    try {
+      const reg = readRegistry();
+      const w = reg[WORKER_NAME] as RegistryWorkerEntry;
+      if (w?.status === "sleeping" && w?.custom?.sleep_until) {
+        sleepNote = `Entering sleep — watchdog will respawn you after ${w.sleep_duration}s (wake at ${w.custom.sleep_until}). Session will exit shortly.`;
+      }
+    } catch {}
+
     return {
       content: [{
         type: "text" as const,
         text: `Round logged, checkpoint saved, handoff written. ${pushResult}\n` +
           `Handoff: "${message.slice(0, 120)}${message.length > 120 ? "..." : ""}"\n` +
-          `Keep working — check mail_inbox() for new tasks, or go idle if nothing pending.`,
+          sleepNote,
       }],
     };
   }

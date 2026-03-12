@@ -263,7 +263,9 @@ describe("checkWorker — pane alive", () => {
     expect(action.type).toBe("move-inactive");
   });
 
-  test("sleep_duration elapsed → resume", () => {
+  test("sleep_duration does NOT trigger restart while worker is active", () => {
+    // sleep_duration is a post-cycle sleep interval, not a max runtime.
+    // Active workers should NOT be restarted based on sleep_duration.
     const now = Math.floor(Date.now() / 1000);
     const effects = makeMockEffects({
       isPaneAlive: () => true,
@@ -273,70 +275,30 @@ describe("checkWorker — pane alive", () => {
     });
     const snap = makeSnapshot({
       perpetual: true,
-      sleepDuration: 300, // should trigger at 300s
+      sleepDuration: 300, // would have triggered sleep-complete before the fix
       lastRelaunchAt: new Date(Date.now() - 600_000).toISOString(),
     });
     const action = checkWorker(snap, makeConfig(), effects);
-    expect(action.type).toBe("resume");
-    if (action.type === "resume") expect(action.reason).toContain("sleep-complete");
+    // Should NOT be "resume" with "sleep-complete" — sleep_duration is post-cycle only
+    // With 400s idle and 1200s perpetual liveness threshold, this should be "ok"
+    expect(action.type).toBe("ok");
   });
 
-  test("stuck perpetual → resume", () => {
+  test("sleeping worker wakes after sleep_until expires", () => {
+    // After round_stop() sets status="sleeping" + sleep_until, the watchdog
+    // should wake the worker when the timer expires.
     const now = Math.floor(Date.now() / 1000);
-    // sleepDuration=1500, idle=2000 → sleep-complete fires at 1500.
-    // BUT we want stuck to fire instead. The challenge: sleep-complete check runs first.
-    // Solution: test with a state where TUI is showing blocking pattern (Waiting for task).
-    // Blocking patterns bypass the normal flow via checkScrollbackStuck returning >0
-    // Wait — the stuck detection runs AFTER the liveness threshold gate.
-    // The flow: sleep-complete(runs first) → liveness threshold → bare-shell → stuck.
-    // For stuck to fire: sinceActive must be > sleepDuration (so sleep-complete fires first!)
-    // Actually no — if sinceActive >= sleepDuration, sleep-complete fires and we never reach stuck.
-    // The only way stuck fires for perpetual: sinceActive < sleepDuration (so sleep-complete doesn't fire),
-    // AND sinceActive > livenessThreshold (to pass the gate).
-    // livenessThreshold = max(stuckThresholdSec, 1200, sleepDuration)
-    // If sleepDuration > livenessThreshold... that's impossible since sleepDuration is part of max.
-    // So: livenessThreshold >= sleepDuration always. Therefore stuck can never fire for perpetual
-    // workers with sleep_duration set, because sleep-complete always fires first.
-    //
-    // The stuck path fires when:
-    // - sinceActive >= livenessThreshold (which is >= sleepDuration)
-    // - Therefore sinceActive >= sleepDuration, so sleep-complete already returned
-    //
-    // This means stuck detection is only relevant when the liveness data is stale
-    // but scrollback shows the worker hasn't made progress. This is actually what
-    // checkScrollbackStuck handles — it uses the stuck-candidate timestamp, not liveness.
-    //
-    // For testing: use a perpetual worker with sleepDuration such that sleep-complete fires
-    // but we verify the resume reason contains "sleep-complete" (which is the expected behavior
-    // for a perpetual worker whose sleep cycle has elapsed).
-    //
-    // Actually, the bash watchdog checks stuck AFTER sleep-complete, meaning if sleep-complete
-    // fires, stuck never runs. This is correct behavior. Stuck detection is for when the worker
-    // appears active (liveness fresh) but scrollback shows no progress.
-    // With this understanding, let's test stuck with liveness barely past threshold
-    // and use a scenario where sleep_duration is NOT set (perpetual via status only — edge case)
-    // or use a very large sleep_duration.
-    //
-    // Simplest: use sleepDuration = 100000, sinceActive = 6000 > livenessThreshold=1200
-    // but < 100000 so sleep-complete won't fire.
-    // For perpetual workers, sleep-complete check runs before stuck detection.
-    // If sinceActive >= sleepDuration, sleep-complete fires first.
-    // So we test that the correct resume reason is "sleep-complete".
-    const snap3 = makeSnapshot({
+    const expiredWake = new Date((now - 60) * 1000).toISOString(); // expired 60s ago
+    const effects = makeMockEffects({ nowEpoch: () => now });
+    const snap = makeSnapshot({
       perpetual: true,
-      sleepDuration: 300,
-      lastRelaunchAt: new Date(Date.now() - 600_000).toISOString(),
+      status: "sleeping",
+      sleepUntil: expiredWake,
+      sleepDuration: 1200,
     });
-    const effects3 = makeMockEffects({
-      isPaneAlive: () => true,
-      readLiveness: () => now - 400,
-      capturePane: () => "bypass permissions on\n❯ ",
-      nowEpoch: () => now,
-    });
-    const config = makeConfig();
-    const action = checkWorker(snap3, config, effects3);
-    expect(action.type).toBe("resume");
-    if (action.type === "resume") expect(action.reason).toContain("sleep-complete");
+    const action = checkWorker(snap, makeConfig(), effects);
+    expect(action.type).toBe("fleet-start");
+    if (action.type === "fleet-start") expect(action.reason).toContain("expired");
   });
 
   test("stuck non-perpetual → skip (not respawned)", () => {

@@ -17,7 +17,7 @@
  *   fleet pipeline research-lab --scope HEAD~5..HEAD
  *   fleet pipeline research-lab --spec "Benchmark harness evaluation"
  */
-import type { Program, ProgramPipelineState, ProgramDefaults } from "../engine/program/types";
+import type { Program, ProgramPipelineState } from "../engine/program/types";
 import { graph } from "../engine/program/graph";
 
 export interface ResearchLabOpts {
@@ -216,8 +216,16 @@ You are a **perpetual worker** managed by the watchdog. Each cycle (20 min):
 7. Update observation notebook in notebooks/
 8. Call \`round_stop()\` to checkpoint and end cycle
 
-The watchdog will respawn you after the sleep interval. Your state persists
-across cycles via checkpoints and Fleet Mail.
+After calling \`round_stop()\`, the watchdog will respawn you after the sleep interval.
+Your state persists across cycles via checkpoints and Fleet Mail.
+
+## Self-Wake Cron
+
+At the START of your first cycle, set up a cron job to wake yourself every 10 minutes:
+\`\`\`
+CronCreate(cron: "*/10 * * * *", prompt: "Wake up. Check mail_inbox() for student results. If students are done, analyze results and spawn new assignments. If students are still working, check their progress and adjust if needed. Always do web research for new patterns. Write ops-reflection.md. Call round_stop() when done.")
+\`\`\`
+This ensures you stay active even if the watchdog cycle is longer.
 
 ## CRITICAL: Keep Students Busy
 
@@ -292,6 +300,14 @@ you run in 20-minute cycles, managed by the watchdog. Each cycle:
 6. **Reflect** — Write operational reflection to \`notebooks/ops-reflection.md\` (MANDATORY)
 7. **Update notebook** — Write observations to \`notebooks/\`
 8. **Checkpoint** — Call \`round_stop()\` when done with this cycle
+
+## Self-Wake Cron
+
+At the START of your first cycle, set up a cron job to wake yourself every 10 minutes:
+\`\`\`
+CronCreate(cron: "*/10 * * * *", prompt: "Wake up. Check mail_inbox() for student results. If students are done, analyze results and spawn new assignments. If students are still working, check their progress and adjust if needed. Always do web research for new patterns. Write ops-reflection.md. Call round_stop() when done.")
+\`\`\`
+This ensures you stay active even if the watchdog cycle is longer.
 
 ## Research Spec
 
