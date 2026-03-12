@@ -152,6 +152,9 @@ Install: `bash extensions/watchdog/install.sh`
 | `cli/commands/layout.ts` | tmux layout persistence |
 | `cli/commands/deep-review.ts` | Adversarial code review launcher |
 | `cli/commands/pipeline.ts` | Program-API pipeline launcher |
+| `config/tmux.conf` | Agent-optimized tmux config (shipped by fleet setup) |
+| `scripts/broadcast.sh` | Broadcast dispatch (text/enter/esc to panes) |
+| `scripts/broadcast-chain.sh` | Interactive chained broadcast with per-step prompts |
 | `scripts/setup-hooks.sh` | Hook installer |
 | `scripts/lint-hooks.sh` | Hook verifier |
 | `REVIEW.md` | Symlink → `extensions/review/REVIEW.md` |

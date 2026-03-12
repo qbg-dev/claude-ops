@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { FLEET_DIR, FLEET_DATA, FLEET_MAIL_URL, FLEET_MAIL_TOKEN } from "../lib/paths";
@@ -507,6 +507,27 @@ export function register(parent: Command): void {
         appendFileSync(tmuxConf, prefixLine);
         ok("Added prefix2 C-y to ~/.tmux.conf");
         console.log(`    Reload: tmux source-file ~/.tmux.conf`);
+      }
+
+      // 12. Tmux config (optional — agent-friendly defaults)
+      info("Tmux config...");
+      const fleetTmuxConf = join(fleetDir, "config/tmux.conf");
+      if (existsSync(fleetTmuxConf)) {
+        const hasHighScrollback = /history-limit\s+[3-9]\d{4,}/.test(tmuxConfContent);
+        const hasPaneBorders = /pane-border-status/.test(tmuxConfContent);
+
+        if (hasHighScrollback && hasPaneBorders) {
+          ok("Tmux config: agent-friendly settings detected");
+        } else if (tmuxConfContent.trim()) {
+          info("Existing tmux.conf found — may need agent-friendly settings (50k scrollback, pane labels)");
+          console.log(`    Reference:  ${fleetTmuxConf}`);
+          console.log("    Or run:     fleet onboard   (architect will help merge)");
+        } else {
+          // Empty or missing — install fleet config
+          copyFileSync(fleetTmuxConf, tmuxConf);
+          Bun.spawnSync(["tmux", "source-file", tmuxConf], { stderr: "pipe" });
+          ok("Installed fleet tmux.conf (50k scrollback, pane labels, broadcast menu)");
+        }
       }
 
       console.log("");
