@@ -6,7 +6,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { PROJECT_ROOT, CLAUDE_FLEET, WORKERS_DIR, WORKER_NAME, FLEET_DIR, getWorktreeDir } from "./config";
-import { readRegistry, getMissionAuthorityLabel, type RegistryConfig, type RegistryWorkerEntry } from "./registry";
+import { readRegistry, getMissionAuthorityLabel, isMissionAuthority, type RegistryConfig, type RegistryWorkerEntry } from "./registry";
 import { loadSeedFragments } from "../../shared/extensions";
 
 // ── Seed Context Template ────────────────────────────────────────────
@@ -129,6 +129,25 @@ export function generateSeedContent(handoff?: string, workerName?: string): stri
     }
   }
 
+  // ── Supervisor template (injected for mission_authority or workers with direct reports) ──
+  let supervisorBlock = "";
+  try {
+    const reg = readRegistry();
+    const config = reg._config as RegistryConfig | undefined;
+    const hasSupervisorAuthority =
+      isMissionAuthority(effectiveName, config) ||
+      Object.entries(reg).some(([name, entry]) =>
+        name !== "_config" && name !== effectiveName &&
+        (entry as RegistryWorkerEntry).report_to === effectiveName
+      );
+    if (hasSupervisorAuthority) {
+      const supervisorPath = join(CLAUDE_FLEET, "templates/seed-supervisor.md");
+      if (existsSync(supervisorPath)) {
+        supervisorBlock = "\n\n" + readFileSync(supervisorPath, "utf-8");
+      }
+    }
+  } catch {}
+
   // ── Assemble seed: identity → handoff (FIRST) → instructions → context ──
   let seed = `You are worker **${effectiveName}**.
 Worktree: ${worktreeDir} (branch: ${branch})
@@ -143,7 +162,7 @@ Read these files NOW in this order:
 
 If your inbox has a message from the user or ${_missionAuth} (mission_authority), prioritize it over your current work.${stateBlock}${proposalBlock}
 
-${loadSeedContext(branch, _missionAuth)}`;
+${loadSeedContext(branch, _missionAuth)}${supervisorBlock}`;
 
   return seed;
 }

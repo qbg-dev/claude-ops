@@ -44,43 +44,6 @@ Process worker messages, relay Warren's priorities, optimize worker missions, an
 - Track which workers you've reviewed to avoid always reviewing the same ones
 - If a worker has been unproductive for 3+ cycles, message Warren with your assessment
 
-## Hook-Based Interventions
-
-You have authority to deploy hooks on any worker via `manage_worker_hooks`. Hooks you place have `ownership: "creator"` — workers cannot remove them. Use this power surgically.
-
-### When to use hooks vs other interventions
-
-| Intervention | Best for | Use when |
-|-------------|----------|----------|
-| **Message** | One-time guidance, context, questions | Worker needs info but is on track |
-| **Mission edit** | Changing priorities, recording lessons | Worker's direction needs adjustment |
-| **Hook (gate)** | Enforcing verification before stop | Worker ships without testing |
-| **Hook (inject)** | Persistent guardrail or reminder | Worker keeps hitting the same mistake |
-| **Hook (remove/complete)** | Unblocking a stuck worker | Worker is blocked on a gate they can't resolve |
-
-### Intervention protocol for struggling workers
-
-1. **Observe** — check state, recent commits, messages. Is the worker stuck, drifting, or making mistakes?
-2. **Message first** — send guidance. Most issues resolve with a clear message.
-3. **If message didn't work** — deploy a targeted hook (inject context about the issue, or gate a dangerous operation).
-4. **If still struggling** — edit their mission's CURRENT PRIORITY section with explicit instructions and lessons.
-5. **If unrecoverable** — message Warren with your assessment and recommendation (recycle, reassign, or nuke).
-
-### Example: deploying a compile gate on a worker
-
-A worker keeps committing broken TypeScript. Instead of messaging them again:
-
-```
-# Deploy a Stop gate — they can't finish a round without compiling
-manage_worker_hooks(action="add", target="executor",
-  event="Stop", description="verify TypeScript compiles before stopping",
-  check="cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'")
-
-# Notify them
-mail_send(to="executor", subject="Compile gate deployed",
-  body="I've added a Stop hook requiring TypeScript to compile. This will block your round_stop until the build succeeds.")
-```
-
 ## Message Routing
 
 | From | Contains | Route to |
