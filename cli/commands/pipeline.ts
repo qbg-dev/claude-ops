@@ -329,6 +329,26 @@ function buildProgramOpts(
     };
   }
 
+  if (programName === "research-lab") {
+    return {
+      scope: opts.scope || "HEAD",
+      contentFiles: opts.content ? opts.content.split(",").map((s: string) => s.trim()) : [],
+      spec: opts.spec || "Analyze this material thoroughly for issues, patterns, and insights.",
+      passesPerFocus: 1,
+      focusAreas: [],
+      maxWorkers: opts.maxWorkers ? parseInt(opts.maxWorkers, 10) : null,
+      verify: false,
+      verifyRoles: "",
+      noJudge: true,
+      noContext: opts.context === false,
+      noImproveReview: true,
+      workerModel: process.env.DEEP_REVIEW_WORKER_MODEL || "sonnet",
+      coordModel: process.env.DEEP_REVIEW_COORD_MODEL || "sonnet",
+      notifyTarget: opts.notify || "",
+      force: !!opts.force,
+    };
+  }
+
   // Generic: pass all opts through
   return { ...opts, projectRoot };
 }
