@@ -35,7 +35,7 @@ export { isDynamic, isStaticAgents } from "./types";
 export { graph, ProgramBuilder, phasesToGraph, topologicalSort, buildNodeIndexMap, outgoingEdges, END_SENTINEL } from "./graph";
 
 // Compiler
-export { compile, compileGraph, compilePhase, savePipelineState, loadPipelineState } from "./compiler";
+export { compile, compileGraph, compilePhase, installGraphStopHook, savePipelineState, loadPipelineState } from "./compiler";
 
 // Seed resolver
 export { resolveSeed, resolveSeedToFile, substitute, buildStateVars, registerPartials } from "./seed-resolver";

@@ -406,7 +406,7 @@ export function compileGraph(
  * Edges are checked in priority order. First condition that exits 0 wins.
  * Back-edges respect maxIterations.
  */
-function installGraphStopHook(
+export function installGraphStopHook(
   workerName: string,
   project: string,
   sessionDir: string,
