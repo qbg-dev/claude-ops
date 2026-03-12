@@ -254,7 +254,7 @@ function findProcesses(pattern: string): number[] {
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => parseInt(l.trim(), 10))
-    .filter((pid) => !isNaN(pid) && pid !== process.pid);
+    .filter((pid: number) => !isNaN(pid) && pid !== process.pid);
 }
 
 function settingsHasFleetEntries(): { hasMcp: boolean; hasHooks: boolean } {
