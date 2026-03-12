@@ -1,0 +1,23 @@
+[package]
+name = "boring-watchdog"
+version = "0.1.0"
+edition = "2024"
+description = "Process watchdog for claude-fleet workers"
+
+[[bin]]
+name = "boring-watchdog"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
+async-trait = "0.1"
+dashmap = "6"
+anyhow = "1"
