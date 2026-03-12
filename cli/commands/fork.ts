@@ -71,10 +71,11 @@ export function register(parent: Command): void {
 
       info(`Forking '${childName}' from '${parentName}'`);
 
-      // Create child via runCreate --no-launch
+      // Create child via runCreate --no-launch (inherit parent's runtime)
       const { runCreate } = await import("./create");
       await runCreate(childName, mission, {
         model: opts.model,
+        runtime: parentConfig.runtime || "claude",
         noLaunch: true,
       }, cmd.optsWithGlobals());
 
@@ -134,16 +135,32 @@ export function register(parent: Command): void {
       const model = childConfig?.model || "opus";
       const effort = childConfig?.reasoning_effort || "high";
       const perm = childConfig?.permission_mode || "bypassPermissions";
+      const runtime = childConfig?.runtime || "claude";
 
-      let launchCmd = `cd "${worktree}" && CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME="${childName}" claude`;
-      launchCmd += ` --model "${model}" --effort "${effort}"`;
-      if (perm === "bypassPermissions") {
-        launchCmd += " --dangerously-skip-permissions";
+      let launchCmd: string;
+      if (runtime === "codex") {
+        launchCmd = `cd "${worktree}" && WORKER_NAME="${childName}" WORKER_RUNTIME=codex codex`;
+        launchCmd += ` -m "${model}"`;
+        if (perm === "bypassPermissions") {
+          launchCmd += " --dangerously-bypass-approvals-and-sandbox";
+        } else {
+          launchCmd += " -s workspace-write -a on-request";
+        }
+        launchCmd += ` -c model_reasoning_effort=${effort}`;
+        launchCmd += " --no-alt-screen";
+        launchCmd += ` --add-dir "${childDir}"`;
+        launchCmd += ` fork "${sessionId}"`;
       } else {
-        launchCmd += ` --permission-mode "${perm}"`;
+        launchCmd = `cd "${worktree}" && CLAUDE_CODE_SKIP_PROJECT_LOCK=1 WORKER_NAME="${childName}" WORKER_RUNTIME=claude claude`;
+        launchCmd += ` --model "${model}" --effort "${effort}"`;
+        if (perm === "bypassPermissions") {
+          launchCmd += " --dangerously-skip-permissions";
+        } else {
+          launchCmd += ` --permission-mode "${perm}"`;
+        }
+        launchCmd += ` --add-dir "${childDir}"`;
+        launchCmd += ` --resume "${sessionId}" --fork-session`;
       }
-      launchCmd += ` --add-dir "${childDir}"`;
-      launchCmd += ` --resume "${sessionId}" --fork-session`;
 
       sendKeys(paneId, launchCmd);
       sendEnter(paneId);

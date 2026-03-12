@@ -17,6 +17,7 @@ const NAME_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
 export interface CreateOpts {
   model?: string;
+  runtime?: string;
   effort?: string;
   permissionMode?: string;
   window?: string;
@@ -50,6 +51,7 @@ export async function runCreate(
   // Resolve config: CLI > type template > defaults > hardcoded
   const defaults = getDefaults();
   const model = opts.model || String(defaults.model || "opus");
+  const runtime = (opts.runtime || String(defaults.runtime || "claude")) as "claude" | "codex";
   const effort = opts.effort || String(defaults.effort || "high");
   const perm = opts.permissionMode || String(defaults.permission_mode || "bypassPermissions");
   let sleepDuration: number | null = null;
@@ -97,6 +99,7 @@ export async function runCreate(
 
   const config = {
     model,
+    runtime,
     reasoning_effort: effort,
     permission_mode: perm,
     sleep_duration: sleepDuration ?? null,
@@ -318,6 +321,7 @@ export function register(parent: Command): void {
     .command("create <name> <mission>")
     .description("Create and launch a worker")
     .option("--model <model>", "Override model")
+    .option("--runtime <runtime>", "Runtime: claude (default) or codex")
     .option("--effort <effort>", "Override effort")
     .option("--permission-mode <mode>", "Override permission mode")
     .option("--window <name>", "tmux window group")
@@ -326,11 +330,12 @@ export function register(parent: Command): void {
     .option("--no-launch", "Create only, don't launch");
   addGlobalOpts(sub)
     .action(async (name: string, mission: string, opts: {
-      model?: string; effort?: string; permissionMode?: string;
+      model?: string; runtime?: string; effort?: string; permissionMode?: string;
       window?: string; windowIndex?: string; type?: string; launch?: boolean;
     }, cmd: Command) => {
       await runCreate(name, mission, {
         model: opts.model,
+        runtime: opts.runtime,
         effort: opts.effort,
         permissionMode: opts.permissionMode,
         window: opts.window,

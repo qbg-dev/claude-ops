@@ -16,7 +16,7 @@ import { addGlobalOpts } from "../index";
 /** Start a single worker with optional overrides */
 async function startOne(
   name: string, project: string,
-  opts: { model?: string; effort?: string; permissionMode?: string; window?: string; windowIndex?: string; save?: boolean; force?: boolean },
+  opts: { model?: string; runtime?: string; effort?: string; permissionMode?: string; window?: string; windowIndex?: string; save?: boolean; force?: boolean },
 ): Promise<boolean> {
   const dir = workerDir(project, name);
   const configPath = join(dir, "config.json");
@@ -35,6 +35,7 @@ async function startOne(
 
   const overrides: Record<string, string> = {};
   if (opts.model) overrides.model = opts.model;
+  if (opts.runtime) overrides.runtime = opts.runtime;
   if (opts.effort) overrides.reasoning_effort = opts.effort;
   if (opts.permissionMode) overrides.permission_mode = opts.permissionMode;
   if (opts.window) overrides.window = opts.window;
@@ -72,7 +73,8 @@ async function startOne(
   }
 
   try {
-    await launchInTmux(name, project, session, window, windowIndex);
+    const runtime = (config?.runtime || "claude") as "claude" | "codex";
+    await launchInTmux(name, project, session, window, windowIndex, { runtime });
     return true;
   } catch (e) {
     warn(`Failed to start ${name}: ${e}`);
@@ -170,6 +172,7 @@ export function register(parent: Command): void {
     .option("-a, --all", "Start all workers that aren't running")
     .option("-c, --concurrency <n>", "Max concurrent launches for --all (default: 4)", "4")
     .option("--model <model>", "Override model")
+    .option("--runtime <runtime>", "Runtime: claude (default) or codex")
     .option("--effort <effort>", "Override effort")
     .option("--permission-mode <mode>", "Override permission mode")
     .option("--window <name>", "tmux window group")
@@ -179,7 +182,7 @@ export function register(parent: Command): void {
   addGlobalOpts(sub)
     .action(async (name: string | undefined, opts: {
       all?: boolean; concurrency?: string;
-      model?: string; effort?: string; permissionMode?: string;
+      model?: string; runtime?: string; effort?: string; permissionMode?: string;
       window?: string; windowIndex?: string; save?: boolean; force?: boolean;
     }, cmd: Command) => {
       const project = cmd.optsWithGlobals().project as string || resolveProject();

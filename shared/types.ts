@@ -6,6 +6,8 @@
 
 export interface WorkerConfig {
   model: string;
+  /** Runtime: "claude" (default) or "codex" */
+  runtime?: "claude" | "codex";
   reasoning_effort: string;
   permission_mode: string;
   sleep_duration: number | null;
@@ -133,6 +135,7 @@ export interface ExtensionManifest {
 
 export const HARDCODED_DEFAULTS = {
   model: "opus",
+  runtime: "claude" as const,
   effort: "high",
   permission_mode: "bypassPermissions",
   sleep_duration: null as number | null,
