@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { PROJECT_ROOT, CLAUDE_FLEET, WORKERS_DIR, WORKER_NAME, FLEET_DIR, getWorktreeDir } from "./config";
 import { readRegistry, getMissionAuthorityLabel, type RegistryConfig, type RegistryWorkerEntry } from "./registry";
+import { loadSeedFragments } from "../../shared/extensions";
 
 // ── Seed Context Template ────────────────────────────────────────────
 
@@ -15,10 +16,21 @@ export function loadSeedContext(branch: string, missionAuthority: string, worker
   const name = workerName || WORKER_NAME;
   const tmplPath = join(CLAUDE_FLEET, "templates/seed-context.md");
   try {
-    return readFileSync(tmplPath, "utf-8")
+    let content = readFileSync(tmplPath, "utf-8")
       .replace(/\{\{WORKER_NAME\}\}/g, name)
       .replace(/\{\{BRANCH\}\}/g, branch)
       .replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
+
+    // Append extension seed fragments (alphabetical by extension name)
+    for (const frag of loadSeedFragments()) {
+      const fragContent = frag.content
+        .replace(/\{\{WORKER_NAME\}\}/g, name)
+        .replace(/\{\{BRANCH\}\}/g, branch)
+        .replace(/\{\{MISSION_AUTHORITY\}\}/g, missionAuthority);
+      content += `\n\n<!-- extension: ${frag.extensionName} -->\n${fragContent}`;
+    }
+
+    return content;
   } catch {
     // Fallback if template missing — minimal reminder
     return `Use \`mcp__worker-fleet__*\` MCP tools. Call \`mail_inbox()\` first. Report to ${missionAuthority}.`;

@@ -38,9 +38,7 @@ Check `{{SESSION_DIR}}/comms/` during Phase 2 — messages may provide cross-cut
 
 ### Phase 1: Wait for workers
 
-**Primary (Fleet Mail):** If `mail_inbox` is available, poll `mail_inbox()` every 30s for messages with subject matching "PASS N COMPLETE". Count unique pass numbers. Proceed when {{NUM_PASSES}} received, or after **8 min** with whatever's available. When ≥ half done, read early completers' output files for context.
-
-**Fallback (file sentinels):** If `mail_inbox` is not available, poll `{{SESSION_DIR}}/pass-*.done` every 15s (`ls {{SESSION_DIR}}/pass-*.done 2>/dev/null | wc -l`). Proceed when all {{NUM_PASSES}} exist, or after **8 min** with whatever's available.
+Poll `mail_inbox()` every 30s for messages with subject matching "PASS N COMPLETE". Count unique pass numbers. Proceed when {{NUM_PASSES}} received, or after **8 min** with whatever's available. When ≥ half done, read early completers' output files for context.
 
 ### Phase 2: Aggregate
 
@@ -164,19 +162,10 @@ Display the report summary in your output.
 ### Phase 10: Notify completion
 
 1. Progress: if `update_state` available, call `update_state(key="status", value="complete")`
-2. Sentinel: `echo "complete" > {{SESSION_DIR}}/review.done`
+2. Done marker: `echo "complete" > {{SESSION_DIR}}/review.done`
 3. Desktop: `notify "Deep review complete: $(grep -c '###' {{REPORT_FILE}} 2>/dev/null || echo 0) findings in {{REPORT_FILE}}" "Deep Review" "file://{{REPORT_FILE}}"`
-4. Fleet Mail (if `mail_send` available and `{{NOTIFY_TARGET}}` non-empty):
+4. Fleet Mail (if `{{NOTIFY_TARGET}}` non-empty):
    `mail_send(to="{{NOTIFY_TARGET}}", subject="REVIEW DONE", body="Report: {{REPORT_FILE}} | Fixed: N | Content: N | Design: N | Suggestions: N")`
-5. Legacy Fleet message fallback (if `mail_send` NOT available and `{{NOTIFY_TARGET}}` non-empty):
-```bash
-bash ~/.claude-fleet/scripts/fleet-message.sh \
-  --to "{{NOTIFY_TARGET}}" --from "deep-review" --fyi \
-  --summary "Deep review complete: N fixed, N content, N design, N suggestions" \
-  --content "Report: {{REPORT_FILE}} | Session: {{SESSION_ID}} | tmux: {{REVIEW_SESSION}}
-Fixed: N | Content: N | Design: N | Suggestions: N | Specialist-only: N
-Top 3 findings: <one-line summaries>"
-```
 
 ### Phase 10.5: Worktree cleanup
 

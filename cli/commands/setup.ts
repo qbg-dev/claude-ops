@@ -172,13 +172,9 @@ export function register(parent: Command): void {
           const msg = e instanceof Error ? e.message : String(e);
           console.log(`  ${chalk.red("✗")} Auto-start failed: ${msg}`);
           console.log("");
-          console.log(`  Fleet Mail is required for worker coordination. Two paths:`);
+          console.log(`  Fleet Mail is required for worker coordination.`);
           console.log("");
-          console.log(`  ${chalk.cyan("Path 1 — Install Rust + build locally:")}`);
-          console.log(`    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`);
-          console.log(`    Then re-run: fleet setup`);
-          console.log("");
-          console.log(`  ${chalk.cyan("Path 2 — Connect to a remote server:")}`);
+          console.log(`  ${chalk.cyan("Connect to a remote server:")}`);
           console.log(`    fleet mail-server connect http://your-server:8026`);
           console.log("");
           fail("Set up Fleet Mail via one of the paths above, then re-run: fleet setup");
@@ -390,7 +386,7 @@ export function register(parent: Command): void {
         if (tuiBinary) {
           ok(`Fleet Mail TUI: ${tuiBinary}`);
         } else {
-          info("Fleet Mail TUI: not found (optional — cargo install boring-mail-tui)");
+          info("Fleet Mail TUI: not found (optional — build or install separately)");
         }
       }
 

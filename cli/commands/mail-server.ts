@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import { FLEET_DATA, FLEET_MAIL_URL, FLEET_MAIL_TOKEN } from "../lib/paths";
+import { FLEET_DATA, FLEET_DIR, FLEET_MAIL_URL, FLEET_MAIL_TOKEN } from "../lib/paths";
 import { ok, info, warn, fail } from "../lib/fmt";
 import { readJson, writeJson } from "../../shared/io";
 
@@ -12,15 +12,21 @@ const MAIL_SERVER_PATHS = [
 ];
 
 function findMailServerBinary(): string | null {
-  // Check PATH first (boring-mail is the canonical name)
+  // 1. Vendored binary (platform-specific)
+  const platform = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
+  const vendored = join(FLEET_DIR, `vendor/boring-mail-${platform}-${arch}`);
+  if (existsSync(vendored)) return vendored;
+
+  // 2. PATH (boring-mail is the canonical name)
   const which = Bun.spawnSync(["which", "boring-mail"], { stderr: "pipe" });
   if (which.exitCode === 0) return which.stdout.toString().trim();
 
-  // Legacy name fallback
+  // 3. Legacy name fallback
   const whichLegacy = Bun.spawnSync(["which", "fleet-server"], { stderr: "pipe" });
   if (whichLegacy.exitCode === 0) return whichLegacy.stdout.toString().trim();
 
-  // Check known locations
+  // 4. Known cargo locations
   for (const p of MAIL_SERVER_PATHS) {
     if (existsSync(p)) return p;
   }
@@ -146,39 +152,6 @@ function readLocalAdminToken(): string | null {
 }
 
 /**
- * Auto-install boring-mail via cargo if available.
- * Returns binary path on success, null if cargo not found.
- */
-async function autoInstallBoringMail(log: (...args: any[]) => void): Promise<string | null> {
-  // Check for cargo
-  let cargoPath: string | null = null;
-  const whichCargo = Bun.spawnSync(["which", "cargo"], { stderr: "pipe" });
-  if (whichCargo.exitCode === 0) {
-    cargoPath = whichCargo.stdout.toString().trim();
-  } else {
-    const fallback = join(process.env.HOME || "", ".cargo/bin/cargo");
-    if (existsSync(fallback)) cargoPath = fallback;
-  }
-
-  if (!cargoPath) return null;
-
-  log(`Installing boring-mail via cargo (this takes 2-5 min)...`);
-  const install = Bun.spawn(
-    [cargoPath, "install", "--git", "https://github.com/qbg-dev/boring-mail-server", "boring-mail"],
-    { stdout: "inherit", stderr: "inherit" }
-  );
-  const exitCode = await install.exited;
-
-  if (exitCode !== 0) {
-    throw new Error("cargo install boring-mail failed (see output above)");
-  }
-
-  const path = findMailServerBinary();
-  if (path) log(`Installed boring-mail at ${path}`);
-  return path;
-}
-
-/**
  * Start a local boring-mail server. Reusable by setup.ts.
  * Returns { url, token } on success, throws on failure.
  */
@@ -192,17 +165,14 @@ export async function startLocalServer(opts?: {
   let binary = findMailServerBinary();
 
   if (!binary) {
-    const installed = await autoInstallBoringMail(log);
-    if (!installed) {
-      throw new Error(
-        "boring-mail binary not found and cargo is not available.\n\n" +
-        "  Install Rust first:\n" +
-        "    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh\n\n" +
-        "  Or connect to an existing server:\n" +
-        "    fleet mail-server connect http://your-server:8025"
-      );
-    }
-    binary = installed;
+    const platform = process.platform === "darwin" ? "darwin" : "linux";
+    const arch = process.arch === "arm64" ? "arm64" : "x86_64";
+    throw new Error(
+      "boring-mail binary not found.\n\n" +
+      `  Expected: ${FLEET_DIR}/vendor/boring-mail-${platform}-${arch}\n\n` +
+      "  Or connect to a remote server:\n" +
+      "    fleet mail-server connect http://your-server:8025"
+    );
   }
 
   log(`Found boring-mail at ${binary}`);

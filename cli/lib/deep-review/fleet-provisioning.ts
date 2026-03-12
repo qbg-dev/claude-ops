@@ -153,10 +153,11 @@ export async function provisionReviewFleet(opts: ReviewFleetOpts): Promise<Map<s
 
     console.log(`  Fleet Mail: ${provisioned}/${names.length} accounts provisioned`);
   } else {
-    console.log("  Fleet Mail: not configured (workers will use file sentinels as fallback)");
-    for (const name of names) {
-      writeFileSync(join(projectDir, name, "token"), "");
-    }
+    throw new Error(
+      "Fleet Mail is required for deep review. Configure it:\n" +
+      "  fleet mail-server start    (local server)\n" +
+      "  fleet mail-server connect  (remote server)"
+    );
   }
 
   return tokens;

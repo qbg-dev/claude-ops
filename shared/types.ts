@@ -118,6 +118,19 @@ export const SYSTEM_HOOKS: SystemHook[] = [
   { id: "sys-12", owner: "system", event: "PreToolUse", tool: "Write", condition: { file_glob: "**/fleet/**/token" }, action: "block", message: "Token is auto-provisioned" },
 ];
 
+export interface ExtensionManifest {
+  name: string;
+  version?: string;
+  description?: string;
+  scripts?: Record<string, string>;
+  hooks?: Record<string, string>;
+  root_files?: string[];
+  install?: string;
+  templates?: {
+    "seed-fragments"?: string[];
+  };
+}
+
 export const HARDCODED_DEFAULTS = {
   model: "opus",
   effort: "high",

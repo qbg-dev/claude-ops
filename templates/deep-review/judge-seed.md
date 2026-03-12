@@ -63,7 +63,7 @@ You are a fleet citizen. Use these MCP tools if available:
 1. Validate: `bash {{VALIDATOR}} {{SESSION_DIR}}/judged.json judge` — fix if invalid
 2. Progress: if `update_state` available, call `update_state(key="status", value="complete")`
 3. Notify: if `mail_send` available AND "{{COORDINATOR_NAME}}" is non-empty, call `mail_send(to="{{COORDINATOR_NAME}}", subject="JUDGE DONE", body="{{SESSION_DIR}}/judged.json")`
-4. Sentinel (fallback): `echo "done" > {{SESSION_DIR}}/judge.done`
+4. Done marker: `echo "done" > {{SESSION_DIR}}/judge.done`
 5. Say "JUDGE COMPLETE" and stop.
 
 ## Rules

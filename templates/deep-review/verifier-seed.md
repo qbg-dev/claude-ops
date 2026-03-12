@@ -68,7 +68,7 @@ You are a fleet citizen. Use these MCP tools if available:
 1. Validate: `bash {{VALIDATOR}} {{OUTPUT_FILE}} verifier` — fix if invalid
 2. Progress: if `update_state` available, call `update_state(key="status", value="complete")`
 3. Notify: if `mail_send` available AND "{{COORDINATOR_NAME}}" is non-empty, call `mail_send(to="{{COORDINATOR_NAME}}", subject="VERIFY {{VERIFY_TYPE}} DONE", body="{{OUTPUT_FILE}}")`
-4. Sentinel (fallback): `echo "done" > {{DONE_FILE}}`
+4. Done marker: `echo "done" > {{DONE_FILE}}`
 5. Say "VERIFICATION ({{VERIFY_TYPE}}) COMPLETE" and stop.
 
 Test every assigned path — skip only with documented reason. Be specific in failures (exact error messages, response bodies). If unclear pass/fail, mark "error" with detail.

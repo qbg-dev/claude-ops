@@ -239,7 +239,7 @@ export function printSummary(
     if (ctx.judgeName) console.log(`  Judge:       ${ctx.judgeName}`);
     console.log(`  Workers:     ${ctx.workerNames?.join(", ") || "none"}`);
     if (ctx.verifierNames?.length) console.log(`  Verifiers:   ${ctx.verifierNames.join(", ")}`);
-    console.log("  Coordination: Fleet Mail (file sentinels as fallback)");
+    console.log("  Coordination: Fleet Mail");
     console.log(`  Cleanup:     bash ${ctx.sessionDir}/cleanup-fleet.sh`);
   }
 
