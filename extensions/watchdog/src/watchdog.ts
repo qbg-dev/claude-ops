@@ -13,9 +13,9 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, unlink
 import { join } from "path";
 import { resolveConfig, resolveProjectRoot, resolveProjectName, CRASH_DIR, RUNTIME_DIR, FLEET_DATA, FLEET_CLI, STATE_DIR } from "./config";
 import { logInfo, logWarn, logError, setQuiet } from "./logger";
-import { checkWorkerAsync, TUI_INDICATORS } from "./worker-checker";
+import { checkWorkerAsync } from "./worker-checker";
 import { markCrashLoop } from "./crash-tracker";
-import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow } from "./pane-manager";
+import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow, windowHasClaudeProcess } from "./pane-manager";
 import { resumeInPane, relaunchInPane, killAgentInPane, gracefulShutdown } from "./process-manager";
 import { desktopNotify, notifyDeadWorker, clearCosNotified, checkStaleInput, notifyUnreadMail } from "./notifications";
 import { buildAllSnapshots } from "./snapshot";
@@ -133,21 +133,12 @@ async function runOnce(): Promise<void> {
             logInfo("FLEET-START", `session '${session}' gone, using fleet start`, snap.name);
             launchViaFleet(snap.name);
           } else if (snap.window && windowExists(session, snap.window)) {
-            // Dedup guard: check if Claude is already running in any pane in this window
-            const windowPanes = [...paneInfo.values()].filter(
-              p => p.session === session && p.window === snap.window,
-            );
-            const alreadyRunning = windowPanes.some(p => {
-              const content = effects.capturePane(p.paneId, 5);
-              return TUI_INDICATORS.test(content);
-            });
-            if (alreadyRunning) {
-              // Adopt the existing pane instead of creating a duplicate
-              const existing = windowPanes.find(p => TUI_INDICATORS.test(effects.capturePane(p.paneId, 5)));
-              if (existing) {
-                logInfo("ADOPT-PANE", `Claude already running in ${snap.window} (${existing.paneId}), adopting`, snap.name);
-                updateStatePaneId(snap.name, existing.paneId);
-              }
+            // Dedup guard: check if Claude process is already running in this window
+            // Uses tmux pane_current_command (instant) instead of TUI content (needs startup time)
+            const existingPane = windowHasClaudeProcess(session, snap.window);
+            if (existingPane) {
+              logInfo("ADOPT-PANE", `Claude process in ${snap.window} (${existingPane}), adopting instead of splitting`, snap.name);
+              updateStatePaneId(snap.name, existingPane);
             } else {
               // Split into existing window
               const wt = snap.worktree || projectRoot;

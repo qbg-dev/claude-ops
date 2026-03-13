@@ -95,6 +95,22 @@ export function splitIntoWindow(session: string, window: string, cwd: string): s
   return stdout.trim();
 }
 
+/** Check if any pane in a window is running a Claude process (by command name) */
+export function windowHasClaudeProcess(session: string, window: string): string | null {
+  const { ok, stdout } = tmux(
+    "list-panes", "-t", `${session}:${window}`, "-F", "#{pane_id}\t#{pane_current_command}",
+  );
+  if (!ok) return null;
+  for (const line of stdout.split("\n")) {
+    const [paneId, cmd] = line.split("\t");
+    // Claude shows as version number (e.g. "2.1.74") or "claude" in pane_current_command
+    if (paneId && cmd && (/^\d+\.\d+/.test(cmd) || cmd.includes("claude"))) {
+      return paneId;
+    }
+  }
+  return null;
+}
+
 /** Set pane title */
 export function setPaneTitle(paneId: string, title: string): void {
   tmux("select-pane", "-T", title, "-t", paneId);
