@@ -45,7 +45,18 @@ export function createTmuxSession(
   Bun.sleepSync(300);
 
   // Create agent windows (no bridge windows needed — hooks launch bridge directly)
+  // Deduplicate by name — multiple phases may share a window name (e.g. "planning")
+  const created = new Set<string>();
   for (const win of windows) {
+    if (created.has(win.name)) {
+      // Window already exists — add panes to it instead of creating a duplicate
+      for (let p = 0; p < win.paneCount; p++) {
+        tmux("split-window", "-d", "-t", `${session}:${win.name}`, "-c", state.projectRoot);
+      }
+      tmux("select-layout", "-t", `${session}:${win.name}`, win.layout || "tiled");
+      continue;
+    }
+    created.add(win.name);
     tmux("new-window", "-d", "-t", session, "-n", win.name, "-c", state.projectRoot);
     // Create extra panes
     for (let p = 1; p < win.paneCount; p++) {
