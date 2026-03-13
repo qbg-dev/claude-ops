@@ -258,13 +258,21 @@ export function generateLaunchWrapper(
   // Timeout support
   const execPrefix = worker.timeout && worker.timeout > 0 ? `timeout ${worker.timeout} ` : "";
 
+  // Effort flag from defaults
+  const effort = state.defaults.effort || "high";
+  const effortFlag = ` --effort "${effort}"`;
+
+  // --add-dir for fleet worker directory (mission, config, hooks, token)
+  const workerDir = join(FLEET_DATA, state.fleetProject, worker.name);
+  const addDirFlag = ` --add-dir "${workerDir}"`;
+
   const script = `#!/usr/bin/env bash
 cd "${state.workDir}"
 ${fleetEnv}
 ${customEnv ? customEnv + "\n" : ""}export PROJECT_ROOT="${state.workDir}"
 export HOOKS_DIR="${hooksDir}"
 export CLAUDE_FLEET_DIR="${fleetDir}"
-exec ${execPrefix}claude --model ${worker.model}${permFlag} "$(cat '${worker.seedPath}')"
+exec ${execPrefix}claude --model ${worker.model}${effortFlag}${permFlag}${addDirFlag} "$(cat '${worker.seedPath}')"
 `;
 
   writeFileSync(worker.wrapperPath, script, { mode: 0o755 });
