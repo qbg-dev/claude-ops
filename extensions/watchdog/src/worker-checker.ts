@@ -256,6 +256,12 @@ function handlePaneDead(
     return { type: "move-inactive", reason: `dead pane (${snap.paneId})` };
   }
 
+  // Relaunch cooldown: if last relaunch < 120s ago, skip (prevents rapid-fire spawning)
+  const relaunchEpoch = parseIsoEpoch(snap.lastRelaunchAt);
+  if (relaunchEpoch > 0 && (now - relaunchEpoch) < 120) {
+    return { type: "skip", reason: "dead pane — recently relaunched, cooldown" };
+  }
+
   // Crash-loop guard
   const crashCount = incrementCrashCount(snap.name, now);
   if (crashCount >= config.maxCrashesPerHr) {
