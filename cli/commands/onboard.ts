@@ -177,35 +177,37 @@ export function register(parent: Command): void {
         info(`Detected TMUX_PANE=${callingPane} — launching in current pane`);
         setPaneTitle(callingPane, "fleet-architect");
 
-        // Build the claude command
-        let launchCmd = `claude --model "${opts.model}" --effort "${opts.effort}"`;
-        launchCmd += ` --dangerously-skip-permissions`;
-        launchCmd += ` --add-dir "${FLEET_DIR}"`;
-        launchCmd += ` --add-dir "${FLEET_DATA}"`;
-
-        // Write seed to temp file for -p flag (avoids tmux paste complexity when in-pane)
+        // Write seed to temp file for tmux paste injection
         const seed = buildSeed();
         const seedFile = `/tmp/fleet-onboard-seed-${process.pid}.txt`;
         writeFileSync(seedFile, seed);
 
-        launchCmd += ` -p "$(cat ${seedFile})"`;
+        // Launch Claude interactively in current pane.
+        // Background subshell injects seed via tmux paste after TUI starts.
+        // exec replaces this process so Claude gets the TTY.
+        const wrapper = `/tmp/fleet-onboard-wrapper-${process.pid}.sh`;
+        const script = `#!/usr/bin/env bash
+(sleep 5 && tmux load-buffer "${seedFile}" && tmux paste-buffer -t "${callingPane}" && sleep 1 && tmux send-keys -t "${callingPane}" Enter && sleep 2 && rm -f "${seedFile}" "${wrapper}") &
+exec claude --model "${opts.model}" --effort "${opts.effort}" --dangerously-skip-permissions --add-dir "${FLEET_DIR}" --add-dir "${FLEET_DATA}"
+`;
+        writeFileSync(wrapper, script, { mode: 0o755 });
 
-        // Exec directly — replaces the current fleet process with claude
         info("Handing off to Claude...");
         console.log("");
-        const result = Bun.spawnSync(["bash", "-c", launchCmd], {
-          cwd: process.cwd(),
-          stdin: "inherit",
-          stdout: "inherit",
-          stderr: "inherit",
-        });
 
-        // Clean up seed file
-        try { Bun.spawnSync(["rm", "-f", seedFile]); } catch {}
+        // exec the wrapper — this replaces our process
+        const { execSync } = require("node:child_process");
+        try {
+          execSync(`exec bash "${wrapper}"`, {
+            cwd: process.cwd(),
+            stdio: "inherit",
+          });
+        } catch {}
 
+        // If we get here (shouldn't with exec), clean up
         ok("Fleet architect session ended.");
         info("To continue onboarding or make changes: fleet onboard");
-        process.exit(result.exitCode || 0);
+        process.exit(0);
         return;
       }
 
