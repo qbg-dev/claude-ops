@@ -111,6 +111,22 @@ export function windowHasClaudeProcess(session: string, window: string): string 
   return null;
 }
 
+/** List ALL panes in a window running a Claude process */
+export function windowAllClaudeProcesses(session: string, window: string): string[] {
+  const { ok, stdout } = tmux(
+    "list-panes", "-t", `${session}:${window}`, "-F", "#{pane_id}\t#{pane_current_command}",
+  );
+  if (!ok) return [];
+  const panes: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const [paneId, cmd] = line.split("\t");
+    if (paneId && cmd && (/^\d+\.\d+/.test(cmd) || cmd.includes("claude"))) {
+      panes.push(paneId);
+    }
+  }
+  return panes;
+}
+
 /** Set pane title */
 export function setPaneTitle(paneId: string, title: string): void {
   tmux("select-pane", "-T", title, "-t", paneId);

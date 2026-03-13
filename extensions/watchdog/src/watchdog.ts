@@ -15,7 +15,7 @@ import { resolveConfig, resolveProjectRoot, resolveProjectName, CRASH_DIR, RUNTI
 import { logInfo, logWarn, logError, setQuiet } from "./logger";
 import { checkWorkerAsync } from "./worker-checker";
 import { markCrashLoop } from "./crash-tracker";
-import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow, windowHasClaudeProcess } from "./pane-manager";
+import { listPaneInfo, isValidPaneId, sessionExists, windowExists, splitIntoWindow, setPaneTitle, moveToInactive, enforceWindow, windowHasClaudeProcess, windowAllClaudeProcesses } from "./pane-manager";
 import { resumeInPane, relaunchInPane, killAgentInPane, gracefulShutdown } from "./process-manager";
 import { desktopNotify, notifyDeadWorker, clearCosNotified, checkStaleInput, notifyUnreadMail } from "./notifications";
 import { buildAllSnapshots } from "./snapshot";
@@ -139,6 +139,14 @@ async function runOnce(): Promise<void> {
             if (existingPane) {
               logInfo("ADOPT-PANE", `Claude process in ${snap.window} (${existingPane}), adopting instead of splitting`, snap.name);
               updateStatePaneId(snap.name, existingPane);
+              // Kill orphan Claude processes in the same window (all except the adopted one)
+              const allClaude = windowAllClaudeProcesses(session, snap.window!);
+              for (const orphanPane of allClaude) {
+                if (orphanPane !== existingPane) {
+                  logInfo("KILL-ORPHAN", `killing orphan Claude in ${orphanPane}`, snap.name);
+                  killAgentInPane(orphanPane);
+                }
+              }
             } else {
               // Split into existing window
               const wt = snap.worktree || projectRoot;

@@ -203,6 +203,9 @@ export async function relaunchInPane(
 ): Promise<void> {
   const worktree = snap.worktree || projectRoot;
 
+  // Kill any existing agent before launching new one (prevents orphan accumulation)
+  killAgentInPane(paneId);
+
   // cd + launch agent
   tmux("send-keys", "-t", paneId, `cd "${worktree}"`);
   tmux("send-keys", "-t", paneId, "-H", "0d");
