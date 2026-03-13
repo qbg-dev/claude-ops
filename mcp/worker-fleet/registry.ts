@@ -124,7 +124,7 @@ export function readFleetConfig(): RegistryConfig {
     merge_authority: "merger",
     deploy_authority: "merger",
     mission_authority: "chief-of-staff",
-    tmux_session: "w",
+    tmux_session: resolveProjectName(),
     project_name: resolveProjectName(),
   };
 }
@@ -285,7 +285,7 @@ export function migrateToPerWorkerDirs(): void {
       merge_authority: "merger",
       deploy_authority: "merger",
       mission_authority: "chief-of-staff",
-      tmux_session: "w",
+      tmux_session: resolveProjectName(),
       project_name: resolveProjectName(),
     });
     return;
@@ -355,7 +355,7 @@ export function workerDirsToRegistryEntry(name: string): RegistryWorkerEntry | n
   if (!config) return null;
 
   const s = state || {
-    status: "idle", pane_id: null, pane_target: null, tmux_session: "w",
+    status: "idle", pane_id: null, pane_target: null, tmux_session: readFleetConfig().tmux_session || resolveProjectName(),
     session_id: null, past_sessions: [], last_relaunch: null,
     relaunch_count: 0, cycles_completed: 0, last_cycle_at: null, custom: {},
   };

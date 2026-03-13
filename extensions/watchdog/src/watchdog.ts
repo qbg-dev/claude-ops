@@ -88,7 +88,7 @@ async function runOnce(): Promise<void> {
         case "relaunch": {
           logInfo("RELAUNCH", action.reason, snap.name);
           // Determine relaunch strategy
-          const session = snap.tmuxSession || "w";
+          const session = snap.tmuxSession || snap.projectName || "w";
           if (!sessionExists(session)) {
             logInfo("FLEET-START", `session '${session}' gone, using fleet start`, snap.name);
             launchViaFleet(snap.name);
