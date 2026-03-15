@@ -134,6 +134,8 @@ export interface AgentSpec {
   timeout?: number;
   /** Opt out of auto-injected pipeline context in seed */
   noPipelineContext?: boolean;
+  /** Event Tools — Druids-style custom MCP tools for this agent */
+  tools?: import("../../shared/types").EventTool[];
 }
 
 export type SeedSpec =
@@ -274,6 +276,10 @@ export interface CompiledWorker {
   permissionMode?: string;
   /** Max runtime in seconds */
   timeout?: number;
+  /** Event Tools for this worker (Druids-style custom MCP tools) */
+  eventTools?: import("../../shared/types").EventTool[];
+  /** Path to program file containing inline handler functions */
+  eventToolsProgramPath?: string;
 }
 
 export interface CompiledHook {

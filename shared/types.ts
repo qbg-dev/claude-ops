@@ -146,3 +146,131 @@ export const HARDCODED_DEFAULTS = {
   permission_mode: "bypassPermissions",
   sleep_duration: null as number | null,
 };
+
+// ── Event Tools (Druids-style custom MCP tools per agent) ─────────
+
+export interface EventTool {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, EventToolParam>;
+  mode: "inline" | "command";
+  handler: string;  // function name (inline) or shell command (command)
+}
+
+export interface EventToolParam {
+  type: "string" | "number" | "boolean" | "object" | "array";
+  description?: string;
+  required?: boolean;
+}
+
+export interface EventToolContext {
+  workerName: string;
+  projectRoot: string;
+  sessionDir: string;
+  sendMail(to: string, subject: string, body: string): Promise<void>;
+  updateState(key: string, value: unknown): void;
+  spawnWorker(name: string, mission: string, opts?: Record<string, unknown>): Promise<void>;
+  triggerNode(nodeName: string): Promise<void>;
+  writeResult(filename: string, content: string): void;
+  readResult(filename: string): string | null;
+}
+
+export interface EventToolResult { text: string; data?: unknown; }
+
+// ── AgentSpec File Format (universal unit) ────────────────────────
+
+export interface AgentSpecFile {
+  name: string;
+  role?: string;
+
+  // Model & Runtime
+  model?: string;
+  runtime?: "claude" | "codex" | "custom";
+  custom_launcher?: string;
+  effort?: string;
+  permission_mode?: string;
+
+  // Prompt & Context
+  prompt?: string;
+  system_prompt?: string;
+  append_system_prompt?: string;
+  add_dir?: string[];
+
+  // Tool Access
+  allowed_tools?: string[];
+  disallowed_tools?: string[];
+
+  // MCP Servers
+  mcp_servers?: Record<string, { url?: string; command?: string; args?: string[]; headers?: Record<string, string>; env?: Record<string, string> }>;
+
+  // Git & Workspace
+  worktree?: boolean | string;
+  branch?: string;
+  dir?: string;
+
+  // Lifecycle
+  type?: string;
+  sleep_duration?: number | null;
+  ephemeral?: boolean;
+  report_to?: string;
+  max_budget_usd?: number;
+
+  // Hooks (any Claude Code event)
+  hooks?: AgentSpecHook[];
+
+  // Event Tools (Druids-style)
+  tools?: EventTool[];
+
+  // Environment
+  env?: Record<string, string>;
+  vars?: Record<string, string>;
+
+  // Output
+  json_schema?: string;
+}
+
+export interface AgentSpecHook {
+  event: string;
+  type?: "command" | "prompt" | "agent" | "launch" | "message";
+  command?: string;
+  matcher?: string;
+  blocking?: boolean;
+  check?: string;
+  description?: string;
+  content?: string;
+
+  // For type:"message"
+  to?: string;
+  subject?: string;
+  body?: string;
+
+  // For type:"launch"
+  workers?: AgentSpecFile[];
+}
+
+/**
+ * Load an AgentSpec from a YAML or JSON file.
+ */
+export function loadAgentSpec(path: string): AgentSpecFile {
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const content = readFileSync(path, "utf-8");
+
+  let spec: AgentSpecFile;
+
+  if (path.endsWith(".json")) {
+    spec = JSON.parse(content);
+  } else {
+    // YAML (.yaml, .yml, .agent.yaml)
+    const yaml = require("js-yaml");
+    spec = yaml.load(content) as AgentSpecFile;
+  }
+
+  if (!spec || typeof spec !== "object") {
+    throw new Error(`Invalid agent spec file: ${path}`);
+  }
+  if (!spec.name) {
+    throw new Error(`Agent spec missing required 'name' field: ${path}`);
+  }
+
+  return spec;
+}

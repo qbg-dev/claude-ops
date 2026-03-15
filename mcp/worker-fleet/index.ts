@@ -27,6 +27,7 @@ import { registerHookTools } from "./tools/hooks";
 import { registerLifecycleTools } from "./tools/lifecycle";
 import { registerFleetTools } from "./tools/fleet";
 import { registerMailTools } from "./tools/mail";
+import { registerEventTools } from "./tools/event-tools";
 
 // ── Server ───────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ registerHookTools(server);
 registerLifecycleTools(server);
 registerFleetTools(server);
 registerMailTools(server);
+registerEventTools(server);
 
 // ── Start ────────────────────────────────────────────────────────────
 
@@ -99,3 +101,6 @@ export { type WorkerRuntime, type ReasoningEffort, type RuntimeConfig, getWorker
 
 // tools/fleet.ts
 export { createWorkerFiles } from "./tools/fleet";
+
+// tools/event-tools.ts
+export { registerEventTools } from "./tools/event-tools";

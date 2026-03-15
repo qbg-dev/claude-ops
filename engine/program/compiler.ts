@@ -114,7 +114,7 @@ export function compilePhase(
 
         const wrapperPath = join(state.sessionDir, `run-${agent.name}.sh`);
 
-        workers.push({
+        const compiled: CompiledWorker = {
           name: agent.name,
           role: agent.role,
           model,
@@ -129,7 +129,15 @@ export function compilePhase(
           env: agent.env,
           permissionMode: agent.permissionMode,
           timeout: agent.timeout,
-        });
+        };
+
+        // Pass event tools through to provisioner
+        if (agent.tools?.length) {
+          compiled.eventTools = agent.tools;
+          compiled.eventToolsProgramPath = state.programPath;
+        }
+
+        workers.push(compiled);
       }
     }
   }

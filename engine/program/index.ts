@@ -32,6 +32,10 @@ export type {
 } from "./types";
 export { isDynamic, isStaticAgents } from "./types";
 
+// Re-export event tool types from shared
+export type { EventTool, EventToolParam, EventToolContext, EventToolResult, AgentSpecFile, AgentSpecHook } from "../../shared/types";
+export { loadAgentSpec } from "../../shared/types";
+
 // Graph builder
 export { graph, ProgramBuilder, phasesToGraph, topologicalSort, buildNodeIndexMap, outgoingEdges, END_SENTINEL } from "./graph";
 

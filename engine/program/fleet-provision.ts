@@ -77,6 +77,16 @@ export async function provisionWorkers(
     writeFileSync(join(workerDir, "token"), "");
     writeFileSync(join(workerDir, "mission.md"),
       `# ${worker.name}\n${state.programName} ${worker.role} (${isPerpetual ? `perpetual, ${worker.sleepDuration}s cycles` : "ephemeral"})`);
+
+    // Write event-tools.json if this worker has custom tools
+    if (worker.eventTools?.length) {
+      writeFileSync(join(workerDir, "event-tools.json"), JSON.stringify({
+        programPath: worker.eventToolsProgramPath,
+        tools: worker.eventTools,
+        sessionDir: state.sessionDir,
+        projectRoot: state.projectRoot,
+      }, null, 2));
+    }
   }
 
   // 2. Provision Fleet Mail accounts in parallel

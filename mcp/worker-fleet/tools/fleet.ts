@@ -1064,16 +1064,19 @@ export function registerFleetTools(server: McpServer): void {
 server.registerTool(
   "create_worker",
   {
-    description: "Create a new worker: worktree, branch, registry entry, optional launch.",
+    description: "Create a new worker with full AgentSpec support: worktree, branch, registry entry, hooks, tools, optional launch.",
     inputSchema: {
       name: z.string().describe("Worker name (alphanumeric + hyphens)"),
-      mission: z.string().describe("Mission markdown content"),
+      mission: z.string().optional().describe("Mission markdown content (or use prompt)"),
+      prompt: z.string().optional().describe("Initial prompt (AgentSpec: replaces mission as seed content)"),
       type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("Worker archetype"),
       runtime: z.enum(["claude", "codex"]).optional().describe("Execution engine (default: claude)"),
       model: z.string().optional().describe("LLM model override"),
       reasoning_effort: z.enum(["low", "medium", "high", "extra_high"]).optional().describe("Depth of reasoning (default: high)"),
-      sleep_duration: z.number().nullable().optional().describe("Seconds between cycles. null = one-shot (never respawned), N > 0 = perpetual (respawn after N seconds)"),
+      effort: z.string().optional().describe("Alias for reasoning_effort"),
+      sleep_duration: z.number().nullable().optional().describe("Seconds between cycles. null = one-shot, N > 0 = perpetual"),
       disallowed_tools: z.string().optional().describe("JSON array of tool deny-list patterns"),
+      allowed_tools: z.string().optional().describe("JSON array of allowed tool patterns"),
       window: z.string().optional().describe("Target tmux window name"),
       window_index: z.number().optional().describe("Explicit tmux window index for new windows"),
       report_to: z.string().optional().describe("Who this worker reports to"),
@@ -1082,10 +1085,115 @@ server.registerTool(
       proposal_required: z.boolean().optional().describe("Require HTML proposal before coding"),
       fork_from_session: z.boolean().optional().describe("Fork caller's session (requires launch=true)"),
       direct_report: z.boolean().optional().describe("Set report_to to calling worker"),
+      // ── AgentSpec extensions ──
+      spec_file: z.string().optional().describe("Path to .agent.yaml/.agent.json spec file (overrides inline params)"),
+      system_prompt: z.string().optional().describe("Custom system prompt"),
+      append_system_prompt: z.string().optional().describe("Append to default system prompt"),
+      add_dir: z.string().optional().describe("JSON array of additional directories"),
+      tools: z.string().optional().describe("JSON array of EventTool definitions [{name,description,mode,handler,inputSchema}]"),
+      hooks: z.string().optional().describe("JSON array of hook definitions [{event,type,command,to,subject,body}]"),
+      env: z.string().optional().describe("JSON object of environment variables"),
+      on_stop: z.string().optional().describe("Command to run on Stop (shorthand for hooks)"),
+      max_budget_usd: z.number().optional().describe("Cost cap in USD"),
+      worktree: z.boolean().optional().describe("Create git worktree (default: true)"),
+      ephemeral: z.boolean().optional().describe("Auto-cleanup on completion"),
     },
   },
   // @ts-ignore — MCP SDK deep type instantiation with Zod
-  async (params: Record<string, any>) => handleFleetCreate(params)
+  async (params: Record<string, any>) => {
+    // If spec_file provided, load it and merge with inline params
+    if (params.spec_file) {
+      try {
+        const { loadAgentSpec } = await import("../../../shared/types");
+        const spec = loadAgentSpec(params.spec_file);
+        // Spec fields become defaults, inline params override
+        if (!params.name && spec.name) params.name = spec.name;
+        if (!params.mission && !params.prompt && spec.prompt) params.prompt = spec.prompt;
+        if (!params.mission && !params.prompt && spec.role) params.mission = spec.role;
+        if (!params.model && spec.model) params.model = spec.model;
+        if (!params.runtime && spec.runtime) params.runtime = spec.runtime;
+        if (!params.permission_mode && spec.permission_mode) params.permission_mode = spec.permission_mode;
+        if (!params.reasoning_effort && !params.effort && spec.effort) params.effort = spec.effort;
+        if (!params.sleep_duration && spec.sleep_duration !== undefined) params.sleep_duration = spec.sleep_duration;
+        if (!params.tools && spec.tools?.length) params.tools = JSON.stringify(spec.tools);
+        if (!params.hooks && spec.hooks?.length) params.hooks = JSON.stringify(spec.hooks);
+        if (!params.env && spec.env) params.env = JSON.stringify(spec.env);
+        if (!params.system_prompt && spec.system_prompt) params.system_prompt = spec.system_prompt;
+        if (!params.on_stop) {
+          const stopHook = spec.hooks?.find(h => h.event === "Stop" && h.command);
+          if (stopHook?.command) params.on_stop = stopHook.command;
+        }
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Error loading spec file: ${e.message}` }], isError: true };
+      }
+    }
+
+    // If prompt provided but no mission, use prompt as mission
+    if (!params.mission && params.prompt) {
+      params.mission = params.prompt;
+    }
+
+    // Merge effort alias
+    if (params.effort && !params.reasoning_effort) {
+      params.reasoning_effort = params.effort;
+    }
+
+    const result = await handleFleetCreate(params);
+
+    // Post-create: write event-tools.json and hooks if provided
+    if (result.isError) return result;
+
+    const workerFleetDir = join(FLEET_DIR, params.name);
+    const hooksDir = join(workerFleetDir, "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+
+    // Write event-tools.json
+    if (params.tools) {
+      try {
+        const tools = typeof params.tools === "string" ? JSON.parse(params.tools) : params.tools;
+        if (Array.isArray(tools) && tools.length > 0) {
+          writeFileSync(join(workerFleetDir, "event-tools.json"), JSON.stringify({
+            programPath: null,
+            tools,
+            sessionDir: join(workerFleetDir, "session"),
+            projectRoot: PROJECT_ROOT,
+          }, null, 2));
+          mkdirSync(join(workerFleetDir, "session", "results", params.name), { recursive: true });
+        }
+      } catch {}
+    }
+
+    // Install hooks (beyond system hooks)
+    if (params.hooks || params.on_stop) {
+      try {
+        const hookDefs: any[] = [];
+        if (params.hooks) {
+          const parsed = typeof params.hooks === "string" ? JSON.parse(params.hooks) : params.hooks;
+          if (Array.isArray(parsed)) hookDefs.push(...parsed);
+        }
+        if (params.on_stop) {
+          hookDefs.push({ event: "Stop", type: "command", command: params.on_stop });
+        }
+        if (hookDefs.length > 0) {
+          const { installPipelineHooks } = await import("../../../engine/program/hook-generator");
+          await installPipelineHooks(hooksDir, hookDefs, WORKER_NAME);
+        }
+      } catch {}
+    }
+
+    // Write env vars to a file the launch script can source
+    if (params.env) {
+      try {
+        const envObj = typeof params.env === "string" ? JSON.parse(params.env) : params.env;
+        if (typeof envObj === "object") {
+          const envLines = Object.entries(envObj).map(([k, v]) => `export ${k}="${v}"`).join("\n");
+          writeFileSync(join(workerFleetDir, "env.sh"), envLines + "\n", { mode: 0o755 });
+        }
+      } catch {}
+    }
+
+    return result;
+  }
 );
 
 // Removed tools: register_worker, deregister_worker, move_worker, standby_worker, fleet_template
