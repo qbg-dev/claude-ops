@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# pre-push hook for claude-fleet
+# Runs documentation, review, and template staleness checks before push.
+# Section 4: AI-powered DX feedback gate (blocking unless bypassed).
+# Errors block the push; warnings are advisory.
+#
+# Skip with: git push --no-verify (emergencies only)
+set -euo pipefail
+
+FLEET_DIR="$(git rev-parse --show-toplevel)"
+
+echo "════════════════════════════════════════════════════════"
+echo "  PRE-PUSH CHECKS"
+echo "════════════════════════════════════════════════════════"
+echo ""
+
+ERRORS=0
+
+# ---------------------------------------------------------------------------
+# 1. Doc sync (REVIEW.md items 1–5)
+#    CLI ↔ CLAUDE.md, completions, tests
+# ---------------------------------------------------------------------------
+echo "── Doc Sync (items 1–5) ──────────────────────────────"
+if ! bash "$FLEET_DIR/scripts/check-docs.sh"; then
+  ERRORS=$((ERRORS + 1))
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# 2. Review checks (REVIEW.md items 17–22)
+#    Version drift, changelog, secrets, imports, MCP tool count, idempotency
+# ---------------------------------------------------------------------------
+echo "── Review Checks (items 17–22) ───────────────────────"
+if ! bash "$FLEET_DIR/scripts/review.sh"; then
+  ERRORS=$((ERRORS + 1))
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# 3. Template staleness
+#    MCP tool references, hook events, worker types, key files, hook counts
+# ---------------------------------------------------------------------------
+echo "── Template Staleness ─────────────────────────────────"
+if ! bash "$FLEET_DIR/scripts/check-templates.sh"; then
+  ERRORS=$((ERRORS + 1))
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# 4. DX Feedback Gate (AI-powered, blocking)
+#    Runs dx-feedback pipeline, requires proof XML for any findings.
+#    Bypass: DX_FEEDBACK_SKIP=1 git push
+# ---------------------------------------------------------------------------
+echo "── DX Feedback Gate ──────────────────────────────────"
+
+if [ "$ERRORS" -gt 0 ]; then
+  echo "  Skipping DX feedback — deterministic checks failed first."
+elif [ "${DX_FEEDBACK_SKIP:-0}" = "1" ]; then
+  echo "  ⚠ DX_FEEDBACK_SKIP=1 — skipping DX feedback gate"
+elif ! command -v fleet &>/dev/null; then
+  echo "  ⚠ fleet CLI not found — skipping DX feedback gate"
+elif ! command -v bun &>/dev/null; then
+  echo "  ⚠ bun not found — skipping DX feedback gate"
+else
+  SHA=$(git rev-parse HEAD)
+  GIT_DIR="$(git rev-parse --absolute-git-dir)"
+  DXF_DIR="$GIT_DIR/dx-feedback"
+  mkdir -p "$DXF_DIR"
+
+  FEEDBACK="$DXF_DIR/${SHA}.md"
+  PROOF="$DXF_DIR/${SHA}-proof.xml"
+  GATE_SCRIPT="$FLEET_DIR/scripts/dx-feedback-gate.ts"
+
+  # Auto-cleanup: remove files older than 24 hours
+  find "$DXF_DIR" -type f -mmin +1440 -delete 2>/dev/null || true
+
+  # If no cached feedback, run pipeline synchronously
+  if [ ! -f "$FEEDBACK" ]; then
+    SCOPE="HEAD"
+    AHEAD=$(git rev-list --count "@{upstream}..HEAD" 2>/dev/null || echo "1")
+    [ "$AHEAD" -gt 1 ] && SCOPE="@{upstream}..HEAD"
+
+    echo "  Running dx-feedback pipeline (scope: $SCOPE, timeout: 5 min)..."
+
+    # Launch pipeline
+    fleet pipeline dx-feedback --scope "$SCOPE" &>/dev/null &
+    FLEET_PID=$!
+
+    # Give pipeline time to create tmux session
+    sleep 2
+
+    # Find the pipeline's tmux session for timeout warning
+    DXF_SESSION=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep 'fleet-pipeline' | tail -1 || true)
+
+    # Poll for output with 5-minute timeout
+    TIMEOUT=300
+    ELAPSED=0
+    WARNING_SENT=0
+    while [ $ELAPSED -lt $TIMEOUT ]; do
+      # Check if pipeline produced output
+      RESULT=$(find "$FLEET_DIR/.claude/state/dx-feedback" -name "dx-feedback.md" -newer "$DXF_DIR" 2>/dev/null | head -1 || true)
+      if [ -n "$RESULT" ] && [ -f "$RESULT" ]; then
+        cp "$RESULT" "$FEEDBACK"
+        echo "  DX feedback received (${ELAPSED}s)."
+        break
+      fi
+
+      # Check if pipeline exited early
+      if ! kill -0 "$FLEET_PID" 2>/dev/null; then
+        sleep 2
+        RESULT=$(find "$FLEET_DIR/.claude/state/dx-feedback" -name "dx-feedback.md" -newer "$DXF_DIR" 2>/dev/null | head -1 || true)
+        if [ -n "$RESULT" ] && [ -f "$RESULT" ]; then
+          cp "$RESULT" "$FEEDBACK"
+          echo "  DX feedback received (${ELAPSED}s)."
+        fi
+        break
+      fi
+
+      # Send tmux warning 1 minute before timeout
+      if [ $ELAPSED -ge 240 ] && [ $WARNING_SENT -eq 0 ]; then
+        WARNING_SENT=1
+        # Re-discover session in case it changed
+        DXF_SESSION=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep 'fleet-pipeline' | tail -1 || true)
+        if [ -n "$DXF_SESSION" ]; then
+          for pane in $(tmux list-panes -t "$DXF_SESSION" -F '#{pane_id}' 2>/dev/null || true); do
+            tmux load-buffer -b dx-warn - <<'WARN_EOF' 2>/dev/null || true
+⚠️ TIMEOUT WARNING: You have 60 seconds remaining. Write your feedback file NOW and stop. The pre-push hook will proceed without your analysis if you don't finish in time.
+WARN_EOF
+            tmux paste-buffer -t "$pane" -b dx-warn -d 2>/dev/null || true
+            tmux send-keys -t "$pane" -H 0d 2>/dev/null || true
+          done
+          echo "  ⚠ Sent timeout warning to dx-feedback worker (60s remaining)."
+        fi
+      fi
+
+      sleep 10
+      ELAPSED=$((ELAPSED + 10))
+    done
+
+    # Kill pipeline if still running
+    kill "$FLEET_PID" 2>/dev/null || true
+    wait "$FLEET_PID" 2>/dev/null || true
+
+    # Clean up tmux session
+    if [ -n "${DXF_SESSION:-}" ]; then
+      tmux kill-session -t "$DXF_SESSION" 2>/dev/null || true
+    fi
+
+    if [ ! -f "$FEEDBACK" ]; then
+      echo "  ⚠ DX feedback timed out after ${TIMEOUT}s — proceeding without gate."
+    fi
+  else
+    echo "  Using cached DX feedback for ${SHA:0:8}."
+  fi
+
+  # Validate via TypeScript gate script
+  if [ -f "$FEEDBACK" ] && [ -f "$GATE_SCRIPT" ]; then
+    if ! bun run "$GATE_SCRIPT" --sha "$SHA" --feedback "$FEEDBACK" --proof "$PROOF"; then
+      echo ""
+      echo "  To generate a proof template:"
+      echo "    bash $FLEET_DIR/scripts/dx-feedback-proof.sh --write"
+      echo ""
+      echo "  Then edit the proof file, fill in status+note for each finding, and push again."
+      echo "  Bypass: DX_FEEDBACK_SKIP=1 git push"
+      ERRORS=$((ERRORS + 1))
+    fi
+  fi
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+echo "════════════════════════════════════════════════════════"
+if [ "$ERRORS" -eq 0 ]; then
+  echo "  ALL PRE-PUSH CHECKS PASSED"
+  echo "════════════════════════════════════════════════════════"
+  exit 0
+else
+  echo "  BLOCKED: $ERRORS check suite(s) failed"
+  echo ""
+  echo "  Fix errors above, then retry push."
+  echo "  Emergency bypass: git push --no-verify"
+  echo "════════════════════════════════════════════════════════"
+  exit 1
+fi

@@ -1,0 +1,48 @@
+name: DX Feedback Gate
+on:
+  pull_request:
+    branches: [main, "worker/*"]
+
+jobs:
+  dx-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.3"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('bun.lock') }}
+
+      - run: bun install --frozen-lockfile
+
+      # Deterministic checks (same as pre-push sections 1-3)
+      - name: Doc sync check
+        run: bash scripts/check-docs.sh
+
+      - name: Review checks
+        run: bash scripts/review.sh
+
+      - name: Template staleness check
+        run: bash scripts/check-templates.sh
+
+      # Validate any proof XMLs found in the repo
+      - name: Validate proof files
+        run: |
+          PROOFS=$(find . -name "*-proof.xml" -path "*/dx-feedback/*" 2>/dev/null || true)
+          if [ -n "$PROOFS" ]; then
+            for proof in $PROOFS; do
+              echo "Validating: $proof"
+              bun run scripts/dx-feedback-gate.ts --validate-proof "$proof"
+            done
+          else
+            echo "No proof files found — dx-feedback gate runs locally via pre-push hook."
+            echo "Full AI-powered analysis requires fleet + Sonnet (local only)."
+          fi

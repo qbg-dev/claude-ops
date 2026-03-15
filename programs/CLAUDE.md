@@ -478,3 +478,4 @@ fleet pipeline <name> [opts]
 | `full-release` | Graph: composed | embed(eval-loop) → embed(pre-release), cross-subgraph |
 | `guard-rails` | Per-agent hooks | Read-only reader, guarded writer, full-access coordinator |
 | `research-lab` | Watchdog-driven | Perpetual PI + dynamic students + Fleet Mail + recursive delegation |
+| `dx-feedback` | Single-phase | Pre-push DX quality check — diff vs REVIEW.md + README conventions |

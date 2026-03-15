@@ -398,6 +398,56 @@ Run `bash scripts/review.sh` for a deterministic scan of structural integrity ru
 
 ---
 
+## Pre-Push DX Feedback Gate
+
+After the 3 deterministic check suites pass (`check-docs.sh`, `review.sh`, `check-templates.sh`), the pre-push hook runs an AI-powered DX feedback analysis via `fleet pipeline dx-feedback`. This is **blocking** — any findings must be addressed before the push proceeds.
+
+### How It Works
+
+1. Pre-push hook launches `fleet pipeline dx-feedback --scope HEAD` (Sonnet agent)
+2. Agent analyzes diff against REVIEW.md, README-CONVENTIONS.md, hook-orchestration.md
+3. Agent writes feedback with verdict: `CLEAN`, `HAS_SUGGESTIONS`, or `NEEDS_ATTENTION`
+4. If findings exist, developer must write proof XML addressing each finding
+
+### Cache
+
+Feedback is cached at `.git/dx-feedback/{COMMIT_SHA}.md` — pushing the same SHA twice reuses cached results. Cache auto-cleans after 24 hours.
+
+### Proof Format
+
+```xml
+<dx-feedback-proof commit="{SHA}" date="{ISO-DATE}">
+  <finding id="H1" status="addressed" note="Added row to programs/CLAUDE.md" />
+  <finding id="M1" status="wontfix" note="Legacy format is fine for single-phase" />
+  <finding id="L1" status="skip" note="Will add changelog in release batch" />
+</dx-feedback-proof>
+```
+
+Valid statuses: `addressed` (fixed), `wontfix` (intentional, with reason), `skip` (acknowledged, deferred). Every finding from the feedback must have a `<finding>` entry — incomplete proofs are rejected.
+
+### Generating Proof
+
+```bash
+bash scripts/dx-feedback-proof.sh              # print template to stdout
+bash scripts/dx-feedback-proof.sh --write      # write to .git/dx-feedback/{SHA}-proof.xml
+bash scripts/dx-feedback-proof.sh --edit       # write + open in $EDITOR
+```
+
+### Bypass
+
+- `DX_FEEDBACK_SKIP=1 git push` — env variable (emits warning)
+- `git push --no-verify` — standard git bypass (skips entire pre-push hook)
+
+### Timeout
+
+The pipeline has a 5-minute hard timeout. At 4 minutes, a tmux warning is sent to the agent. If the timeout expires without feedback, the push proceeds (graceful degradation — don't brick pushes when fleet is unavailable).
+
+### Validation Script
+
+`scripts/dx-feedback-gate.ts` handles all parsing and validation (uses `fast-xml-parser`). Can also run standalone for CI: `bun run scripts/dx-feedback-gate.ts --validate-proof <path>`.
+
+---
+
 ## Evolving This Checklist
 
 This document is a living checklist. During any deep review, if Claude identifies a recurring failure mode, anti-pattern, or drift category not covered above, it should **propose a new Always Flag item** by appending to the relevant section (or creating a new subsection). Include:
