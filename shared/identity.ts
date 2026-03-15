@@ -96,6 +96,28 @@ export function parseMailName(mailName: string): {
   };
 }
 
+// ── Name Sanitization ───────────────────────────────────────────────
+
+/** Sanitize a user-provided name for safe use in file paths and mail names.
+ *  Strips path traversal, null bytes, control chars. Limits to 128 chars.
+ *  Returns "session" if empty after sanitization. */
+export function sanitizeName(name: string): string {
+  let s = name;
+  // Strip null bytes
+  s = s.replace(/\0/g, "");
+  // Strip control characters (U+0000–U+001F, U+007F)
+  s = s.replace(/[\x00-\x1f\x7f]/g, "");
+  // Strip path separators and traversal
+  s = s.replace(/\.\./g, "");
+  s = s.replace(/[/\\]/g, "");
+  // Trim leading/trailing dots and whitespace
+  s = s.replace(/^[.\s]+|[.\s]+$/g, "");
+  // Limit to 128 chars
+  s = s.slice(0, 128);
+  // Default if empty
+  return s || "session";
+}
+
 // ── Legacy Worker Name Detection ────────────────────────────────────
 
 /** Detect a legacy worker name from WORKER_NAME env or git branch/worktree. */

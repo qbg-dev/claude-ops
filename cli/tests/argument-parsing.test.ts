@@ -101,4 +101,49 @@ describe("argument parsing", () => {
     expect(r2.exitCode).not.toBe(0);
     expect(r2.stderr).toMatch(/not found|missing required argument/i);
   });
+
+  // ── New CLI commands ────────────────────────────────────────────────
+
+  test("fleet register with no tmux pane → fails gracefully (not crash)", () => {
+    const r = fleet("register");
+    // Should fail because no session ID detected, but not crash (exit code 1, not signal)
+    expect(r.exitCode).not.toBe(0);
+    const combined = r.stdout + r.stderr;
+    expect(combined).toMatch(/session|detect|tmux/i);
+    // Should NOT be an unhandled exception
+    expect(combined).not.toMatch(/TypeError|ReferenceError|Cannot read properties/i);
+  });
+
+  test("fleet state get with no session → appropriate error", () => {
+    const r = fleet("state", "get");
+    // state get without a session identity should fail or output empty state
+    // It calls resolveIdentity() which may return null → fail()
+    expect(r.exitCode).not.toBe(0);
+    const combined = r.stdout + r.stderr;
+    expect(combined).toMatch(/session|worker|identity|detect/i);
+  });
+
+  test("fleet state set without key/value → missing required argument", () => {
+    const r = fleet("state", "set");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/missing required argument/i);
+  });
+
+  test("fleet checkpoint without summary → missing required argument", () => {
+    const r = fleet("checkpoint");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/missing required argument/i);
+  });
+
+  test("fleet mail send without args → missing required argument", () => {
+    const r = fleet("mail", "send");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/missing required argument/i);
+  });
+
+  test("fleet mail read without id → missing required argument", () => {
+    const r = fleet("mail", "read");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/missing required argument/i);
+  });
 });

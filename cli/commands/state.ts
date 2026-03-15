@@ -6,7 +6,7 @@
  */
 
 import type { Command } from "commander";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { addGlobalOpts } from "../index";
 import { fail, ok } from "../lib/fmt";
@@ -48,17 +48,45 @@ export function register(parent: Command): void {
   addGlobalOpts(set)
     .action(async (key: string, value: string) => {
       const statePath = getStatePath();
+      const dir = dirname(statePath);
+      mkdirSync(dir, { recursive: true });
 
-      mkdirSync(dirname(statePath), { recursive: true });
+      // mkdir-based atomic lock (see REVIEW.md rule 8, Never Flag #3)
+      const lockDir = join(dir, ".state.lock");
+      const maxRetries = 10;
+      const retryDelay = 100; // ms
+      let acquired = false;
 
-      let data: Record<string, unknown> = {};
-      try { data = JSON.parse(readFileSync(statePath, "utf-8")); } catch {}
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          mkdirSync(lockDir);
+          acquired = true;
+          break;
+        } catch (err: any) {
+          if (err.code === "EEXIST") {
+            await new Promise(r => setTimeout(r, retryDelay));
+          } else {
+            throw err;
+          }
+        }
+      }
 
-      // Try to parse value as JSON, fall back to string
-      try { data[key] = JSON.parse(value); } catch { data[key] = value; }
+      if (!acquired) {
+        fail("Cannot acquire state lock — another process is writing. Retry shortly.");
+      }
 
-      writeFileSync(statePath, JSON.stringify(data, null, 2) + "\n");
-      ok(`${key} = ${typeof data[key] === "string" ? data[key] : JSON.stringify(data[key])}`);
+      try {
+        let data: Record<string, unknown> = {};
+        try { data = JSON.parse(readFileSync(statePath, "utf-8")); } catch {}
+
+        // Try to parse value as JSON, fall back to string
+        try { data[key] = JSON.parse(value); } catch { data[key] = value; }
+
+        writeFileSync(statePath, JSON.stringify(data, null, 2) + "\n");
+        ok(`${key} = ${typeof data[key] === "string" ? data[key] : JSON.stringify(data[key])}`);
+      } finally {
+        try { rmdirSync(lockDir); } catch {}
+      }
     });
 }
 

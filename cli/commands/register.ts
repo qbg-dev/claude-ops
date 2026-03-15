@@ -15,6 +15,7 @@ import {
   resolveSessionId,
   resolveDirSlug,
   buildMailName,
+  sanitizeName,
   sessionDir,
   sessionsDir,
   loadSessionIdentity,
@@ -53,7 +54,7 @@ export function register(parent: Command): void {
       }
 
       const dirSlug = resolveDirSlug();
-      const customName = opts.name || detectCustomName();
+      const customName = sanitizeName(opts.name || detectCustomName());
       const mailName = buildMailName(customName, dirSlug, sessionId);
 
       // Check for other sessions in the same directory

@@ -60,6 +60,16 @@ describe("read-only commands", () => {
     const r = fleet("mail-server", "status");
     expect(r.exitCode).toBe(0);
   });
+
+  test("fleet session ls → exit 0", () => {
+    const r = fleet("session", "ls");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("fleet session clean → exit 0", () => {
+    const r = fleet("session", "clean");
+    expect(r.exitCode).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -149,6 +159,55 @@ describe("write command --help", () => {
     const r = fleet("deep-review", "--help");
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet register --help → exit 0", () => {
+    const r = fleet("register", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet state --help → exit 0", () => {
+    const r = fleet("state", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet checkpoint --help → exit 0", () => {
+    const r = fleet("checkpoint", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet session --help → exit 0", () => {
+    const r = fleet("session", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet mail send --help → exit 0", () => {
+    const r = fleet("mail", "send", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet mail inbox --help → exit 0", () => {
+    const r = fleet("mail", "inbox", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet mail read --help → exit 0", () => {
+    const r = fleet("mail", "read", "--help");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage:");
+  });
+
+  test("fleet mail help → exit 0", () => {
+    const r = fleet("mail", "help");
+    expect(r.exitCode).toBe(0);
+    const combined = r.stdout + r.stderr;
+    expect(combined).toContain("Fleet Mail");
   });
 });
 
