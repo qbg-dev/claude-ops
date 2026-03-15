@@ -42,6 +42,7 @@ export function register(program: Command): void {
     .option("--session-name <name>", "Custom tmux session name")
     .option("--notify <target>", "Notify on completion")
     .option("--dry-run", "Print manifest without launching")
+    .option("--set <kv...>", "Program-specific key=value pairs (e.g. --set problem=kv_store --set rounds=3)")
     .action(async (programName: string, opts: Record<string, any>) => {
       try {
         await runPipeline(programName, opts);
@@ -72,6 +73,22 @@ export async function runPipeline(programName: string, opts: Record<string, any>
 
   // Build program-specific options
   const programOpts = buildProgramOpts(programName, opts, projectRoot);
+
+  // Merge --set key=value pairs into programOpts (overrides built-in opts)
+  if (opts.set && Array.isArray(opts.set)) {
+    for (const kv of opts.set as string[]) {
+      const eqIdx = kv.indexOf("=");
+      if (eqIdx > 0) {
+        const key = kv.slice(0, eqIdx);
+        const val = kv.slice(eqIdx + 1);
+        // Auto-coerce numbers and booleans
+        if (val === "true") programOpts[key] = true;
+        else if (val === "false") programOpts[key] = false;
+        else if (/^\d+$/.test(val)) programOpts[key] = parseInt(val, 10);
+        else programOpts[key] = val;
+      }
+    }
+  }
 
   // Generate the Program declaration
   const program: Program = programFn(programOpts);

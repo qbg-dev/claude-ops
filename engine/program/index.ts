@@ -8,6 +8,7 @@
 // Types
 export type {
   Program,
+  ProgramFlag,
   Phase,
   AgentSpec,
   DynamicAgents,

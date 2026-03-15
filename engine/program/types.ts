@@ -47,6 +47,18 @@ export interface ConvergenceSpec {
   handler?: string;           // exported function name for complex checks
 }
 
+// ── Program Flags (custom CLI options) ─────────────────────
+
+/** Declares a custom CLI flag that programs accept via `--set key=value` */
+export interface ProgramFlag {
+  /** Flag name, e.g. "problem" — passed as opts.problem */
+  name: string;
+  description?: string;
+  type?: "string" | "number" | "boolean";
+  default?: string | number | boolean;
+  required?: boolean;
+}
+
 // ── Program Declaration ────────────────────────────────────
 
 export interface Program {
@@ -57,6 +69,8 @@ export interface Program {
   material?: ProgramMaterial;
   /** If present, the compiler uses the graph instead of phases */
   graph?: ProgramGraph;
+  /** Custom flags accepted by this program via `fleet pipeline <name> --set key=value` */
+  flags?: ProgramFlag[];
 }
 
 export interface ProgramDefaults {
@@ -97,6 +111,10 @@ export interface AgentSpec {
   name: string;
   role: string;
   model?: string;
+  /** Runtime engine: "claude" (default), "codex", or "custom" */
+  runtime?: "claude" | "codex" | "custom";
+  /** Custom launch command (only used when runtime is "custom") */
+  customLauncher?: string;
   seed: SeedSpec;
   window?: string;
   vars?: Record<string, string>;
@@ -182,6 +200,11 @@ export interface ProgramGraph {
   material?: ProgramMaterial;
 }
 
+// ── Results Directory Convention ─────────────────────────────────
+// Each agent gets a $RESULTS_DIR env var pointing to SESSION_DIR/results/AGENT_NAME/.
+// Agents write structured output there (findings, reports, JSON) without needing to
+// know SESSION_DIR. Also available as {{RESULTS_DIR}} in seed templates.
+
 // ── Compiled Artifacts ─────────────────────────────────────────
 
 export interface CompiledPlan {
@@ -229,6 +252,10 @@ export interface CompiledWorker {
   name: string;
   role: string;
   model: string;
+  /** Runtime engine: "claude" (default), "codex", or "custom" */
+  runtime?: "claude" | "codex" | "custom";
+  /** Custom launch command (only used when runtime is "custom") */
+  customLauncher?: string;
   /** Path to the generated seed file */
   seedPath: string;
   /** Path to the generated launch wrapper */

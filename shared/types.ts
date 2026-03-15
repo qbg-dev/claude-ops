@@ -6,6 +6,10 @@
 
 export interface WorkerConfig {
   model: string;
+  /** Runtime: "claude" (default), "codex", or "custom" */
+  runtime?: "claude" | "codex" | "custom";
+  /** Custom launch command (only used when runtime is "custom") */
+  customLauncher?: string;
   reasoning_effort: string;
   permission_mode: string;
   sleep_duration: number | null;

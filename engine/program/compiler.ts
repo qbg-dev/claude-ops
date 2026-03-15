@@ -100,12 +100,15 @@ export function compilePhase(
           pipelineContext = generatePipelineContext(agent, phase.name, agents, graph, state);
         }
 
+        // Per-agent results directory (available as {{RESULTS_DIR}} in seed templates)
+        const resultsDir = join(state.sessionDir, "results", agent.name);
+
         // Resolve seed
         const seedPath = resolveSeedToFile(
           agent,
           state,
           state.sessionDir,
-          { ...stateVars, ...(agent.vars || {}) },
+          { ...stateVars, RESULTS_DIR: resultsDir, ...(agent.vars || {}) },
           pipelineContext,
         );
 
@@ -115,6 +118,8 @@ export function compilePhase(
           name: agent.name,
           role: agent.role,
           model,
+          runtime: agent.runtime,
+          customLauncher: agent.customLauncher,
           seedPath,
           wrapperPath,
           window: windowName,

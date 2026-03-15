@@ -34,6 +34,8 @@ export async function provisionWorkers(
     const isPerpetual = typeof worker.sleepDuration === "number" && worker.sleepDuration > 0;
     const config: WorkerConfig = {
       model: worker.model,
+      runtime: worker.runtime || "claude",
+      customLauncher: worker.customLauncher,
       reasoning_effort: state.defaults.effort || "high",
       permission_mode: state.defaults.permission || "bypassPermissions",
       sleep_duration: isPerpetual ? worker.sleepDuration! : null,
@@ -234,6 +236,32 @@ export function buildMailEnvExport(
 }
 
 /**
+ * Build the exec line for a worker based on its runtime.
+ * - "claude" (default): claude --model MODEL --dangerously-skip-permissions "$(cat SEED)"
+ * - "codex": codex --full-auto -q -m MODEL "$(cat SEED)"
+ * - "custom": use customLauncher string as the exec line
+ */
+function buildExecLine(worker: CompiledWorker): string {
+  const runtime = worker.runtime || "claude";
+
+  switch (runtime) {
+    case "codex": {
+      const model = worker.model || "gpt-5.4";
+      return `exec codex --full-auto -q -m ${model} "$(cat '${worker.seedPath}')"`;
+    }
+    case "custom": {
+      if (!worker.customLauncher) {
+        throw new Error(`Worker ${worker.name} has runtime "custom" but no customLauncher`);
+      }
+      return `exec ${worker.customLauncher}`;
+    }
+    case "claude":
+    default:
+      return `exec claude --model ${worker.model} --dangerously-skip-permissions "$(cat '${worker.seedPath}')"`;
+  }
+}
+
+/**
  * Generate a launch wrapper script for a compiled worker.
  */
 export function generateLaunchWrapper(
@@ -266,6 +294,10 @@ export function generateLaunchWrapper(
   const workerDir = join(FLEET_DATA, state.fleetProject, worker.name);
   const addDirFlag = ` --add-dir "${workerDir}"`;
 
+  // Create results directory for this worker (results convention)
+  const resultsDir = join(state.sessionDir, "results", worker.name);
+  mkdirSync(resultsDir, { recursive: true });
+
   // Use tmux paste-buffer to inject the seed prompt after Claude starts.
   // Passing long prompts as CLI args in interactive mode can hang Claude
   // due to argument buffering issues. tmux paste is reliable for any size.
@@ -276,6 +308,7 @@ ${customEnv ? customEnv + "\n" : ""}export PROJECT_ROOT="${state.workDir}"
 export HOOKS_DIR="${hooksDir}"
 export CLAUDE_FLEET_DIR="${fleetDir}"
 export CLAUDE_CODE_SKIP_PROJECT_LOCK=1
+export RESULTS_DIR="${resultsDir}"
 
 # Launch Claude, then inject seed via tmux paste (more reliable than CLI arg)
 SEED_FILE='${worker.seedPath}'
