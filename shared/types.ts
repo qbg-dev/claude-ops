@@ -6,8 +6,8 @@
 
 export interface WorkerConfig {
   model: string;
-  /** Runtime: "claude" (default), "codex", or "custom" */
-  runtime?: "claude" | "codex" | "custom";
+  /** Runtime: "claude" (default), "codex", "sdk" (Agent SDK), or "custom" */
+  runtime?: "claude" | "codex" | "sdk" | "custom";
   /** Custom launch command (only used when runtime is "custom") */
   customLauncher?: string;
   reasoning_effort: string;
@@ -141,7 +141,8 @@ export interface ExtensionManifest {
 }
 
 export const HARDCODED_DEFAULTS = {
-  model: "opus",
+  model: "opus[1m]",
+  runtime: "claude" as const,
   effort: "high",
   permission_mode: "bypassPermissions",
   sleep_duration: null as number | null,
@@ -185,7 +186,7 @@ export interface AgentSpecFile {
 
   // Model & Runtime
   model?: string;
-  runtime?: "claude" | "codex" | "custom";
+  runtime?: "claude" | "codex" | "sdk" | "custom";
   custom_launcher?: string;
   effort?: string;
   permission_mode?: string;
@@ -227,6 +228,11 @@ export interface AgentSpecFile {
 
   // Output
   json_schema?: string;
+
+  // SDK-specific options (runtime: "sdk")
+  max_turns?: number;
+  agents?: Record<string, { description: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number }>;
+  persist_session?: boolean;
 }
 
 export interface AgentSpecHook {

@@ -249,15 +249,23 @@ export function buildMailEnvExport(
  * Build the exec line for a worker based on its runtime.
  * - "claude" (default): claude --model MODEL --dangerously-skip-permissions "$(cat SEED)"
  * - "codex": codex exec --full-auto -c model="MODEL" "$(cat SEED)"
+ * - "sdk": bun run sdk-WORKER.ts (Claude Agent SDK programmatic)
  * - "custom": use customLauncher string as the exec line
  */
-function buildExecLine(worker: CompiledWorker): string {
+function buildExecLine(worker: CompiledWorker, state?: ProgramPipelineState): string {
   const runtime = worker.runtime || "claude";
 
   switch (runtime) {
     case "codex": {
       const model = worker.model || "gpt-5.4";
       return `exec codex exec --full-auto --skip-git-repo-check -c model='"${model}"' "$(cat '${worker.seedPath}')"`;
+    }
+    case "sdk": {
+      // SDK runtime — run the generated TypeScript launcher
+      const sdkPath = state
+        ? join(state.sessionDir, `sdk-${worker.name}.ts`)
+        : worker.wrapperPath.replace(/run-/, "sdk-").replace(/\.sh$/, ".ts");
+      return `exec bun run "${sdkPath}"`;
     }
     case "custom": {
       if (!worker.customLauncher) {
@@ -307,6 +315,12 @@ export function generateLaunchWrapper(
   // Create results directory for this worker (results convention)
   const resultsDir = join(state.sessionDir, "results", worker.name);
   mkdirSync(resultsDir, { recursive: true });
+
+  // For SDK runtime, generate the TypeScript launcher
+  if (worker.runtime === "sdk") {
+    const { generateSdkLauncher } = require("./sdk-launcher") as typeof import("./sdk-launcher");
+    generateSdkLauncher(worker, state);
+  }
 
   // Use tmux paste-buffer to inject the seed prompt after Claude starts.
   // Passing long prompts as CLI args in interactive mode can hang Claude

@@ -69,7 +69,7 @@ export function register(parent: Command): void {
   const sub = parent
     .command("onboard")
     .description("Set up fleet infrastructure and launch the fleet architect agent")
-    .option("--model <model>", "Override model", "opus")
+    .option("--model <model>", "Override model", "opus[1m]")
     .option("--effort <effort>", "Override effort", "high")
     .option("--skip-setup", "Skip fleet setup (already done)");
   addGlobalOpts(sub)

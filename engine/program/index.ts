@@ -54,6 +54,9 @@ export { getHooksIO, getHooksTypes, checkHooksInstalled } from "./hooks-bridge";
 // Fleet provisioning
 export { provisionWorkers, cleanupPipelineWorkers, buildMailEnvExport, generateLaunchWrapper, generateCleanupScript } from "./fleet-provision";
 
+// SDK launcher
+export { generateSdkLauncher, generateStandaloneSdkLauncher } from "./sdk-launcher";
+
 // Tmux layout
 export { createTmuxSession, addWindowsToSession, launchAgent, launchAgents, launchInPlanningWindow, showManifest } from "./tmux-layout";
 

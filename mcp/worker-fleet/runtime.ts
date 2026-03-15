@@ -8,7 +8,7 @@ import { getWorkerEntry } from "./registry";
 // ── Types ────────────────────────────────────────────────────────────
 
 export type WorkerType = "implementer" | "monitor" | "coordinator" | "optimizer" | "verifier";
-export type WorkerRuntime = "claude" | "codex";
+export type WorkerRuntime = "claude" | "codex" | "sdk";
 export type ReasoningEffort = "low" | "medium" | "high" | "extra_high";
 
 export interface RuntimeLaunchOpts {
@@ -44,7 +44,7 @@ export interface RuntimeConfig {
 export const CLAUDE_RUNTIME: RuntimeConfig = {
   type: "claude",
   binary: "claude",
-  defaultModel: "opus",
+  defaultModel: "opus[1m]",
   buildLaunchCmd({ model, permissionMode, disallowedTools, workerDir, reasoningEffort }) {
     let cmd = `CLAUDE_CODE_SKIP_PROJECT_LOCK=1 claude --model ${model}`;
     if (permissionMode === "bypassPermissions") cmd += " --dangerously-skip-permissions";
@@ -99,9 +99,33 @@ export const CODEX_RUNTIME: RuntimeConfig = {
   },
 };
 
-export const RUNTIMES: Record<WorkerRuntime, RuntimeConfig> = {
+/** SDK runtime — programmatic via @anthropic-ai/claude-agent-sdk query() */
+export const SDK_RUNTIME: RuntimeConfig = {
+  type: "sdk" as WorkerRuntime,
+  binary: "bun",
+  defaultModel: "opus[1m]",
+  buildLaunchCmd({ model }) {
+    // SDK agents are launched via generated .ts scripts, not direct CLI
+    return `echo "SDK runtime: use fleet run --spec with runtime: sdk"`;
+  },
+  buildResumeCmd({ sessionId }) {
+    return `echo "SDK resume not supported via CLI — use query({ options: { resume: '${sessionId}' } })"`;
+  },
+  buildForkCmd({ sessionId }) {
+    return `echo "SDK fork not supported via CLI — use query({ options: { resume: '${sessionId}', forkSession: true } })"`;
+  },
+  exitCommand: "",
+  processPattern: /bun.*sdk-/,
+  tuiReadyPattern: /\[sdk\] Starting/,
+  buildEnv() {
+    return {};
+  },
+};
+
+export const RUNTIMES: Record<string, RuntimeConfig> = {
   claude: CLAUDE_RUNTIME,
   codex: CODEX_RUNTIME,
+  sdk: SDK_RUNTIME,
 };
 
 // ── Runtime Resolution ───────────────────────────────────────────────

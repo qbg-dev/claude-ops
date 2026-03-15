@@ -138,7 +138,7 @@ export function createWorkerFiles(input: CreateWorkerInput): CreateWorkerResult 
     "Bash(git clean*)",
     "Bash(rm -rf*)",
   ];
-  const runtimeModelDefault = resolvedRuntime === "codex" ? "gpt-5.4" : "opus";
+  const runtimeModelDefault = resolvedRuntime === "codex" ? "gpt-5.4" : "opus[1m]";
   const selectedModel = model ?? tpl.model ?? runtimeModelDefault;
   const resolvedEffort: ReasoningEffort = reasoning_effort ?? "high";
   const resolvedDisallowed = disallowed_tools ?? tpl.disallowedTools ?? defaultDisallowed;
@@ -265,7 +265,7 @@ async function handleFleetCreate(params: Record<string, any>): Promise<McpResult
       }
     }
     const workerConfig: WorkerConfig = {
-      model: permissions.model || "opus",
+      model: permissions.model || "opus[1m]",
       reasoning_effort: permissions.reasoning_effort || "high",
       permission_mode: permissions.permission_mode || "bypassPermissions",
       sleep_duration: state.sleep_duration ?? null,
@@ -308,7 +308,7 @@ async function handleFleetCreate(params: Record<string, any>): Promise<McpResult
     withRegistryLocked((registry) => {
       ensureWorkerInRegistry(registry, name);
       const entry = registry[name] as RegistryWorkerEntry;
-      entry.model = permissions.model || "opus";
+      entry.model = permissions.model || "opus[1m]";
       entry.permission_mode = permissions.permission_mode || "bypassPermissions";
       entry.disallowed_tools = permissions.disallowedTools || [];
       entry.status = state.status || "idle";
@@ -490,7 +490,7 @@ async function handleFleetCreate(params: Record<string, any>): Promise<McpResult
             } else {
               registerPane(childPaneId);
               const forkScript = join(CLAUDE_FLEET, "scripts/fork-worker.sh");
-              const workerModel = selectedModel || "opus";
+              const workerModel = selectedModel || "opus[1m]";
               const workerDir = join(PROJECT_ROOT, ".claude/workers", name);
               const cwdFlag = worktreeReady ? `--cwd ${worktreeDir}` : "";
               const wrapperPath = `/tmp/fork-launch-${name}-${Date.now()}.sh`;
@@ -568,7 +568,7 @@ async function handleFleetTemplate(params: Record<string, any>): Promise<McpResu
   try {
     const perms = JSON.parse(readFileSync(join(typeDir, "permissions.json"), "utf-8"));
     sections.push("## Defaults (from permissions.json)\n" +
-      `- **model**: ${perms.model || "opus"}\n` +
+      `- **model**: ${perms.model || "opus[1m]"}\n` +
       `- **permission_mode**: ${perms.permission_mode || "bypassPermissions"}\n` +
       `- **denyList** (${(perms.denyList || []).length} rules): ${(perms.denyList || []).map((r: string) => `\`${r}\``).join(", ") || "none"}\n`);
   } catch { sections.push("## permissions.json\n_Not found_\n"); }
@@ -822,7 +822,7 @@ async function handleFleetRegister(params: Record<string, any>): Promise<McpResu
       const projectName = resolveProjectName();
       const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${WORKER_NAME}`);
       wConfig = {
-        model: model || "opus",
+        model: model || "opus[1m]",
         reasoning_effort: "high",
         permission_mode: "bypassPermissions",
         sleep_duration: sleep_duration ?? null,
@@ -877,7 +877,7 @@ async function handleFleetRegister(params: Record<string, any>): Promise<McpResu
     withRegistryLocked((reg) => {
       const entry = ensureWorkerInRegistry(reg, WORKER_NAME);
       entry.status = "active";
-      entry.model = model || entry.model || "opus";
+      entry.model = model || entry.model || "opus[1m]";
       if (sleep_duration !== undefined) {
         entry.sleep_duration = sleep_duration;
         entry.perpetual = sleep_duration !== null && sleep_duration > 0;
@@ -901,7 +901,7 @@ async function handleFleetRegister(params: Record<string, any>): Promise<McpResu
     return {
       content: [{
         type: "text" as const,
-        text: `Registered '${WORKER_NAME}' — ${paneInfo}${sessionInfo}, model: ${model || "opus"}, report_to: ${report_to || defaultReportTo}\n  Fleet dir: ${workerDir}/`,
+        text: `Registered '${WORKER_NAME}' — ${paneInfo}${sessionInfo}, model: ${model || "opus[1m]"}, report_to: ${report_to || defaultReportTo}\n  Fleet dir: ${workerDir}/`,
       }],
     };
   } catch (e: any) {
@@ -1070,7 +1070,7 @@ server.registerTool(
       mission: z.string().optional().describe("Mission markdown content (or use prompt)"),
       prompt: z.string().optional().describe("Initial prompt (AgentSpec: replaces mission as seed content)"),
       type: z.enum(["implementer", "monitor", "coordinator", "optimizer", "verifier"]).optional().describe("Worker archetype"),
-      runtime: z.enum(["claude", "codex"]).optional().describe("Execution engine (default: claude)"),
+      runtime: z.enum(["claude", "codex", "sdk"]).optional().describe("Execution engine: claude (CLI), codex, sdk (Agent SDK programmatic)"),
       model: z.string().optional().describe("LLM model override"),
       reasoning_effort: z.enum(["low", "medium", "high", "extra_high"]).optional().describe("Depth of reasoning (default: high)"),
       effort: z.string().optional().describe("Alias for reasoning_effort"),

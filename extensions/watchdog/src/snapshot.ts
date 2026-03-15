@@ -65,7 +65,7 @@ export function buildSnapshot(name: string, projectName: string, config: Watchdo
     lastRelaunchAt: state?.last_relaunch?.at || null,
     createdAt: cfg.meta?.created_at || null,
     bmsToken,
-    model: cfg.model || "opus",
+    model: cfg.model || "opus[1m]",
     permissionMode: cfg.permission_mode || "bypassPermissions",
     reasoningEffort: cfg.reasoning_effort || "high",
     runtime: (state?.custom?.runtime as string) || "claude",

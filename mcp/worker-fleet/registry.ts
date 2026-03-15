@@ -179,7 +179,7 @@ export function listWorkerNames(): string[] {
 /** Generate launch.sh for a worker */
 export function generateLaunchScript(name: string, config: WorkerConfig): string {
   const worktree = config.worktree || PROJECT_ROOT;
-  const model = config.model || "opus";
+  const model = config.model || "opus[1m]";
   const effort = config.reasoning_effort || "high";
   const permMode = config.permission_mode || "bypassPermissions";
   const missionPath = join(FLEET_DIR, name, "mission.md");
@@ -213,7 +213,7 @@ export function registryEntryToConfigState(
   name: string, entry: RegistryWorkerEntry, config: RegistryConfig
 ): { config: WorkerConfig; state: WorkerState } {
   const wConfig: WorkerConfig = {
-    model: entry.model || "opus",
+    model: entry.model || "opus[1m]",
     reasoning_effort: (entry.custom?.reasoning_effort as string) || "high",
     permission_mode: entry.permission_mode || "bypassPermissions",
     sleep_duration: entry.sleep_duration ?? null,
@@ -366,7 +366,7 @@ export function workerDirsToRegistryEntry(name: string): RegistryWorkerEntry | n
 
   // Reconstruct the flat entry format for backward compatibility
   const entry: RegistryWorkerEntry = {
-    model: config.model || "opus",
+    model: config.model || "opus[1m]",
     permission_mode: config.permission_mode || "bypassPermissions",
     disallowed_tools: [], // Replaced by hooks in config.json
     status: s.status || "idle",
@@ -565,7 +565,7 @@ export function ensureWorkerInRegistry(registry: ProjectRegistry, name: string):
   const worktreeDir = join(PROJECT_ROOT, "..", `${projectName}-w-${name}`);
 
   const entry: RegistryWorkerEntry = {
-    model: "opus",
+    model: "opus[1m]",
     permission_mode: "bypassPermissions",
     disallowed_tools: [],
     status: "idle",
@@ -639,6 +639,6 @@ export function canUpdateWorker(callerName: string, targetName: string, registry
 export function getWorkerModel(): string {
   try {
     const entry = getWorkerEntry(WORKER_NAME);
-    return entry?.model || "opus";
-  } catch { return "opus"; }
+    return entry?.model || "opus[1m]";
+  } catch { return "opus[1m]"; }
 }

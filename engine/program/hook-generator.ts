@@ -92,7 +92,7 @@ exit 0
   }
 
   const creates = (workers as import("./types").AgentSpec[]).map(w =>
-    `fleet create "${w.name}" "${w.role}" --model "${w.model || 'sonnet'}" &`
+    `fleet create "${w.name}" "${w.role}" --model "${w.model || 'sonnet[1m]'}" &`
   ).join("\n");
 
   return `#!/usr/bin/env bash

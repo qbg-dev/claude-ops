@@ -82,6 +82,64 @@ function resolveFileRef(value: string, specDir: string): string {
   return value;
 }
 
+// ── Tmux launch helper ──────────────────────────────────────────
+
+function launchInTmuxPane(
+  wrapperPath: string, workerName: string, workerDir: string,
+  workDir: string, tmuxSession: string, windowName: string,
+): void {
+  try {
+    const tmuxResult = Bun.spawnSync(["tmux", "has-session", "-t", tmuxSession], { stderr: "pipe" });
+    if (tmuxResult.exitCode !== 0) {
+      Bun.spawnSync(["tmux", "new-session", "-d", "-s", tmuxSession, "-n", windowName, "-c", workDir], { stderr: "pipe" });
+      Bun.sleepSync(300);
+      const paneResult = Bun.spawnSync(
+        ["tmux", "list-panes", "-t", `${tmuxSession}:${windowName}`, "-F", "#{pane_id}"],
+        { stderr: "pipe" },
+      );
+      const paneId = paneResult.stdout.toString().trim().split("\n")[0];
+      if (paneId) {
+        Bun.spawnSync(["tmux", "send-keys", "-t", paneId, `bash '${wrapperPath}'`, "Enter"]);
+        ok(`Launched ${workerName} → ${paneId} (${tmuxSession}:${windowName})`);
+      }
+    } else {
+      const winCheck = Bun.spawnSync(
+        ["tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}"],
+        { stderr: "pipe" },
+      );
+      const windows = winCheck.stdout.toString().trim().split("\n");
+      let paneId: string;
+      if (windows.includes(windowName)) {
+        const result = Bun.spawnSync(
+          ["tmux", "split-window", "-t", `${tmuxSession}:${windowName}`, "-d", "-P", "-F", "#{pane_id}", "-c", workDir],
+          { stderr: "pipe" },
+        );
+        paneId = result.stdout.toString().trim();
+        Bun.spawnSync(["tmux", "select-layout", "-t", `${tmuxSession}:${windowName}`, "tiled"], { stderr: "pipe" });
+      } else {
+        const result = Bun.spawnSync(
+          ["tmux", "new-window", "-t", tmuxSession, "-n", windowName, "-d", "-P", "-F", "#{pane_id}", "-c", workDir],
+          { stderr: "pipe" },
+        );
+        paneId = result.stdout.toString().trim();
+      }
+      if (paneId) {
+        Bun.spawnSync(["tmux", "send-keys", "-t", paneId, `bash '${wrapperPath}'`, "Enter"]);
+        try {
+          const state = JSON.parse(readFileSync(join(workerDir, "state.json"), "utf-8"));
+          state.pane_id = paneId;
+          state.pane_target = `${tmuxSession}:${windowName}`;
+          state.tmux_session = tmuxSession;
+          writeFileSync(join(workerDir, "state.json"), JSON.stringify(state, null, 2));
+        } catch {}
+        ok(`Launched ${workerName} → ${paneId} (${tmuxSession}:${windowName})`);
+      }
+    }
+  } catch (e: any) {
+    fail(`Failed to launch: ${e.message}`);
+  }
+}
+
 // ── Main: run with --spec or --prompt ───────────────────────────
 
 async function runWithSpec(
@@ -135,7 +193,7 @@ async function runWithSpec(
   mkdirSync(join(workerDir, "hooks"), { recursive: true });
 
   // Write config.json
-  const model = spec.model || "opus";
+  const model = spec.model || "opus[1m]";
   const runtime = spec.runtime || "claude";
   const effort = spec.effort || "high";
   const perm = spec.permission_mode || "bypassPermissions";
@@ -269,7 +327,11 @@ async function runWithSpec(
 
   // Build exec line
   let execLine: string;
-  if (runtime === "codex") {
+  if (runtime === "sdk") {
+    const { generateStandaloneSdkLauncher } = await import("../../engine/program/sdk-launcher");
+    const sdkPath = generateStandaloneSdkLauncher(spec, sessionDir, workDir);
+    execLine = `exec bun run "${sdkPath}"`;
+  } else if (runtime === "codex") {
     execLine = `exec codex exec --full-auto --skip-git-repo-check -c model='"${model}"' "$(cat '${seedPath}')"`;
   } else if (runtime === "custom" && spec.custom_launcher) {
     execLine = `exec ${spec.custom_launcher}`;
@@ -328,63 +390,7 @@ ${envExport}${execLine}
   const tmuxSession = opts.session || fleetConfig?.tmux_session || "w";
   const windowName = opts.window || workerName;
 
-  // Launch the wrapper directly in tmux
-  // instead of going through the full launchInTmux which expects a worktree
-  try {
-    // Try lightweight tmux launch (just create pane and run wrapper)
-    const tmuxResult = Bun.spawnSync(["tmux", "has-session", "-t", tmuxSession], { stderr: "pipe" });
-    if (tmuxResult.exitCode !== 0) {
-      // Create session
-      Bun.spawnSync(["tmux", "new-session", "-d", "-s", tmuxSession, "-n", windowName, "-c", workDir], { stderr: "pipe" });
-      Bun.sleepSync(300);
-      const paneResult = Bun.spawnSync(
-        ["tmux", "list-panes", "-t", `${tmuxSession}:${windowName}`, "-F", "#{pane_id}"],
-        { stderr: "pipe" },
-      );
-      const paneId = paneResult.stdout.toString().trim().split("\n")[0];
-      if (paneId) {
-        Bun.spawnSync(["tmux", "send-keys", "-t", paneId, `bash '${wrapperPath}'`, "Enter"]);
-        ok(`Launched ${workerName} → ${paneId} (${tmuxSession}:${windowName})`);
-      }
-    } else {
-      // Session exists — create new window
-      const winCheck = Bun.spawnSync(
-        ["tmux", "list-windows", "-t", tmuxSession, "-F", "#{window_name}"],
-        { stderr: "pipe" },
-      );
-      const windows = winCheck.stdout.toString().trim().split("\n");
-      let paneId: string;
-      if (windows.includes(windowName)) {
-        // Split into existing window
-        const result = Bun.spawnSync(
-          ["tmux", "split-window", "-t", `${tmuxSession}:${windowName}`, "-d", "-P", "-F", "#{pane_id}", "-c", workDir],
-          { stderr: "pipe" },
-        );
-        paneId = result.stdout.toString().trim();
-        Bun.spawnSync(["tmux", "select-layout", "-t", `${tmuxSession}:${windowName}`, "tiled"], { stderr: "pipe" });
-      } else {
-        const result = Bun.spawnSync(
-          ["tmux", "new-window", "-t", tmuxSession, "-n", windowName, "-d", "-P", "-F", "#{pane_id}", "-c", workDir],
-          { stderr: "pipe" },
-        );
-        paneId = result.stdout.toString().trim();
-      }
-      if (paneId) {
-        Bun.spawnSync(["tmux", "send-keys", "-t", paneId, `bash '${wrapperPath}'`, "Enter"]);
-        // Update state with pane info
-        try {
-          const state = JSON.parse(readFileSync(join(workerDir, "state.json"), "utf-8"));
-          state.pane_id = paneId;
-          state.pane_target = `${tmuxSession}:${windowName}`;
-          state.tmux_session = tmuxSession;
-          writeFileSync(join(workerDir, "state.json"), JSON.stringify(state, null, 2));
-        } catch {}
-        ok(`Launched ${workerName} → ${paneId} (${tmuxSession}:${windowName})`);
-      }
-    }
-  } catch (e: any) {
-    fail(`Failed to launch: ${e.message}`);
-  }
+  launchInTmuxPane(wrapperPath, workerName, workerDir, workDir, tmuxSession, windowName);
 
   console.log(`  Session dir: ${sessionDir}`);
   console.log(`  Worker dir:  ${workerDir}`);

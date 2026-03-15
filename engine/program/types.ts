@@ -111,8 +111,8 @@ export interface AgentSpec {
   name: string;
   role: string;
   model?: string;
-  /** Runtime engine: "claude" (default), "codex", or "custom" */
-  runtime?: "claude" | "codex" | "custom";
+  /** Runtime engine: "claude" (default), "codex", "sdk" (Agent SDK), or "custom" */
+  runtime?: "claude" | "codex" | "sdk" | "custom";
   /** Custom launch command (only used when runtime is "custom") */
   customLauncher?: string;
   seed: SeedSpec;
@@ -254,8 +254,8 @@ export interface CompiledWorker {
   name: string;
   role: string;
   model: string;
-  /** Runtime engine: "claude" (default), "codex", or "custom" */
-  runtime?: "claude" | "codex" | "custom";
+  /** Runtime engine: "claude" (default), "codex", "sdk" (Agent SDK), or "custom" */
+  runtime?: "claude" | "codex" | "sdk" | "custom";
   /** Custom launch command (only used when runtime is "custom") */
   customLauncher?: string;
   /** Path to the generated seed file */

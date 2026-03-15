@@ -131,7 +131,7 @@ export function register(parent: Command): void {
 
       setPaneTitle(paneId, childName);
 
-      const model = childConfig?.model || "opus";
+      const model = childConfig?.model || "opus[1m]";
       const effort = childConfig?.reasoning_effort || "high";
       const perm = childConfig?.permission_mode || "bypassPermissions";
 

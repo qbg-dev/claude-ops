@@ -61,7 +61,7 @@ export function compilePhase(
   workers: CompiledWorker[];
 } {
   const stateVars = buildStateVars(state);
-  const defaultModel = state.defaults.model || "sonnet";
+  const defaultModel = state.defaults.model || "sonnet[1m]";
   const panesPerWindow = phase.layout?.panesPerWindow || 4;
 
   // Group agents by window
