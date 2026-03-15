@@ -37,28 +37,9 @@ alias codexd='codex --dangerously-bypass-approvals-and-sandbox --search'
 # ===== Editors =====
 alias n=nvim
 
-# ===== Modern CLI replacements =====
-alias cat='bat'
+# ===== Modern CLI (explicit names, no shadowing) =====
 alias ll='eza --icons --git --group-directories-first -l'
 alias g='grep --color=always'
-
-# ls wrapper: translates coreutils-style `ls -t` to eza's `--sort=modified`
-ls() {
-  local args=()
-  local sort_by_time=false
-  for arg in "$@"; do
-    if [[ "$arg" == "-t" ]]; then
-      sort_by_time=true
-    else
-      args+=("$arg")
-    fi
-  done
-  if $sort_by_time; then
-    eza --icons --git --group-directories-first --sort=modified "${args[@]}"
-  else
-    eza --icons --git --group-directories-first "${args[@]}"
-  fi
-}
 
 # ===== Clipboard =====
 alias p='pbcopy'
@@ -78,6 +59,11 @@ alias snippi='snippets search -p -i'
 
 # ===== Conda =====
 alias conda-init='eval "$(conda shell.zsh hook 2>/dev/null || /opt/miniconda3/bin/conda shell.zsh hook)"'
+
+# ===== China network routing =====
+alias cn='~/.claude/scripts/china_network.sh'
+alias cn-on='cn on'
+alias cn-off='cn off'
 
 # ===== fzs (program launcher) =====
 alias fzs="fzs --config ~/.config/fzs/config.toml"

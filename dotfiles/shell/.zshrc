@@ -64,6 +64,9 @@ ZSH_HIGHLIGHT_STYLES[comment]='fg=242'
 ZSH_HIGHLIGHT_PATTERNS+=('rm -rf *' 'fg=white,bold,bg=red')
 ZSH_HIGHLIGHT_PATTERNS+=('git push --force' 'fg=white,bold,bg=red')
 
+# ===== China network proxy (state-driven) =====
+[[ -f ~/.china_network.state ]] && export HTTPS_PROXY=http://localhost:10809
+
 # ===== Source modular configs =====
 # aliases, functions, keybindings, lazy-loaders, path, secrets
 for f in ~/.zsh/*.zsh(N); do source "$f"; done
@@ -71,7 +74,6 @@ for f in ~/.zsh/*.zsh(N); do source "$f"; done
 # ===== Tool initializations =====
 if [[ -o interactive ]]; then
   eval "$(zoxide init zsh)"
-  alias cd="z"
 fi
 
 # fzf integration
