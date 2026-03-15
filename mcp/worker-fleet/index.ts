@@ -2,12 +2,13 @@
 /**
  * worker-fleet MCP server — Core tools for worker fleet coordination.
  *
- * 16 tools (fundamentals only — use fleet CLI for everything else):
+ * 16 base tools + dynamic event tools per worker:
  *   Mail (4):       mail_send, mail_inbox, mail_read, mail_help
  *   Lifecycle (2):  recycle, save_checkpoint
  *   State (2):      get_worker_state, update_state
  *   Hooks (4):      add_hook, complete_hook, remove_hook, list_hooks
  *   Fleet (2):      create_worker, fleet_help
+ *   Event (0+N):    dynamic tools from event-tools.json (Druids-style per-worker)
  *
  * Removed (use fleet CLI):
  *   register_worker, deregister_worker, move_worker, standby_worker, fleet_template

@@ -97,12 +97,54 @@ fleet deploy <host> <repo-url>              # deploy to remote
 fleet completion                            # output shell completions
 ```
 
+## Agent Specs & `fleet run`
+
+AgentSpec is the universal unit—YAML/JSON files that fully describe an agent. Every way to create an agent (CLI, program file, MCP tool, architect) consumes the same format.
+
+```
+# From spec file (YAML/JSON — all fields optional except name)
+fleet run --spec solver.agent.yaml
+
+# From flags (builds spec inline)
+fleet run --prompt "Solve it" --model sonnet[1m] --name solver
+
+# Chaining agents
+fleet run --prompt "Do X" --on-stop "fleet run --spec next.agent.yaml"
+
+# With event tools
+fleet run --spec agent.yaml --tool "submit:Submit results:cmd=echo done:score=number"
+
+# Interactive (original behavior)
+fleet run [name]
+```
+
+Key `fleet run` flags: `--spec`, `--prompt`, `--model`, `--runtime` (claude|sdk|codex|custom), `--effort`, `--permission`, `--hook "EVENT:CMD"`, `--on-stop`, `--tool`, `--env KEY=VALUE`, `--allowed-tools`, `--disallowed-tools`, `--system-prompt`, `--add-dir`, `--window`, `--dir`, `--json-schema`, `--max-budget`.
+
+### Runtimes
+
+| Runtime | Launcher | Best for |
+|---------|----------|----------|
+| `claude` (default) | `claude` CLI in tmux | Interactive, general agents |
+| `sdk` | `@anthropic-ai/claude-agent-sdk` `query()` via bun | Programmatic, CI/CD, structured output, subagents |
+| `codex` | `codex exec` CLI | OpenAI models |
+| `custom` | Your command string | Anything else |
+
+Default models: `opus[1m]` (workers), `sonnet[1m]` (pipelines). The `[1m]` suffix selects the 1M context variant.
+
+### Event Tools (Druids-style)
+
+Custom MCP tools per agent. Defined in spec `tools:` or `--tool` flag. Two modes:
+- `mode: inline` — calls exported TS function from program file
+- `mode: command` — runs bash with `INPUT_*` env vars
+
+Handler context provides: `sendMail()`, `updateState()`, `spawnWorker()`, `writeResult()`, `readResult()`.
+
 ## Advanced
 
 ```
 fleet config <name> [key] [value]           # get/set worker config
 fleet defaults [key] [value]                # global defaults
-fleet run <name> "<command>"                # run command in worktree
+fleet run --spec <file> [--flags]           # launch agent from spec
 fleet tui [--account <name>]                # Fleet Mail TUI client
 fleet layout <save|restore|list|delete>     # tmux layout persistence
 fleet deep-review <scope>                   # adversarial code review
