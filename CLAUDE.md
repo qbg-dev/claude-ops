@@ -1,99 +1,75 @@
 # claude-fleet
 
-Orchestration for Claude Code agents. Workers run in tmux panes on git worktrees, coordinate via Fleet Mail, watchdog keeps them alive.
+Every Claude Code session is automatically part of the fleet. Your identity is your Fleet Mail name, derived from your session ID.
 
-- **Entry point**: `fleet onboard`—runs setup and launches a fleet architect agent. Run `fleet --help` for all CLI commands.
-- **MCP tools**: Available in worker sessions as `mcp__worker-fleet__*`. Call `fleet_help()` for full reference on all 16 tools.
-- **Hooks**: Runtime gates, injectors, and scripts on 18 Claude Code events. Call `mcp__claude-hooks__list_hooks()` to see active hooks; tool schemas on `add_hook` document all options.
-- **Conventions**: Workers never push/merge (merger handles main). tmux: never literal Enter (`send-keys -H 0d`), never `display-message -p '#{pane_id}'`.
+## Identity
 
-## CLI
+On first prompt, a global hook auto-registers you with Fleet Mail:
+- **Mail name**: `{custom-name}-{dir-slug}-{session-id}` (e.g., `merger-zPersonalProjects-a3f1b2c8-...`)
+- **Three-part identity**: mail-name + session + tmux-pane. Without a pane = assumed dead.
+- **Session file** is the primary object. Transcripts sync to Fleet Mail every 5 minutes.
+- Check yours: `fleet session info`
+
+Multiple agents in the same directory each get unique mail names (different session IDs). Register a custom name: `fleet register --name <name>`.
+
+## Communication
+
+All fleet communication is via CLI (run with Bash tool). No MCP tools for fleet ops.
 
 ```
-fleet onboard                           # guided setup + fleet design (the entry point)
-fleet setup [--extensions]              # bootstrap infrastructure
-fleet create <name> "<mission>"         # create + launch worker
-fleet start <name>                      # restart worker
-fleet stop <name> [--all]               # graceful stop
-fleet list|ls [--json]                  # list with liveness
-fleet status                            # fleet overview dashboard
-fleet completion                        # output shell completion script
-fleet get <name>                        # show worker mission + info
-fleet register [--name <n>]            # register session with Fleet Mail
-fleet session ls|info|sync              # session lifecycle
-fleet state get|set                     # persistent key-value state
-fleet checkpoint "<summary>"            # save state checkpoint
-fleet attach <name>                     # attach tmux pane
-fleet config <name> [key] [value]       # get/set config
-fleet defaults [key] [value]            # global defaults
-fleet fork <parent> <child> "<mission>" # fork from existing
-fleet recycle [name]                    # restart with fresh context
-fleet log <name>                        # tail output
-fleet mail send|inbox|read|help         # Fleet Mail communication
-fleet mail-server [connect|start]       # Fleet Mail server
-fleet mcp [register|status]             # MCP server
-fleet run <name> "<command>"            # run in worktree
-fleet tui [--account <name>]            # Fleet Mail TUI client
-fleet layout <save|restore|list|delete> # tmux layout persistence
-fleet deep-review <scope>               # adversarial code review
-fleet pipeline <program> [opts]         # launch a program-API pipeline
-fleet hook <add|rm|ls|complete>         # manage dynamic hooks
-fleet launch                            # launch fleet from manifest
-fleet deploy <host> <repo-url>          # deploy fleet to remote
-fleet doctor                            # verify installation
-fleet nuke <name>                       # destroy worker
-fleet update [--reload] [--extensions]  # pull + reinstall + setup
-fleet completion                        # output shell completion
+fleet mail send <to> "<subject>" "<body>"   # send message
+fleet mail inbox [--label UNREAD]           # read inbox
+fleet mail read <id>                        # read message by ID
+fleet mail help                             # API reference + curl examples
 ```
 
-## Key files
+Recipient resolution: substring match (e.g., `merger` finds the first account containing "merger"), full mail name, or `list:<name>` for mailing lists.
 
-| Path | What |
-|------|------|
-| `cli/index.ts` | CLI entry |
-| `cli/commands/` | Subcommands |
-| `cli/commands/register.ts` | Session auto-registration |
-| `cli/commands/mail.ts` | Fleet Mail send/inbox/read/help |
-| `cli/commands/state.ts` | Persistent key-value state |
-| `cli/commands/checkpoint.ts` | State checkpoint |
-| `cli/commands/session.ts` | Session lifecycle (ls/info/sync) |
-| `cli/commands/onboard.ts` | Fleet architect agent |
-| `cli/lib/mail-client.ts` | CLI-level Fleet Mail HTTP client |
-| `shared/identity.ts` | Session-first identity resolution |
-| `shared/types.ts` | Canonical types |
-| `mcp/worker-fleet/index.ts` | MCP server (16 tools) |
-| `hooks/manifest.json` | Hook registry |
-| `templates/seed-context.md` | Worker seed context |
-| `config/tmux.conf` | Agent-optimized tmux config |
+## State & Lifecycle
 
-## Worker types
-
-| Type | Lifecycle | Use case |
-|------|-----------|----------|
-| implementer | one-shot | Fix bugs, build features |
-| optimizer | perpetual | Run evals, fix gaps |
-| monitor | perpetual | Watch for anomalies |
-| merger | perpetual | Cherry-pick to main, deploy |
-| chief-of-staff | perpetual | Relay messages, monitor fleet |
-| verifier | one-shot | Exhaustive testing |
-| reviewer | one-shot | Code review |
-
-## MCP tools (16)
-
-Available inside every worker session via `mcp__worker-fleet__*`. Call `fleet_help()` or `mail_help()` for full reference.
+```
+fleet state get [key]                       # read state
+fleet state set <key> <value>               # persist across recycles
+fleet checkpoint "<summary>"                # save crash-recovery snapshot
+fleet register [--name <n>]                 # re-register with custom name
+fleet session ls                            # list all live sessions
+fleet session sync                          # force transcript sync
+```
 
 ## Hooks
 
-47 hooks across 18 Claude Code events. Installed by `setup-hooks.sh` from `hooks/manifest.json`.
+Dynamic hooks via `mcp__claude-hooks__*` MCP tools:
+- `mcp__claude-hooks__add_hook(event, description, ...)` — register gate, inject, or script
+- `mcp__claude-hooks__complete_hook(id)` — unblock a gate
+- `mcp__claude-hooks__list_hooks()` — see active hooks
+- `mcp__claude-hooks__remove_hook(id)` — archive a hook
 
-Three ownership tiers: system (irremovable) > creator (worker can't remove) > self (worker manages).
+Static hooks fire automatically (47 hooks across 18 events). Key ones:
+- **UserPromptSubmit**: auto-registration, session sync, liveness heartbeat
+- **PreCompact**: re-injects seed template + mission to survive context compaction
+- **Stop**: inbox drain, unpushed commits check, task verification
 
-Workers register dynamic hooks at runtime:
+## Orchestration
+
+For managed workers (created via `fleet create`):
+
 ```
-add_hook(event="Stop", description="verify TypeScript compiles")
-add_hook(event="PreToolUse", content="inject this context", condition={file_glob: "src/**"})
-complete_hook("dh-1", result="PASS")
+fleet create <name> "<mission>"             # create + launch in tmux
+fleet start <name>                          # restart worker
+fleet stop <name> [--all]                   # graceful stop
+fleet ls [--json]                           # list workers with liveness
+fleet status                                # fleet overview dashboard
+fleet get <name>                            # show worker mission + info
+fleet attach <name>                         # focus worker's tmux pane
+fleet recycle [name]                        # restart with fresh context
+fleet log <name>                            # tail worker output
+fleet fork <parent> <child> "<mission>"     # fork from existing
+fleet nuke <name>                           # destroy worker
 ```
+
+## Mission
+
+Every session has a `mission.md` (starts empty). Fill it in as you understand your task. The template + mission are re-injected on context compaction so you never lose track.
 
 ## Watchdog
 
@@ -101,22 +77,36 @@ launchd daemon (`com.tmux-agents.watchdog`), 30s poll. Respawns dead workers, ki
 
 Install: `bash extensions/watchdog/install.sh`
 
-## Troubleshooting
-
-**Fleet Mail contention**: If `mail_send` fails under load, fleet-server uses SQLite WAL mode with 30s `busy_timeout`. The MCP client retries 3x with exponential backoff.
-
-**Token issues**: Run `fleet doctor` to verify tokens. Reset with `fleet mail-server connect <url> --token <token>`.
-
-**Worker stuck**: Check `fleet ls` for pane health. Kill with `fleet stop <name>`. Watchdog auto-restarts perpetual workers (those with `sleep_duration > 0`).
-
-**Fleet Mail unreachable**: Run `fleet mail-server status` to check connectivity. If using a remote server, verify the URL with `fleet mail-server connect <url>`. If building locally, ensure Rust/cargo is installed.
-
 ## Conventions
 
-- Workers never push or merge — merger handles main
-- Shell scripts: `set -euo pipefail`
-- Config locks: `mkdir` atomicity
+- Workers never push or merge—merger handles main
 - tmux: never literal Enter (`send-keys -H 0d`), never `display-message -p '#{pane_id}'`
-- All shared types in `shared/types.ts`
-- `sleep_duration: null` = one-shot, `N > 0` = perpetual
-- Extensions live in `extensions/{name}/` with a `manifest.json` (name, version, description, what it provides)
+- Use Fleet Mail for all coordination (tasks = mail threads with TASK label)
+- Run `fleet --help` for the full CLI reference
+
+## Infrastructure
+
+```
+fleet setup [--extensions]                  # bootstrap (installs hooks, MCP)
+fleet onboard                               # guided setup + fleet architect
+fleet mail-server [connect|start]           # Fleet Mail server management
+fleet mcp [register|status]                 # MCP server management
+fleet doctor                                # verify health
+fleet update [--reload]                     # pull + reinstall
+fleet deploy <host> <repo-url>              # deploy to remote
+fleet completion                            # output shell completions
+```
+
+## Advanced
+
+```
+fleet config <name> [key] [value]           # get/set worker config
+fleet defaults [key] [value]                # global defaults
+fleet run <name> "<command>"                # run command in worktree
+fleet tui [--account <name>]                # Fleet Mail TUI client
+fleet layout <save|restore|list|delete>     # tmux layout persistence
+fleet deep-review <scope>                   # adversarial code review
+fleet pipeline <program> [opts]             # launch a program-API pipeline
+fleet hook <add|rm|ls|complete>             # manage dynamic hooks (CLI)
+fleet launch                                # launch fleet from manifest
+```
