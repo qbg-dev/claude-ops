@@ -1,6 +1,6 @@
 # Worker Type Templates
 
-Six archetypes. Use `get_worker_template(type)` to preview, then `create_worker(type=..., mission=...)` to create.
+Six archetypes. Preview with `fleet get <name>`; create with `fleet create --type <type> <name> "<mission>"`.
 
 | Type | Lifecycle | Access | Use case |
 |------|-----------|--------|----------|
@@ -14,9 +14,8 @@ Six archetypes. Use `get_worker_template(type)` to preview, then `create_worker(
 ## Usage
 
 ```bash
-# Via MCP (preferred)
-get_worker_template(type="merger")      # Preview template
-create_worker(name="my-merger", type="merger", mission="# My Merger\n...")
+# Via CLI
+fleet create --type merger my-merger "# My Merger\n..."
 
 # Manual
 cp -r ~/.claude-fleet/templates/flat-worker/types/optimizer/ .claude/workers/my-worker/

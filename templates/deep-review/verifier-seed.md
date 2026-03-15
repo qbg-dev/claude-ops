@@ -56,7 +56,7 @@ Write results to `{{OUTPUT_FILE}}`:
 
 ## Setup — Wait for review
 
-**Primary (Fleet Mail):** If `mail_inbox` available, poll `mail_inbox()` every 30s for "REVIEW DONE" message from coordinator.
+**Primary (Fleet Mail):** Poll `fleet mail inbox` every 30s for "REVIEW DONE" message from coordinator.
 **Fallback:** Wait for `{{SESSION_DIR}}/review.done` file.
 
 ## Completion

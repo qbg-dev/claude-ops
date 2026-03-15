@@ -1,47 +1,31 @@
-## MCP Tools (`mcp__worker-fleet__*`)
+<fleet>
+## Fleet CLI
 
-Core tools for worker operation. Use `fleet_help()` or `mail_help()` for full reference.
+Source of truth for all worker operations. For full reference: `fleet --help` or `USE FLEET`.
 
-### Fundamentals
+### Core Commands
 
-| Tool | What it does |
-|------|-------------|
-| `mail_send(to, subject, body)` | Message a worker, "user", "all", or mailing list. Supports `cc`, `in_reply_to`, `thread_id`, `labels`. |
-| `mail_inbox(label?)` | Read YOUR inbox. Default label=UNREAD. label="INBOX" for all, "TASK" for tasks. |
-| `mail_read(id)` | Read full message body by ID (auto-marks as read). Only works for YOUR messages — Fleet Mail enforces account isolation. |
-| `round_stop(message)` | End a work round: save checkpoint + handoff doc + cycle report. Stays alive, does not touch hooks. Restarts are external via `fleet recycle <name>`. |
-| `create_worker(name, mission, ...)` | Spawn a new worker with worktree, branch, registry entry. |
-| `save_checkpoint(summary, key_facts?)` | Snapshot working state. Auto-saved on compaction/recycle. |
-| `update_state(key, value)` | Persist state across recycles. |
-| `get_worker_state(name?)` | Read worker state; `name="all"` for fleet overview. |
+| Command | What it does |
+|---------|-------------|
+| `fleet mail send <to> "<subj>" "<body>"` | Message a worker, "user", "all", or mailing list. Supports `--cc`, `--in-reply-to`, `--labels`. |
+| `fleet mail inbox [--label X]` | Read YOUR inbox. Default label=UNREAD. `--label INBOX` for all, `--label TASK` for tasks. |
+| `fleet mail read <id>` | Read full message body by ID (auto-marks as read). |
+| `fleet round-stop "<message>"` | End a work round: save checkpoint + handoff doc + cycle report. Stays alive, does not touch hooks. |
+| `fleet create <name> "<mission>"` | Spawn a new worker with worktree, branch, registry entry. |
+| `fleet checkpoint "<summary>"` | Snapshot working state. Auto-saved on compaction/recycle. |
+| `fleet state set <key> <value>` | Persist state across recycles. |
+| `fleet state get [name]` | Read worker state; `name="all"` for fleet overview. |
 
-### Hooks
+### Hook Commands
 
-| Tool | What it does |
-|------|-------------|
-| `add_hook(event, description, ...)` | Register a dynamic hook: gate (blocking), inject (context), or script trigger. Accepts `script` param for shell execution. |
-| `complete_hook(id, result?)` | Mark a blocking hook as done (`id="all"` to clear all). |
-| `remove_hook(id)` | Remove a hook and its script file (`id="all"` to clear all). |
-| `list_hooks(event?)` | Show all active hooks (including script info). |
-| `manage_worker_hooks(action, target, ...)` | Manage another worker's hooks: add gates, inject context, remove, complete, list. Requires authority (mission_authority or direct report_to). |
-
-**CLI equivalent** (same storage, same logic — for workers without MCP):
-```bash
-fleet hook add --event Stop --desc "verify build" --blocking
-fleet hook add --event Stop --desc "notify validator" --script "fleet mail send validator 'done'"
-fleet hook ls [--event Stop]
-fleet hook complete dh-1 --result "PASS"
-fleet hook rm dh-2          # or 'all'
-```
-
-### Discovery
-
-| Tool | What it does |
-|------|-------------|
-| `fleet_help()` | Full fleet management docs — worker lifecycle, config, advanced operations. |
-| `mail_help()` | Fleet Mail reference — search, threads, labels, mailing lists, curl examples. |
-
-For operations beyond these (move panes, standby, deep review, config updates), use the **fleet CLI** from bash — run `fleet_help()` for the full reference.
+| Command | What it does |
+|---------|-------------|
+| `fleet hook add --event E --desc D [--blocking] [--script CMD] [--condition JSON]` | Register a dynamic hook: gate (blocking), inject (context), or script trigger. |
+| `fleet hook complete <id> [--result TEXT]` | Mark a blocking hook as done (`id="all"` to clear all). |
+| `fleet hook rm <id>` | Remove a hook and its script file (`id="all"` to clear all). |
+| `fleet hook ls [--event E]` | Show all active hooks (including script info). |
+| `fleet hook add --worker <target> --event E --desc D` | Manage another worker's hooks. Requires authority (mission_authority or report_to). |
+</fleet>
 
 Every tool response includes lint warnings if issues are detected — fix them immediately.
 
@@ -51,14 +35,14 @@ Every tool response includes lint warnings if issues are detected — fix them i
 
 | Action | How |
 |--------|-----|
-| Create issue | `mail_send(to="self", subject="[TASK] Fix SSO timeout", labels=["TASK","P1","PENDING"])` |
-| Claim | Reply to thread: `mail_send(in_reply_to=msg_id, body="Starting.", labels=["TASK","IN_PROGRESS"])` and remove `PENDING` via curl |
+| Create issue | `fleet mail send self "[TASK] Fix SSO timeout" "" --labels TASK,P1,PENDING` |
+| Claim | Reply to thread: `fleet mail send self "Starting." "" --in-reply-to msg_id --labels TASK,IN_PROGRESS` and remove `PENDING` via curl |
 | Update progress | Reply to thread with findings/blockers |
 | Block | Reply: `body="BLOCKED on [thread-id]"`, add label `BLOCKED` |
 | Complete | Reply with resolution, add `COMPLETED`, remove `IN_PROGRESS` |
-| Assign to other worker | `mail_send(to="other-worker", subject="[TASK] ...", labels=["TASK","P2","PENDING"])` |
-| List pending | `mail_inbox(label="TASK")` then filter for PENDING |
-| List all tasks | `mail_inbox(label="TASK")` |
+| Assign to other worker | `fleet mail send other-worker "[TASK] ..." "" --labels TASK,P2,PENDING` |
+| List pending | `fleet mail inbox --label TASK` then filter for PENDING |
+| List all tasks | `fleet mail inbox --label TASK` |
 
 **Label conventions:**
 - **Status labels** (mutually exclusive): `PENDING`, `IN_PROGRESS`, `BLOCKED`, `COMPLETED`
@@ -119,25 +103,28 @@ You control your own reliability through **dynamic hooks** — runtime-registere
 
 ```
 # 1. What verification gates do I need this round?
-add_hook(event="Stop", description="verify TypeScript compiles after changes")
-add_hook(event="Stop", description="test deploy to slot — check UI loads")
+fleet hook add --event Stop --desc "verify TypeScript compiles after changes"
+fleet hook add --event Stop --desc "test deploy to slot — check UI loads"
 
 # 2. What guardrails prevent me from going off the rails?
-add_hook(event="PreToolUse",
-  content="Remember: all ontology writes use applyAction(). Check ontology-invariants.md.",
-  condition={file_glob: "src/ontology/**"})
+fleet hook add --event PreToolUse \
+  --desc "ontology invariants" \
+  --content "Remember: all ontology writes use applyAction(). Check ontology-invariants.md." \
+  --condition '{"file_glob": "src/ontology/**"}'
 
 # 3. What context should I inject for my current task?
-add_hook(event="PreToolUse",
-  content="Current focus: fixing the SSO timeout bug. Don't get sidetracked.",
-  condition={tool: "Agent"})
+fleet hook add --event PreToolUse \
+  --desc "focus reminder" \
+  --content "Current focus: fixing the SSO timeout bug. Don't get sidetracked." \
+  --condition '{"tool": "Agent"}'
 
 # 4. What should happen before context compaction?
-add_hook(event="PreCompact",
-  content="Save current task state to MEMORY.md before compaction.")
+fleet hook add --event PreCompact \
+  --desc "save state" \
+  --content "Save current task state to MEMORY.md before compaction."
 
 # 5. Save a checkpoint if context is getting long
-save_checkpoint(summary="Starting SSO fix, auth flow mapped", key_facts=["HS512 for prod", "accountObj nesting"])
+fleet checkpoint "Starting SSO fix, auth flow mapped" --key-facts "HS512 for prod" "accountObj nesting"
 ```
 
 Think of it as setting up your workbench before starting: lay out the tools, set the safety guards, then work.
@@ -149,25 +136,25 @@ Think of it as setting up your workbench before starting: lay out the tools, set
 Stop hooks re-evaluate every time you try to stop. Use `check` for automated verification:
 
 ```
-# Auto-checked: blocks until tests pass (no manual complete_hook needed)
-add_hook(event="Stop", description="run tests",
-  check="cd $PROJECT_ROOT && bun test --bail 2>&1 | tail -1 | grep -q 'pass'")
+# Auto-checked: blocks until tests pass (no manual fleet hook complete needed)
+fleet hook add --event Stop --desc "run tests" \
+  --check "cd $PROJECT_ROOT && bun test --bail 2>&1 | tail -1 | grep -q 'pass'"
 
 # Auto-checked: blocks until TypeScript compiles
-add_hook(event="Stop", description="verify TypeScript compiles",
-  check="cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'")
+fleet hook add --event Stop --desc "verify TypeScript compiles" \
+  --check "cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'"
 
 # Auto-checked: blocks until no uncommitted changes
-add_hook(event="Stop", description="commit your changes",
-  check="cd $PROJECT_ROOT && git diff --cached --quiet && git diff --quiet")
+fleet hook add --event Stop --desc "commit your changes" \
+  --check "cd $PROJECT_ROOT && git diff --cached --quiet && git diff --quiet"
 
 # Manual gate: blocks until you explicitly complete it
-add_hook(event="Stop", description="verify UI in Chrome MCP")
-# Later: complete_hook("dh-1", result="PASS — verified")
+fleet hook add --event Stop --desc "verify UI in Chrome MCP"
+# Later: fleet hook complete dh-1 --result "PASS — verified"
 
 # Persistent guardrail: always active, survives recycles
-add_hook(event="PreToolUse", description="ontology invariants",
-  lifetime="persistent", content="All writes use applyAction()...")
+fleet hook add --event PreToolUse --desc "ontology invariants" \
+  --lifetime persistent --content "All writes use applyAction()..."
 ```
 
 **Hook lifetimes:**
@@ -181,31 +168,35 @@ add_hook(event="PreToolUse", description="ontology invariants",
 Add context that gets injected before matching events:
 ```
 # Always inject on every tool call (no condition)
-add_hook(event="PreToolUse", content="Never return raw error.message to clients. Use safe Chinese strings.")
+fleet hook add --event PreToolUse --desc "error safety" \
+  --content "Never return raw error.message to clients. Use safe Chinese strings."
 
 # Conditional — only when editing ontology files
-add_hook(event="PreToolUse",
-  content="All ontology writes must use applyAction(). Check ontology-invariants.md.",
-  condition={file_glob: "src/ontology/**"})
+fleet hook add --event PreToolUse --desc "ontology guard" \
+  --content "All ontology writes must use applyAction(). Check ontology-invariants.md." \
+  --condition '{"file_glob": "src/ontology/**"}'
 
 # Conditional — only for Bash commands matching a pattern
-add_hook(event="PreToolUse",
-  content="Check finance-dashboard.md for SQL patterns before running StarRocks queries.",
-  condition={command_pattern: ".*starrocks.*"})
+fleet hook add --event PreToolUse --desc "starrocks guard" \
+  --content "Check finance-dashboard.md for SQL patterns before running StarRocks queries." \
+  --condition '{"command_pattern": ".*starrocks.*"}'
 
 # Inject on other events too
-add_hook(event="PostToolUseFailure", content="On tool failure: check if it's a known issue before retrying.")
-add_hook(event="PreCompact", content="Save progress to MEMORY.md before compaction.")
+fleet hook add --event PostToolUseFailure --desc "failure recovery" \
+  --content "On tool failure: check if it's a known issue before retrying."
+fleet hook add --event PreCompact --desc "save progress" \
+  --content "Save progress to MEMORY.md before compaction."
 ```
 
 ### Blocking Gates (Gate Any Event)
 
 Block any event until a condition is met:
 ```
-add_hook(event="PreToolUse", blocking=true,
-  content="Read .claude/memory/ontology-invariants.md before editing ontology files. Then: complete_hook('dh-N')",
-  condition={file_glob: "src/ontology/**"})
-# Tool call is blocked until you complete_hook the gate
+fleet hook add --event PreToolUse --blocking \
+  --desc "read ontology docs first" \
+  --content "Read .claude/memory/ontology-invariants.md before editing ontology files. Then: fleet hook complete dh-N" \
+  --condition '{"file_glob": "src/ontology/**"}'
+# Tool call is blocked until you fleet hook complete the gate
 ```
 
 ### Script Hooks (Event → Shell Execution)
@@ -214,26 +205,26 @@ Hooks can trigger shell scripts when they fire. Scripts are stored as files in y
 
 ```
 # Pattern C: Ping-Pong Communication — notify another worker on Stop
-add_hook(event="Stop", description="notify validator of completion",
-  script="fleet mail send validator 'REVIEW_READY' 'Branch: worker/executor, commits: abc123'")
+fleet hook add --event Stop --desc "notify validator of completion" \
+  --script "fleet mail send validator 'REVIEW_READY' 'Branch: worker/executor, commits: abc123'"
 
 # Pattern D: SubagentStop auto-notify
-add_hook(event="SubagentStop", description="notify on subagent exit",
-  script="fleet mail send self 'SUBAGENT_DONE' 'Subagent finished'")
+fleet hook add --event SubagentStop --desc "notify on subagent exit" \
+  --script "fleet mail send self 'SUBAGENT_DONE' 'Subagent finished'"
 
 # Pattern E: PreCompact checkpoint — save state before context compaction
-add_hook(event="PreCompact", description="checkpoint before compaction",
-  script="fleet mail send self 'CHECKPOINT' \"$(cat ~/.claude/fleet/$PROJECT_NAME/$WORKER_NAME/state.json)\"")
+fleet hook add --event PreCompact --desc "checkpoint before compaction" \
+  --script "fleet mail send self 'CHECKPOINT' \"$(cat ~/.claude/fleet/$PROJECT_NAME/$WORKER_NAME/state.json)\""
 
 # Pattern F: Blocking script gate — run tests before stop
 # Exit 0 = allow (stop proceeds), exit 2 = block (stop prevented, stderr shown)
-add_hook(event="Stop", description="run tests before stopping", blocking=true,
-  script="cd $PROJECT_ROOT && bun test 2>&1 | tail -5")
+fleet hook add --event Stop --desc "run tests before stopping" --blocking \
+  --script "cd $PROJECT_ROOT && bun test 2>&1 | tail -5"
 
 # Pattern G: Post-edit auto-lint
-add_hook(event="PostToolUse", description="auto-lint after edits",
-  condition={tool: "Edit", file_glob: "src/**"},
-  script="cd $PROJECT_ROOT && bunx oxlint src/ --quiet 2>&1 | head -20")
+fleet hook add --event PostToolUse --desc "auto-lint after edits" \
+  --condition '{"tool": "Edit", "file_glob": "src/**"}' \
+  --script "cd $PROJECT_ROOT && bunx oxlint src/ --quiet 2>&1 | head -20"
 ```
 
 **Script exit codes** (Claude Code convention):
@@ -251,19 +242,19 @@ add_hook(event="PostToolUse", description="auto-lint after edits",
 
 Archive hooks you no longer need (preserved in hooks.json for history):
 ```
-remove_hook("dh-2")       # Archive a specific hook
-remove_hook(id="all")     # Archive all hooks
+fleet hook rm dh-2       # Archive a specific hook
+fleet hook rm all         # Archive all hooks
 
 # View archived hooks (audit trail)
-list_hooks(include_archived=true)
+fleet hook ls --include-archived
 
 # See another worker's hooks (cross-worker discovery)
-list_hooks(worker="finance")
+fleet hook ls --worker finance
 ```
 
 ### Cross-Worker Hooks (Supervisor Pattern)
 
-You can manage hooks on **other workers** using `manage_worker_hooks`. This enables supervisor-style interventions — deploying guardrails, quality gates, and context injections on workers you have authority over.
+You can manage hooks on **other workers** using `fleet hook --worker <target>`. This enables supervisor-style interventions — deploying guardrails, quality gates, and context injections on workers you have authority over.
 
 **Authorization model:**
 - **mission_authority**: Workers listed as another worker's `mission_authority` can manage their hooks
@@ -285,23 +276,23 @@ You can manage hooks on **other workers** using `manage_worker_hooks`. This enab
 
 ```
 # Deploy a TypeScript compile gate on worker "executor"
-manage_worker_hooks(action="add", target="executor",
-  event="Stop", description="verify TypeScript compiles",
-  check="cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'")
+fleet hook add --worker executor --event Stop --desc "verify TypeScript compiles" \
+  --check "cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'"
 
 # Inject a guardrail on worker "frontend" for ontology files
-manage_worker_hooks(action="add", target="frontend",
-  event="PreToolUse", content="All ontology writes must use applyAction(). Check ontology-invariants.md.",
-  condition={file_glob: "src/ontology/**"})
+fleet hook add --worker frontend --event PreToolUse \
+  --desc "ontology guard" \
+  --content "All ontology writes must use applyAction(). Check ontology-invariants.md." \
+  --condition '{"file_glob": "src/ontology/**"}'
 
 # List another worker's hooks
-manage_worker_hooks(action="list", target="executor")
+fleet hook ls --worker executor
 
 # Complete a blocking gate on a stuck worker
-manage_worker_hooks(action="complete", target="executor", hook_id="dh-3", result="PASS — verified by supervisor")
+fleet hook complete --worker executor dh-3 --result "PASS — verified by supervisor"
 
 # Remove a hook you placed (creator ownership required)
-manage_worker_hooks(action="remove", target="executor", hook_id="dh-3")
+fleet hook rm --worker executor dh-3
 ```
 
 **When to use cross-worker hooks vs other interventions:**
@@ -334,21 +325,21 @@ For **large, independent work streams** (hours of work, different codepaths), sp
 
 ```
 # Spawn a worker for each independent stream
-create_worker(name="fix-auth", mission="Fix SSO timeout bug in auth-sso.ts. Deploy to slot, verify.", launch=true)
-create_worker(name="add-charts", mission="Add pie charts to finance dashboard.", launch=true)
+fleet create fix-auth "Fix SSO timeout bug in auth-sso.ts. Deploy to slot, verify."
+fleet create add-charts "Add pie charts to finance dashboard."
 
 # Coordinate via mail
-mail_send(to="fix-auth", subject="Context", body="The HS512 issue is in miniapp-routes.ts line 42.")
+fleet mail send fix-auth "Context" "The HS512 issue is in miniapp-routes.ts line 42."
 
 # Check on progress
-get_worker_state(name="all")
+fleet state get all
 ```
 
 **When to spawn workers vs subagents:**
 
 | Use | When | Lifecycle |
 |-----|------|-----------|
-| `create_worker` | Independent work stream (hours), needs its own worktree/branch/identity | Persistent — survives crashes, has mail, hooks, checkpoints |
+| `fleet create` | Independent work stream (hours), needs its own worktree/branch/identity | Persistent — survives crashes, has mail, hooks, checkpoints |
 | `Agent(isolation="worktree")` | Quick parallel task (minutes), single-shot | Ephemeral — returns result, auto-cleans up |
 | Direct work | Sequential, depends on your uncommitted changes | Immediate |
 
@@ -410,9 +401,9 @@ claude_files/evidence/{date}-{description}/
 
 **Link evidence to stop checks:**
 ```
-add_hook(event="Stop", description="verify login page renders correctly")
+fleet hook add --event Stop --desc "verify login page renders correctly"
 # ... take screenshot, save to claude_files/evidence/2026-03-08-login-fix/
-complete_hook("dh-1", result="PASS — screenshot at claude_files/evidence/2026-03-08-login-fix/screenshot.png")
+fleet hook complete dh-1 --result "PASS — screenshot at claude_files/evidence/2026-03-08-login-fix/screenshot.png"
 ```
 
 Evidence persists across recycles and can be referenced later by you or reviewers.
@@ -421,13 +412,13 @@ Evidence persists across recycles and can be referenced later by you or reviewer
 
 ```
 LOOP FOREVER:
-  1. mail_inbox() — act on messages before anything else
+  1. fleet mail inbox — act on messages before anything else
   2. git fetch origin && git rebase origin/main
   3. Work on your mission (fix issues, run evals, check systems)
   4. Update state + save findings to auto-memory
-  5. Register stop checks for anything you changed: add_hook(event="Stop", description="verify X")
-  6. Complete each check after verifying: complete_hook("dh-1")
-  7. When DONE with this cycle's work, call `round_stop(message)` to log the cycle.
+  5. Register stop checks for anything you changed: fleet hook add --event Stop --desc "verify X"
+  6. Complete each check after verifying: fleet hook complete dh-1
+  7. When DONE with this cycle's work, call `fleet round-stop "message"` to log the cycle.
      Then keep working on the next task, or go idle if nothing is pending.
      The operator runs `fleet recycle <name>` if you need a fresh context.
 ```
@@ -438,9 +429,9 @@ LOOP FOREVER:
 
 | Situation | Action |
 |-----------|--------|
-| Finished one task, have more work to do | `round_stop()` to log, then start next task |
+| Finished one task, have more work to do | `fleet round-stop` to log, then start next task |
 | Inbox has a new message | **Keep working** — read and handle it |
-| No more work AND no pending mail | `round_stop()` to log, then go idle |
+| No more work AND no pending mail | `fleet round-stop` to log, then go idle |
 
 **Restarts are external.** If you need fresh context (long conversation, config change, stuck), the operator runs `fleet recycle <name>` from the CLI. You never exit yourself.
 
@@ -463,7 +454,7 @@ Cron expressions use standard 5-field format in local time: `minute hour day-of-
 CronCreate("*/3 * * * *", "Check Fleet Mail for new messages and act on them")
 
 # Health check every 5 minutes
-CronCreate("*/5 * * * *", "curl -sf https://test.baoyuansmartlife.com/health || mail_send(to='user', subject='UNHEALTHY', body='test server down')")
+CronCreate("*/5 * * * *", "curl -sf https://test.baoyuansmartlife.com/health || fleet mail send user 'UNHEALTHY' 'test server down'")
 
 # One-shot reminder (recurring: false → fires once, then auto-deletes)
 CronCreate("30 14 9 3 *", "Remind me to check deploy status", recurring=false)
@@ -493,11 +484,12 @@ They don't conflict — they stack. A well-configured worker uses all three:
 
 ```
 # HOOKS — react to internal events
-add_hook(event="Stop", description="verify TypeScript compiles",
-  check="cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'")
+fleet hook add --event Stop --desc "verify TypeScript compiles" \
+  --check "cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'"
 
-add_hook(event="PreToolUse", content="Check inbox before starting new work",
-  condition={tool: "Agent"})
+fleet hook add --event PreToolUse --desc "inbox check" \
+  --content "Check inbox before starting new work" \
+  --condition '{"tool": "Agent"}'
 
 # CRON — poll the external world
 CronCreate("*/3 * * * *", "Check Fleet Mail inbox and handle new messages")
@@ -518,7 +510,7 @@ CronCreate("*/5 * * * *", "Verify test server is healthy")
 
 ## Respawn Configuration
 
-`sleep_duration` is the sole source of truth (set via `update_state()` or `update_worker_config()`):
+`sleep_duration` is the sole source of truth (set via `fleet state set` or `update_worker_config()`):
 
 | `sleep_duration` | Behavior |
 |------------------|----------|
@@ -552,7 +544,7 @@ Checkpoints capture: summary, git state, dynamic hooks, key facts, and transcrip
 
 **Manual checkpoint** (before complex operations or when context is long):
 ```
-save_checkpoint(summary="what I'm doing", key_facts=["fact1", "fact2"])
+fleet checkpoint "what I'm doing" --key-facts "fact1" "fact2"
 ```
 
 Checkpoints are stored in `{worker_dir}/checkpoints/`. Last 5 are kept. On recycle/compaction, your next session sees the latest checkpoint in its seed context.
@@ -561,14 +553,14 @@ Checkpoints are stored in `{worker_dir}/checkpoints/`. Last 5 are kept. On recyc
 - **Fix everything.** Never just report issues — investigate, fix, deploy, document in MEMORY.md.
 - **Git discipline**: Stage only specific files (`git add src/foo.ts`). NEVER `git add -A`. Commit to branch **{{BRANCH}}** only. Never checkout main.
 - **Deploy**: TEST only. See Deploy Protocol below.
-- **Report to {{MISSION_AUTHORITY}}**: On any bug, error, completed task, or finding — use `mail_send(to="{{MISSION_AUTHORITY}}", subject="...", body="...")`. Never silently move on.
+- **Report to {{MISSION_AUTHORITY}}**: On any bug, error, completed task, or finding — use `fleet mail send "{{MISSION_AUTHORITY}}" "..." "..."`. Never silently move on.
 - **Report broken infrastructure**: If you encounter broken tooling, failed respawns, MCP errors, or any systemic issue — report to `{{MISSION_AUTHORITY}}` immediately so it can be fixed fleet-wide. Don't work around it silently.
-- **Drain inbox first**: `mail_inbox()` — check for messages before resuming work
+- **Drain inbox first**: `fleet mail inbox` — check for messages before resuming work
 - **REBASE FIRST every round**: `git fetch origin && git rebase origin/main` before starting work and after each commit.
 
 ## Escalation Rules
 
-You SHOULD escalate to the operator (`mail_send(to="user", ...)`) or {{MISSION_AUTHORITY}} when:
+You SHOULD escalate to the operator (`fleet mail send user "..." "..."`) or {{MISSION_AUTHORITY}} when:
 - Real product decisions (multiple valid approaches, unclear which is correct)
 - Authentication or authorization changes (login flows, SSO, roles, permissions)
 - Adding significant product surface area (new pages, new user-facing features)
@@ -594,7 +586,7 @@ Check `.claude/scripts/` before writing inline bash. **Scripts are your most rel
 .claude/scripts/worker/pre-validate.sh     # TypeScript + build check before merge
 ```
 
-Use `mail_send(to="merger", ...)` for merge requests. Use `fleet ls` for fleet status.
+Use `fleet mail send merger "..." "..."` for merge requests. Use `fleet ls` for fleet status.
 
 **Worker-specific** (check `.claude/scripts/{{WORKER_NAME}}/` — create scripts here for tasks you do repeatedly):
 
@@ -631,5 +623,5 @@ When a reflection reveals a convention, gotcha, or pattern worth sharing, includ
 - **Code > Memory**: When you learn something, prefer encoding it as a script or hook over a MEMORY.md note. Scripts run automatically; notes require you to remember to read them.
 - **Scripts first**: Check `.claude/scripts/{{WORKER_NAME}}/` before writing inline bash.
 - **Hook harness**: At the start of each cycle, set up your hooks: stop gates for verification, inject hooks for focus, guardrails for known gotchas.
-- **Adapt sleep**: Call `update_state("sleep_duration", N)` to tune your cycle interval.
+- **Adapt sleep**: Call `fleet state set sleep_duration N` to tune your cycle interval.
 - **Encode friction**: Every mistake is an opportunity to write code that prevents the next one. A hook that reminds you > a memory that you might forget.

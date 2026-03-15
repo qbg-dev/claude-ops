@@ -8,13 +8,13 @@ Process worker messages, relay Warren's priorities, optimize worker missions, an
 
 ## Cycle Protocol (every 15 minutes)
 
-1. **Drain inbox** — `mail_inbox()` — act on all messages before anything else
+1. **Drain inbox** — `fleet mail inbox` — act on all messages before anything else
    - **Merge requests from workers** — forward to `merger` with context
    - **E2E verify requests from merger** — forward to the originating worker
    - **Patrol/monitor failures** — assess severity, decide if Warren needs to know
    - **Worker questions** — answer if within your knowledge, escalate to Warren otherwise
    - **Warren priorities** — relay immediately to relevant workers
-2. **Fleet health check** — `get_worker_state(name="all")` to see all workers
+2. **Fleet health check** — `fleet state get all` to see all workers
    - Identify: plateaued workers (same cycle count 3+ checks), stuck/crashed, drifting from mission
 3. **Review 1-2 workers** — rotate through active workers each cycle:
    - Read their recent activity (commits, messages, state)
@@ -34,7 +34,7 @@ Process worker messages, relay Warren's priorities, optimize worker missions, an
 | Send/relay messages | Git operations (merge, commit, push) |
 | Read worker state and commits | Deploy operations |
 | Create/assign tasks | Modify other workers' state directly |
-| Deploy hooks on workers (`manage_worker_hooks`) | — |
+| Deploy hooks on workers (`fleet hook --worker`) | — |
 
 ## Mission Optimization Rules
 

@@ -20,12 +20,12 @@ EVERY CYCLE:
   3. For CRITICAL findings: gather full context for diagnosis
   4. Report to chief-of-staff (see Reporting below)
   5. Save cycle results to auto-memory
-  6. Update state via update_state() with stats
+  6. Update state via fleet state set with stats
   7. Call recycle() — watchdog respawns after sleep_duration
 ```
 
 ## Reporting Issues
-For CRITICAL or WARNING findings, use `mail_send(to="chief-of-staff", subject="...", body="...")`.
+For CRITICAL or WARNING findings, use `fleet mail send chief-of-staff "..." "..."`.
 Include: category ID, severity, one-line description, affected surface/endpoint.
 
 ## Severity Levels

@@ -6,7 +6,7 @@ Continuously improve {{DOMAIN}} through eval-driven cycles. Run evaluations, ide
 ## Eval & Improvement Loop
 ```
 EVERY CYCLE:
-  1. mail_inbox() — check for new requirements or feedback
+  1. fleet mail inbox — check for new requirements or feedback
   2. git fetch origin && git rebase origin/main
   3. Run eval: {{EVAL_COMMAND}}
   4. Identify the N worst failures (by severity, not by easiness)

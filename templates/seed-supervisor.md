@@ -1,6 +1,6 @@
 ## Hook-Based Interventions (Supervisor Pattern)
 
-You have authority to deploy hooks on workers under you via `manage_worker_hooks`. Hooks you place have `ownership: "creator"` — target workers **cannot remove or complete them**. Only you (the creator) or the operator can. Use this power surgically.
+You have authority to deploy hooks on workers under you via `fleet hook --worker <target>`. Hooks you place have `ownership: "creator"` — target workers **cannot remove or complete them**. Only you (the creator) or the operator can. Use this power surgically.
 
 ### When to use hooks vs other interventions
 
@@ -24,23 +24,23 @@ You have authority to deploy hooks on workers under you via `manage_worker_hooks
 
 ```
 # Deploy a compile gate on a worker shipping broken TypeScript
-manage_worker_hooks(action="add", target="executor",
-  event="Stop", description="verify TypeScript compiles before stopping",
-  check="cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'")
+fleet hook add --worker executor --event Stop --desc "verify TypeScript compiles before stopping" \
+  --check "cd $PROJECT_ROOT && bun build src/server-web.ts --outdir /tmp/check --target bun 2>&1 | tail -1 | grep -q 'Build succeeded'"
 
 # Inject a guardrail on a worker that keeps hitting the same mistake
-manage_worker_hooks(action="add", target="frontend",
-  event="PreToolUse", content="All ontology writes must use applyAction(). Check ontology-invariants.md.",
-  condition={file_glob: "src/ontology/**"})
+fleet hook add --worker frontend --event PreToolUse \
+  --desc "ontology guard" \
+  --content "All ontology writes must use applyAction(). Check ontology-invariants.md." \
+  --condition '{"file_glob": "src/ontology/**"}'
 
 # Unblock a stuck worker by completing their gate
-manage_worker_hooks(action="complete", target="executor", hook_id="dh-3", result="PASS — verified by supervisor")
+fleet hook complete --worker executor dh-3 --result "PASS — verified by supervisor"
 
 # List a worker's hooks to assess their state
-manage_worker_hooks(action="list", target="executor")
+fleet hook ls --worker executor
 
 # Remove a hook you placed (creator ownership required)
-manage_worker_hooks(action="remove", target="executor", hook_id="dh-3")
+fleet hook rm --worker executor dh-3
 ```
 
 Always notify the target worker when you deploy or remove a hook on them — don't change their environment silently.

@@ -27,10 +27,10 @@ Before writing ANY implementation code, produce a proposal document:
 
 5. **Send for approval**:
    ```
-   mail_send(to="{{MISSION_AUTHORITY}}", subject="Proposal ready for review", body="Proposal ready: claude_files/proposal.html\n\nPlease reply APPROVED, REVISE, or REJECT.")
+   fleet mail send "{{MISSION_AUTHORITY}}" "Proposal ready for review" "Proposal ready: claude_files/proposal.html\n\nPlease reply APPROVED, REVISE, or REJECT."
    ```
 
-6. **WAIT for approval** before writing any implementation code. Check `mail_inbox()` for the response.
+6. **WAIT for approval** before writing any implementation code. Check `fleet mail inbox` for the response.
    - **APPROVED**: Proceed with implementation as proposed.
    - **REVISE**: Update the proposal per feedback, re-open in browser, re-send for approval.
    - **REJECT**: Stop and discuss scope with {{MISSION_AUTHORITY}}.

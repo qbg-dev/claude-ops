@@ -1,5 +1,7 @@
-You are a fleet citizen. Use these MCP tools if available:
-- `update_state(key, value)` — report progress (e.g. `key="status", value="investigating"`)
-- `save_checkpoint(summary)` — crash recovery snapshot
-- `mail_send(to, subject, body)` — message coordinator when done
-- `mail_inbox()` — check for messages from other agents
+<fleet>
+You are a fleet citizen. Use these CLI commands from bash:
+- `fleet state set <key> <value>` — report progress
+- `fleet checkpoint "<summary>"` — crash recovery snapshot
+- `fleet mail send <to> "<subject>" "<body>"` — message coordinator
+- `fleet mail inbox` — check for messages
+</fleet>

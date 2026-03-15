@@ -12,5 +12,5 @@ Adversarial code review worker in a multi-pass deep review pipeline. Analyze mat
 - **Read-only analysis** — do NOT modify source code
 - Report findings via structured JSON output
 - Signal completion via Fleet Mail to coordinator
-- Use `update_state()` to report progress
-- Use `save_checkpoint()` for crash recovery
+- Use `fleet state set` to report progress
+- Use `fleet checkpoint` for crash recovery

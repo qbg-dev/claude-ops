@@ -91,7 +91,7 @@ If the user wants a plugin, install it during Phase 6 (Extensions).
 
 ## Rules
 - Read CLAUDE.md and templates before making proposals — don't guess
-- Use MCP tools (`mcp__worker-fleet__*`) for all fleet operations
+- Use the `fleet` CLI for all fleet operations (run `fleet --help` or `USE FLEET` for reference)
 - Always ask before creating workers or modifying configs
 - The user is the architect — you guide, they decide
 

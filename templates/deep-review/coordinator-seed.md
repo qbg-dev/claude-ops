@@ -34,7 +34,7 @@ Check `{{SESSION_DIR}}/comms/` during Phase 2 — messages may provide cross-cut
 
 ### Phase 1: Wait for workers
 
-Poll `mail_inbox()` every 30s for messages with subject matching "PASS N COMPLETE". Count unique pass numbers. Proceed when {{NUM_PASSES}} received, or after **8 min** with whatever's available. When ≥ half done, read early completers' output files for context.
+Poll `fleet mail inbox` every 30s for messages with subject matching "PASS N COMPLETE". Count unique pass numbers. Proceed when {{NUM_PASSES}} received, or after **8 min** with whatever's available. When ≥ half done, read early completers' output files for context.
 
 ### Phase 2: Aggregate
 
@@ -88,8 +88,8 @@ For each surviving bucket: synthesize clearest description from all passes. Pick
 
 If `{{SESSION_DIR}}/run-judge.sh` exists:
 1. Write auto-confirm + candidate findings to `{{SESSION_DIR}}/candidates.json` (array of `{id, tier, votes, avg_confidence, location, severity, kind, title, description, evidence, suggestion}`)
-2. Notify judge: if `mail_send` is available, call `mail_send(to="{{JUDGE_NAME}}", subject="JUDGE START", body="{{SESSION_DIR}}/candidates.json")`. Otherwise launch: `bash {{SESSION_DIR}}/run-judge.sh`
-3. **Wait for judge:** If `mail_inbox` available, poll `mail_inbox()` every 10s for "JUDGE DONE" (5 min timeout). Otherwise poll `{{SESSION_DIR}}/judge.done` every 10s.
+2. Notify judge: run `fleet mail send "{{JUDGE_NAME}}" "JUDGE START" "{{SESSION_DIR}}/candidates.json"`. If Fleet Mail unavailable, launch: `bash {{SESSION_DIR}}/run-judge.sh`
+3. **Wait for judge:** Poll `fleet mail inbox` every 10s for "JUDGE DONE" (5 min timeout). If Fleet Mail unavailable, poll `{{SESSION_DIR}}/judge.done` every 10s.
 4. Read `{{SESSION_DIR}}/judged.json`. Verdicts: `confirmed` → keep; `downgraded` → lower severity; `rejected` → drop if judge confidence > 0.7, keep with warning if ≤ 0.7
 5. No judge script or timeout → skip, proceed.
 
@@ -157,11 +157,11 @@ Display the report summary in your output.
 
 ### Phase 10: Notify completion
 
-1. Progress: if `update_state` available, call `update_state(key="status", value="complete")`
+1. Progress: run `fleet state set status complete`
 2. Done marker: `echo "complete" > {{SESSION_DIR}}/review.done`
 3. Desktop: `notify "Deep review complete: $(grep -c '###' {{REPORT_FILE}} 2>/dev/null || echo 0) findings in {{REPORT_FILE}}" "Deep Review" "file://{{REPORT_FILE}}"`
 4. Fleet Mail (if `{{NOTIFY_TARGET}}` non-empty):
-   `mail_send(to="{{NOTIFY_TARGET}}", subject="REVIEW DONE", body="Report: {{REPORT_FILE}} | Fixed: N | Content: N | Design: N | Suggestions: N")`
+   `fleet mail send "{{NOTIFY_TARGET}}" "REVIEW DONE" "Report: {{REPORT_FILE}} | Fixed: N | Content: N | Design: N | Suggestions: N"`
 
 ### Phase 10.5: Worktree cleanup
 

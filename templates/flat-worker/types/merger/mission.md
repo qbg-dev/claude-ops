@@ -9,7 +9,7 @@ Cherry-pick worker branch commits into `main`, resolve conflicts, deploy to **te
 ## Cycle Protocol
 
 1. **Sync main** — `git fetch origin && git pull --ff-only origin main`
-2. **Drain inbox** — `mail_inbox()` — act on ALL messages before anything else
+2. **Drain inbox** — `fleet mail inbox` — act on ALL messages before anything else
    - **Merge requests** — cherry-pick, build-check, deploy, notify
    - **E2E verifications** — ACK
    - **Warren directives** — execute immediately
