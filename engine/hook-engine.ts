@@ -22,12 +22,13 @@
  * Fail-open: any error → {} (never accidentally block)
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, basename, dirname } from "node:path";
+import { join, basename } from "node:path";
 import type { DynamicHook } from "../shared/types";
 
 // ── Types ──────────────────────────────────────────────────────────
 interface HookInput {
   hook_event_name?: string;
+  session_id?: string;
   agent_id?: string;
   agent_type?: string;
   tool_name?: string;
@@ -40,7 +41,7 @@ interface HooksFile {
 
 // ── Environment ────────────────────────────────────────────────────
 const HOME = process.env.HOME!;
-const WORKER = process.env.HOOKS_IDENTITY || process.env.WORKER_NAME || "";
+const WORKER = process.env.HOOKS_IDENTITY || process.env.WORKER_NAME || process.env.USER || "user";
 const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 const HOOKS_DIR_ENV = process.env.HOOKS_DIR;
 
@@ -56,6 +57,10 @@ function resolveHooksFile(): { file: string; dir: string } | null {
   const fleetDir = join(HOME, ".claude/fleet", projectName, WORKER, "hooks");
   const fleetFile = join(fleetDir, "hooks.json");
   if (existsSync(fleetFile)) return { file: fleetFile, dir: fleetDir };
+  // Global standalone: ~/.claude/hooks/hooks.json (works for all Claude Code instances)
+  const globalDir = join(HOME, ".claude/hooks");
+  const globalFile = join(globalDir, "hooks.json");
+  if (existsSync(globalFile)) return { file: globalFile, dir: globalDir };
   // Legacy: ~/.claude/ops/hooks/dynamic/{worker}.json
   const legacyDir = process.env.CLAUDE_HOOKS_DIR || join(HOME, ".claude/ops/hooks/dynamic");
   const legacyFile = join(legacyDir, `${WORKER}.json`);
@@ -115,10 +120,13 @@ function scanScript(content: string, permsPath: string): string | null {
   return null;
 }
 
+// ── Session state (set from hook input in main) ──────────────────
+let SESSION_ID = "";
+
 // ── Check command execution ────────────────────────────────────────
 function runCheckCommand(check: string): { passed: boolean; stderr: string } {
   const result = Bun.spawnSync(["bash", "-c", check], {
-    env: { ...process.env, WORKER_NAME: WORKER, PROJECT_ROOT },
+    env: { ...process.env, WORKER_NAME: WORKER, SESSION_ID, PROJECT_ROOT },
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -151,6 +159,7 @@ function runHookScript(
   const env = {
     ...process.env,
     WORKER_NAME: WORKER,
+    SESSION_ID,
     HOOK_EVENT: event,
     HOOK_ID: hook.id,
     PROJECT_ROOT,
@@ -172,7 +181,8 @@ try {
   const input: HookInput = raw.trim() ? JSON.parse(raw) : {};
 
   const event = input.hook_event_name || "";
-  if (!event || !WORKER) {
+  SESSION_ID = input.session_id || "";
+  if (!event) {
     console.log("{}");
     process.exit(0);
   }

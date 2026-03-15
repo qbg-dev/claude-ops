@@ -11,7 +11,8 @@ export function register(parent: Command): void {
     .command("setup")
     .description("Bootstrap fleet infrastructure")
     .option("--extensions", "Build and install all extensions (watchdog, review, etc.)")
-    .action(async (opts: { extensions?: boolean }) => {
+    .option("--no-global-hooks", "Skip installing hooks MCP + engine globally (default: install)")
+    .action(async (opts: { extensions?: boolean; globalHooks?: boolean }) => {
       console.log(`${chalk.bold("fleet setup")} — bootstrapping fleet infrastructure\n`);
 
       let errors = 0;
@@ -205,20 +206,25 @@ export function register(parent: Command): void {
         };
 
         // Register claude-hooks MCP server (standalone hook management)
-        const claudeHooksDir = process.env.CLAUDE_HOOKS_DIR || join(HOME, ".claude-hooks");
-        const claudeHooksMcp = join(claudeHooksDir, "mcp/index.ts");
-        if (existsSync(claudeHooksMcp)) {
-          settings.mcpServers["claude-hooks"] = {
-            command: bunPath,
-            args: ["run", claudeHooksMcp],
-            env: {
-              HOOKS_DIR: join(HOME, ".claude/hooks"),
-              HOOKS_IDENTITY: "operator",
-            },
-          };
-          ok("claude-hooks MCP registered in settings.json");
+        // Works globally for ALL Claude Code instances — provides add_hook, complete_hook, remove_hook, list_hooks
+        if (opts.globalHooks !== false) {
+          const claudeHooksDir = process.env.CLAUDE_HOOKS_DIR || join(HOME, ".claude-hooks");
+          const claudeHooksMcp = join(claudeHooksDir, "mcp/index.ts");
+          if (existsSync(claudeHooksMcp)) {
+            settings.mcpServers["claude-hooks"] = {
+              command: bunPath,
+              args: ["run", claudeHooksMcp],
+              env: {
+                HOOKS_DIR: join(HOME, ".claude/hooks"),
+                HOOKS_IDENTITY: "operator",
+              },
+            };
+            ok("claude-hooks MCP registered globally (works for all Claude Code instances)");
+          } else {
+            info("claude-hooks not found — skipping (optional, install at ~/.claude-hooks)");
+          }
         } else {
-          info("claude-hooks not found — skipping (optional, install at ~/.claude-hooks)");
+          info("Global hooks MCP skipped (--no-global-hooks)");
         }
 
         // Configure statusline via extension installer
@@ -271,7 +277,12 @@ export function register(parent: Command): void {
         console.log(`    ${chalk.dim("Restart Claude Code to pick up MCP server changes")}`);
       }
 
-      // 9. Install hooks into settings.json
+      // 9. Ensure global hooks directory exists
+      const globalHooksDir = join(HOME, ".claude/hooks");
+      mkdirSync(globalHooksDir, { recursive: true });
+      ok(`Global hooks dir: ${globalHooksDir}`);
+
+      // 10. Install hooks into settings.json
       info("Installing hooks...");
       {
         let settings: Record<string, any> = {};
@@ -308,8 +319,9 @@ export function register(parent: Command): void {
         const h = (script: string, timeout?: number) => ({
           hooks: [{ type: "command" as const, command: `bash ${fleetBase}/${script}`, ...(timeout ? { timeout } : {}) }],
         });
+        const hooksDir = join(HOME, ".claude/hooks");
         const engine = {
-          hooks: [{ type: "command" as const, command: `bun run ${fleetBase}/engine/hook-engine.ts` }],
+          hooks: [{ type: "command" as const, command: `HOOKS_DIR=${hooksDir} bun run ${fleetBase}/engine/hook-engine.ts` }],
         };
         const logger = h("engine/session-logger.sh");
 
