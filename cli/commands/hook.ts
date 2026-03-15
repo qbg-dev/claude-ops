@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { join, basename } from "node:path";
 import { FLEET_DATA, resolveProject, resolveProjectRoot } from "../lib/paths";
-import { info, ok, fail, table, shouldDefaultJson } from "../lib/fmt";
+import { info, ok, fail, table } from "../lib/fmt";
 import { addGlobalOpts } from "../index";
 import type { DynamicHook } from "../../shared/types";
 
@@ -249,7 +249,7 @@ async function hookLs(opts: { event?: string }, globalOpts: Record<string, unkno
     return;
   }
 
-  if (shouldDefaultJson()) {
+  if ((globalOpts as any).json) {
     console.log(JSON.stringify(filtered, null, 2));
     return;
   }

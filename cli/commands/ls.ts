@@ -4,7 +4,7 @@ import { FLEET_DATA } from "../lib/paths";
 import { getConfig, getState } from "../lib/config";
 import { listPaneIds } from "../lib/tmux";
 import chalk from "chalk";
-import { table, statusColor, shouldDefaultJson } from "../lib/fmt";
+import { table, statusColor } from "../lib/fmt";
 import { addGlobalOpts } from "../index";
 
 export function register(parent: Command): void {
@@ -16,7 +16,7 @@ export function register(parent: Command): void {
     .action((_opts: Record<string, unknown>, cmd: Command) => {
       const globalOpts = cmd.optsWithGlobals();
       const filterProject = globalOpts.project as string | undefined;
-      const json = shouldDefaultJson();
+      const json = globalOpts.json as boolean;
       const panes = listPaneIds();
       const results: Array<{
         name: string; project: string; status: string;

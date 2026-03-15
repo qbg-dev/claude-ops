@@ -19,7 +19,7 @@ const program = new Command()
 // Set output mode before any command runs
 program.hook("preAction", (thisCommand) => {
   const opts = thisCommand.optsWithGlobals();
-  setOutputMode({ human: opts.human, json: opts.json });
+  setOutputMode({ human: opts.human });
 });
 
 /**

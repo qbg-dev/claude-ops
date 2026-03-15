@@ -3,7 +3,7 @@
  * Respects NO_COLOR (https://no-color.org/) and FORCE_COLOR env vars.
  *
  * Mode detection: HUMAN=1 env → pretty output (emoji, chalk colors, ASCII tables).
- * No HUMAN env (agent shells) → clean output (plain prefixes, JSON tables).
+ * No HUMAN env (agent shells) → clean output (plain prefixes, plain tables).
  * CLI flags --human / --json override env detection.
  */
 import chalk from "chalk";
@@ -13,23 +13,14 @@ import chalk from "chalk";
 // ── Mode state (set by preAction hook in index.ts) ──────────────
 
 let _humanMode: boolean | null = null;
-let _jsonMode: boolean | null = null;
 
-export function setOutputMode(opts: { human?: boolean; json?: boolean }): void {
+export function setOutputMode(opts: { human?: boolean }): void {
   if (opts.human !== undefined) _humanMode = opts.human;
-  if (opts.json !== undefined) _jsonMode = opts.json;
 }
 
 export function isHumanMode(): boolean {
   if (_humanMode !== null) return _humanMode;
   return !!process.env.HUMAN;
-}
-
-/** Data commands should default to JSON when not in human mode */
-export function shouldDefaultJson(): boolean {
-  if (_jsonMode === true) return true;
-  if (_humanMode === true) return false;
-  return !process.env.HUMAN; // agent mode = JSON by default
 }
 
 // ── Mode-aware output functions ─────────────────────────────────
@@ -81,32 +72,29 @@ export function statusColor(status: string): string {
 
 /** Print a table with headers and rows */
 export function table(headers: string[], rows: string[][]): void {
-  if (!isHumanMode()) {
-    // JSON array of objects for agent consumption
-    const objects = rows.map(row => {
-      const obj: Record<string, string> = {};
-      headers.forEach((h, i) => { obj[h.toLowerCase()] = stripAnsi(row[i] || ""); });
-      return obj;
-    });
-    console.log(JSON.stringify(objects, null, 2));
-    return;
-  }
+  const human = isHumanMode();
 
-  // Calculate column widths
+  // Calculate column widths (always strip ANSI for measurement)
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => stripAnsi(r[i] || "").length))
   );
 
   // Print header
-  console.log(headers.map((h, i) => chalk.bold(h.padEnd(widths[i]))).join("  "));
-  console.log(widths.map((w) => "\u2500".repeat(w)).join("  "));
+  if (human) {
+    console.log(headers.map((h, i) => chalk.bold(h.padEnd(widths[i]))).join("  "));
+    console.log(widths.map((w) => "\u2500".repeat(w)).join("  "));
+  } else {
+    console.log(headers.map((h, i) => h.padEnd(widths[i])).join("  "));
+    console.log(widths.map((w) => "-".repeat(w)).join("  "));
+  }
 
   // Print rows
   for (const row of rows) {
     const parts = row.map((cell, i) => {
+      const raw = human ? (cell || "") : stripAnsi(cell || "");
       const stripped = stripAnsi(cell || "");
       const pad = widths[i] - stripped.length;
-      return (cell || "") + " ".repeat(Math.max(0, pad));
+      return raw + " ".repeat(Math.max(0, pad));
     });
     console.log(parts.join("  "));
   }
