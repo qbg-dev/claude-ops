@@ -8,7 +8,7 @@ import { readdirSync } from "fs";
 import { execSync } from "child_process";
 import { WORKERS_DIR, WORKER_NAME } from "../config";
 import { readRegistry, type RegistryWorkerEntry } from "../registry";
-import { isPaneAlive, tmuxSendMessage, resolveRecipient } from "../tmux";
+import { isPaneAlive, isPaneOwnedBy, tmuxSendMessage, resolveRecipient } from "../tmux";
 import { withLint } from "../diagnostics";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -179,7 +179,7 @@ Escalate to operator when: (1) design/architecture decisions need human judgment
       try {
         const entry = registry[name] as RegistryWorkerEntry | undefined;
         const paneId = entry?.pane_id;
-        if (paneId && isPaneAlive(paneId)) {
+        if (paneId && isPaneOwnedBy(paneId, name)) {
           const prefix = recipientNames.length > 1 ? `[broadcast from ${WORKER_NAME}]` : `[mail from ${WORKER_NAME}]`;
           tmuxSendMessage(paneId, `${prefix} ${subject}: ${body}`);
           tmuxDelivered.push(name);

@@ -26,6 +26,22 @@ export function isPaneAlive(paneId: string): boolean {
   }
 }
 
+/** Check if a tmux pane belongs to the expected worker by matching its window name.
+ *  Prevents misrouting when tmux recycles pane IDs after worker restarts. */
+export function isPaneOwnedBy(paneId: string, workerName: string): boolean {
+  if (!isPaneAlive(paneId)) return false;
+  try {
+    const result = spawnSync("tmux", ["display-message", "-t", paneId, "-p", "#{window_name}"], {
+      encoding: "utf-8", timeout: 3000,
+    });
+    const windowName = result.stdout?.trim() || "";
+    // Worker panes use the worker name as window name, or "infra" for merger/chief-of-staff
+    return windowName === workerName || windowName === "infra";
+  } catch {
+    return false;
+  }
+}
+
 /** Patterns indicating the Claude TUI is waiting for input (safe to paste). */
 const IDLE_PATTERNS = [
   "bypass permissions",  // standard idle
