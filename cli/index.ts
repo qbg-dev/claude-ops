@@ -70,6 +70,10 @@ import { register as registerUpdate } from "./commands/update";
 import { register as registerLaunch } from "./commands/launch";
 import { register as registerDeploy } from "./commands/deploy";
 import { register as registerGet } from "./commands/get";
+import { register as registerRegister } from "./commands/register";
+import { register as registerState } from "./commands/state";
+import { register as registerCheckpoint } from "./commands/checkpoint";
+import { register as registerSession } from "./commands/session";
 
 registerSetup(program);
 registerCreate(program);
@@ -100,5 +104,9 @@ registerUpdate(program);
 registerLaunch(program);
 registerDeploy(program);
 registerGet(program);
+registerRegister(program);
+registerState(program);
+registerCheckpoint(program);
+registerSession(program);
 
 program.parse();
