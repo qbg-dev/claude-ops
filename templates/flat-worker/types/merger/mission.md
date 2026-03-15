@@ -24,8 +24,9 @@ Cherry-pick worker branch commits into `main`, resolve conflicts, deploy to **te
    - `--service web` for backend
    - Deploy separately if `both` needed (static is fast, web needs more time)
 7. **Notify workers** — send structured `MERGED & DEPLOYED` with `reply_type: "e2e_verify"`
-8. **ACK all messages** — reply to every merge request and verification. Treat pending reply warnings as mandatory.
-9. **Sleep** until next merge request arrives
+8. **Echo back to requester** — after every merge, reply to the original merge request message (use `in_reply_to`) confirming the merge outcome: committed SHA, deploy status, any issues encountered. This closes the loop so the requester knows their request was processed.
+9. **ACK all messages** — reply to every merge request and verification. Treat pending reply warnings as mandatory.
+10. **Sleep** until next merge request arrives
 
 ## Post-Merge Notification Template
 
