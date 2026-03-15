@@ -54,6 +54,7 @@ export async function runCreate(
   // Resolve config: CLI > type template > defaults > hardcoded
   const defaults = getDefaults();
   const model = opts.model || String(defaults.model || "opus");
+  const runtime = (opts.runtime || String(defaults.runtime || "claude")) as "claude" | "codex";
   const effort = opts.effort || String(defaults.effort || "high");
   const perm = opts.permissionMode || String(defaults.permission_mode || "bypassPermissions");
   let sleepDuration: number | null = null;
@@ -149,18 +150,11 @@ export async function runCreate(
     info(`Worktree already exists: ${worktreeDir}`);
   }
 
-  // 6. Ensure parent repo .mcp.json includes worker-fleet, then symlink to worktree
+  // 6. Ensure parent repo .mcp.json includes claude-hooks, then symlink to worktree
+  // NOTE: worker-fleet MCP is deprecated — workers use fleet CLI for communication.
   const mcpSrc = join(projectRoot, ".mcp.json");
   const bunPath = process.execPath || join(process.env.HOME || "", ".bun/bin/bun");
-  const fleetEntry = {
-    command: bunPath,
-    args: ["run", join(FLEET_DIR, "mcp/worker-fleet/index.ts")],
-    env: {
-      ...(FLEET_MAIL_URL ? { FLEET_MAIL_URL } : {}),
-    },
-  };
 
-  // Read existing config (or start fresh), merge worker-fleet in
   let mcpConfig: Record<string, any> = { mcpServers: {} };
   if (existsSync(mcpSrc)) {
     try {
@@ -171,14 +165,11 @@ export async function runCreate(
     }
   }
 
-  // Only write if worker-fleet is missing or stale (different command/args)
-  const existing = mcpConfig.mcpServers["worker-fleet"];
-  let needsUpdate = !existing
-    || existing.command !== fleetEntry.command
-    || JSON.stringify(existing.args) !== JSON.stringify(fleetEntry.args);
-
-  if (needsUpdate) {
-    mcpConfig.mcpServers["worker-fleet"] = fleetEntry;
+  // Remove legacy worker-fleet MCP if present
+  let needsUpdate = false;
+  if (mcpConfig.mcpServers["worker-fleet"]) {
+    delete mcpConfig.mcpServers["worker-fleet"];
+    needsUpdate = true;
   }
 
   // Add claude-hooks MCP for standalone hook management per worker
@@ -205,7 +196,7 @@ export async function runCreate(
 
   if (needsUpdate) {
     writeFileSync(mcpSrc, JSON.stringify(mcpConfig, null, 2) + "\n");
-    info(existing ? "Updated MCP servers in .mcp.json" : "Added MCP servers to .mcp.json");
+    info("Updated MCP servers in .mcp.json");
   }
 
   if (projectRoot !== worktreeDir) {

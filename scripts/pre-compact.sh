@@ -118,25 +118,38 @@ if [ -n "$SESSION_ID" ] && [[ "$BRANCH" != worker/* ]]; then
   fi
 fi
 
-# Only fire for flat workers (branch: worker/* in a worktree).
-# Use PROJECT_ROOT (already resolved via pane-registry above) rather than CWD-based is_worktree(),
-# which would incorrectly return false when the hook fires from the main repo directory.
-[[ "$BRANCH" == worker/* ]] && [ -f "$PROJECT_ROOT/.git" ] || exit 0
+# Fire for flat workers (branch: worker/* in a worktree) OR session-based agents.
+# Session-based: check if ~/.claude/fleet/.sessions/{SESSION_ID}/identity.json exists.
+IS_FLAT_WORKER=false
+IS_SESSION_AGENT=false
+if [[ "$BRANCH" == worker/* ]] && [ -f "$PROJECT_ROOT/.git" ]; then
+  IS_FLAT_WORKER=true
+elif [ -n "$SESSION_ID" ] && [ -f "$HOME/.claude/fleet/.sessions/$SESSION_ID/identity.json" ]; then
+  IS_SESSION_AGENT=true
+fi
+$IS_FLAT_WORKER || $IS_SESSION_AGENT || exit 0
 
-WORKER_NAME="${BRANCH#worker/}"
-MAIN_ROOT=$(resolve_main_root)
-
-# Fleet v2 path resolution: ~/.claude/fleet/{project}/{worker}/
-# Project name = basename of main repo root (e.g., "Wechat")
-_PROJECT_NAME=$(basename "$MAIN_ROOT")
-_FLEET_DIR="$HOME/.claude/fleet/${_PROJECT_NAME}/${WORKER_NAME}"
-_LEGACY_DIR="$MAIN_ROOT/.claude/workers/$WORKER_NAME"
-
-# Prefer fleet v2 dir, fallback to legacy
-if [ -d "$_FLEET_DIR" ]; then
-  WORKER_DIR="$_FLEET_DIR"
+if $IS_SESSION_AGENT; then
+  # Session-based agent: identity from session dir
+  WORKER_NAME=$(jq -r '.customName // "session"' "$HOME/.claude/fleet/.sessions/$SESSION_ID/identity.json" 2>/dev/null || echo "session")
+  WORKER_DIR="$HOME/.claude/fleet/.sessions/$SESSION_ID"
+  MAIN_ROOT="$PROJECT_ROOT"
 else
-  WORKER_DIR="$_LEGACY_DIR"
+  # Legacy flat worker
+  WORKER_NAME="${BRANCH#worker/}"
+  MAIN_ROOT=$(resolve_main_root)
+
+  # Fleet v2 path resolution: ~/.claude/fleet/{project}/{worker}/
+  _PROJECT_NAME=$(basename "$MAIN_ROOT")
+  _FLEET_DIR="$HOME/.claude/fleet/${_PROJECT_NAME}/${WORKER_NAME}"
+  _LEGACY_DIR="$MAIN_ROOT/.claude/workers/$WORKER_NAME"
+
+  # Prefer fleet v2 dir, fallback to legacy
+  if [ -d "$_FLEET_DIR" ]; then
+    WORKER_DIR="$_FLEET_DIR"
+  else
+    WORKER_DIR="$_LEGACY_DIR"
+  fi
 fi
 
 # ── Auto-checkpoint before compaction ──────────────────────────────────────

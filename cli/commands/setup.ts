@@ -116,7 +116,7 @@ export function register(parent: Command): void {
       const defaultsFile = join(FLEET_DATA, "defaults.json");
       if (!existsSync(defaultsFile)) {
         writeFileSync(defaultsFile, JSON.stringify({
-          model: "opus",
+          model: "opus[1m]",
           effort: "high",
           permission_mode: "bypassPermissions",
           sleep_duration: null,
@@ -183,27 +183,24 @@ export function register(parent: Command): void {
         }
       }
 
-      // 8. Register MCP server (after Fleet Mail so FLEET_MAIL_URL is available)
-      info("Registering MCP server...");
+      // 8. Register MCP servers + settings (after Fleet Mail so FLEET_MAIL_URL is available)
+      // NOTE: worker-fleet MCP is deprecated — all fleet communication now uses fleet CLI.
+      // Only claude-hooks MCP is registered (globally, user scope).
       const settingsFile = join(HOME, ".claude/settings.json");
-      const mcpScript = join(fleetDir, "mcp/worker-fleet/index.ts");
       const bunPath = Bun.spawnSync(["which", "bun"]).stdout.toString().trim();
 
-      if (!existsSync(mcpScript)) {
-        warn("MCP server script not found — skipping registration");
-      } else {
+      {
         let settings: Record<string, any> = {};
         if (existsSync(settingsFile)) {
           try { settings = JSON.parse(readFileSync(settingsFile, "utf-8")); } catch {}
         }
         if (!settings.mcpServers) settings.mcpServers = {};
-        const mcpEnv: Record<string, string> = {};
-        if (resolvedMailUrl) mcpEnv.FLEET_MAIL_URL = resolvedMailUrl;
-        settings.mcpServers["worker-fleet"] = {
-          command: bunPath,
-          args: ["run", mcpScript],
-          env: mcpEnv,
-        };
+
+        // Remove legacy worker-fleet MCP if present
+        if (settings.mcpServers["worker-fleet"]) {
+          delete settings.mcpServers["worker-fleet"];
+          info("Removed legacy worker-fleet MCP (now using fleet CLI)");
+        }
 
         // Register claude-hooks MCP server (standalone hook management)
         // Must use `claude mcp add -s user` — settings.json mcpServers are NOT loaded by Claude Code.
@@ -260,31 +257,7 @@ export function register(parent: Command): void {
         }
 
         writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
-        ok("MCP servers registered in settings.json");
-
-        // Verify MCP server can start (catch missing deps / syntax errors)
-        info("Verifying MCP server...");
-        const mcpEnvForVerify: Record<string, string> = {
-          ...process.env as Record<string, string>,
-        };
-        if (resolvedMailUrl) mcpEnvForVerify.FLEET_MAIL_URL = resolvedMailUrl;
-        const mcpProc = Bun.spawn([bunPath, "run", mcpScript], {
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-          env: mcpEnvForVerify,
-        });
-        await Bun.sleep(2000);
-        if (mcpProc.exitCode !== null && mcpProc.exitCode !== 0) {
-          const stderrText = await new Response(mcpProc.stderr).text();
-          const firstLine = stderrText.split("\n").filter(l => l.trim())[0] || "unknown error";
-          warn(`MCP server exited with code ${mcpProc.exitCode}: ${firstLine}`);
-          console.log(`    Try: cd ${join(fleetDir, "mcp/worker-fleet")} && bun install`);
-        } else {
-          mcpProc.kill();
-          ok("MCP server verified (starts cleanly)");
-        }
-        console.log(`    ${chalk.dim("Restart Claude Code to pick up MCP server changes")}`);
+        ok("Settings updated");
       }
 
       // 9. Ensure global hooks directory exists
