@@ -87,6 +87,9 @@ export interface DynamicHook {
   /** Lifetime — "cycle" hooks are archived on recycle, "persistent" survive recycles.
    *  Default: "persistent" for Stop hooks, "cycle" for all others. */
   lifetime?: "cycle" | "persistent";
+  /** Scope — limits which sessions/workers this hook fires in.
+   *  "session:{id}" = per-session, "worker:{name}" = per-worker, undefined = global (fires everywhere). */
+  scope?: string;
   /** Bash command to verify a condition. Exit 0 = pass, non-zero = block.
    *  Re-evaluated each time the event fires (Stop hooks become verification loops). */
   check?: string;

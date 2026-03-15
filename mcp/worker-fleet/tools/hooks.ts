@@ -168,6 +168,7 @@ server.registerTool(
       completed: false,
       status: "active",
       lifetime: resolvedLifetime,
+      scope: `worker:${WORKER_NAME}`,
       added_at: new Date().toISOString(),
       registered_by: WORKER_NAME,
       ownership: "self",

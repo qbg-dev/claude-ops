@@ -21,7 +21,7 @@
  *
  * Fail-open: any error → {} (never accidentally block)
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { DynamicHook } from "../shared/types";
 
@@ -187,6 +187,20 @@ try {
     process.exit(0);
   }
 
+  // Bridge: write session_id to .active-session so MCP server can discover it.
+  // Engine fires on PreToolUse BEFORE MCP tool call, so this is always set in time.
+  if (SESSION_ID && HOOKS_DIR_ENV) {
+    try {
+      mkdirSync(HOOKS_DIR_ENV, { recursive: true });
+      writeFileSync(join(HOOKS_DIR_ENV, ".active-session"), SESSION_ID);
+    } catch {}
+  }
+
+  // Compute current scope for filtering
+  const currentScope = process.env.WORKER_NAME
+    ? `worker:${process.env.WORKER_NAME}`
+    : SESSION_ID ? `session:${SESSION_ID}` : "";
+
   const resolved = resolveHooksFile();
   if (!resolved) {
     console.log("{}");
@@ -223,6 +237,9 @@ try {
     if (hook.event !== event) return false;
     if (hook.completed) return false;
     if (hook.status === "archived") return false;
+    // Scope filtering: unscoped hooks (global) match everything,
+    // scoped hooks only match their session/worker
+    if (hook.scope && currentScope && hook.scope !== currentScope) return false;
     // Subagents see: hooks scoped to their agent_id + unscoped hooks
     // Parent sees: unscoped hooks only
     if (isSubagent) {
