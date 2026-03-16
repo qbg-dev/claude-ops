@@ -41,12 +41,9 @@ const MODEL_FALLBACK = ["sonnet", "opus[1m]", "opus"];
 
 export default function benchPipeline(opts: BenchPipelineOpts): Program {
   const benchmark = opts.benchmark || "benchmark";
-  const benchDir = opts.benchDir || ".";
   const model = opts.model || "sonnet";
   const maxRounds = opts.maxRounds || 50;
   const skipSetup = opts.resume === true;
-  const tokenFile = opts.tokenFile || "~/.claude/sensitive/oauth-tokens.md";
-  const conventionsDir = opts.conventionsDir || "";
 
   const builder = graph(
     "bench-pipeline",
