@@ -146,25 +146,26 @@ async function runBridge(sessionDir: string, nodeName: string, depth = 0): Promi
         edges,
         state.nodeIndexMap!,
         isGateAll ? gateAgents.length : undefined,
+        state.sessionHash,
       );
     }
   }
 
-  // 7. Install pipeline hooks (node-level + per-agent)
+  // 7. Install pipeline hooks (node-level + per-agent) — use session-hashed dirs
   if (node.hooks && node.hooks.length > 0) {
     for (const agent of agents) {
-      const workerHooksDir = join(FLEET_DATA, state.fleetProject, agent.name, "hooks");
+      const workerHooksDir = join(FLEET_DATA, state.fleetProject, `${agent.name}-${state.sessionHash}`, "hooks");
       await installPipelineHooks(workerHooksDir, node.hooks, g.name);
     }
   }
   for (const agent of agents) {
     if (agent.hooks && agent.hooks.length > 0) {
-      const workerHooksDir = join(FLEET_DATA, state.fleetProject, agent.name, "hooks");
+      const workerHooksDir = join(FLEET_DATA, state.fleetProject, `${agent.name}-${state.sessionHash}`, "hooks");
       await installPipelineHooks(workerHooksDir, agent.hooks, g.name);
     }
     // Install tool restriction hooks from allowedTools/deniedTools
     if (agent.allowedTools?.length || agent.deniedTools?.length) {
-      const workerHooksDir = join(FLEET_DATA, state.fleetProject, agent.name, "hooks");
+      const workerHooksDir = join(FLEET_DATA, state.fleetProject, `${agent.name}-${state.sessionHash}`, "hooks");
       await installToolRestrictionHooks(workerHooksDir, agent.allowedTools, agent.deniedTools);
     }
   }
@@ -352,24 +353,35 @@ async function evaluateEdges(
 ): Promise<string | null> {
   for (const edge of edges) {
     // Check cycle limits for back-edges
+    let counterFile: string | undefined;
     if (edge.maxIterations) {
-      const counterFile = join(state.sessionDir, `cycle-${fromNode}-to-${edge.to}.count`);
+      counterFile = join(state.sessionDir, `cycle-${fromNode}-to-${edge.to}.count`);
       let cycle = 0;
       if (existsSync(counterFile)) {
         cycle = parseInt(readFileSync(counterFile, "utf-8").trim(), 10) || 0;
       }
       if (cycle >= edge.maxIterations) continue;
-      writeFileSync(counterFile, String(cycle + 1));
+      // Don't increment yet — wait until condition passes too
     }
 
-    // Evaluate condition
+    // Evaluate condition (resolve {{SESSION_DIR}} template vars)
     if (edge.condition) {
-      const result = (Bun.spawnSync as any)(["bash", "-c", edge.condition], {
+      const resolvedCondition = edge.condition.replace(/\{\{SESSION_DIR\}\}/g, state.sessionDir);
+      const result = (Bun.spawnSync as any)(["bash", "-c", resolvedCondition], {
         cwd: state.projectRoot,
         stderr: "pipe",
         timeout: 10_000,
       });
       if (result.exitCode !== 0) continue;
+    }
+
+    // Both cycle limit and condition passed — now increment the counter
+    if (counterFile) {
+      let cycle = 0;
+      if (existsSync(counterFile)) {
+        cycle = parseInt(readFileSync(counterFile, "utf-8").trim(), 10) || 0;
+      }
+      writeFileSync(counterFile, String(cycle + 1));
     }
 
     console.log(`[bridge] Edge: ${fromNode} -> ${edge.to}${edge.label ? ` (${edge.label})` : ""}`);

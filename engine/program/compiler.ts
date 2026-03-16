@@ -421,24 +421,33 @@ exit 0
 
   wfs(destScript, script, { mode: 0o755 });
 
-  // Write hooks.json
-  const hooks = {
-    hooks: [{
-      id: "dh-1",
-      event: "Stop",
-      description: `Graph: edge evaluation from node "${fromNode}" (${workerName})`,
-      blocking: false,
-      completed: false,
-      status: "active" as const,
-      lifetime: "persistent" as const,
-      script_path: scriptName,
-      registered_by: "program-api",
-      ownership: "creator" as const,
-      added_at: new Date().toISOString(),
-    }],
-  };
+  // Merge stop hook into existing hooks.json (don't overwrite pipeline hooks)
+  const hooksJsonPath = join(workerHooksDir, "hooks.json");
+  const { readFileSync: rfs } = require("node:fs") as typeof import("node:fs");
+  let existingHooks: any[] = [];
+  try {
+    const existing = JSON.parse(rfs(hooksJsonPath, "utf-8"));
+    existingHooks = existing.hooks || [];
+  } catch {}
 
-  wfs(join(workerHooksDir, "hooks.json"), JSON.stringify(hooks, null, 2));
+  // Remove any prior stop hook for this node (avoid duplicates on re-compilation)
+  existingHooks = existingHooks.filter((h: any) => h.script_path !== scriptName);
+
+  existingHooks.push({
+    id: `dh-stop-${fromNode}`,
+    event: "Stop",
+    description: `Graph: edge evaluation from node "${fromNode}" (${workerName})`,
+    blocking: false,
+    completed: false,
+    status: "active" as const,
+    lifetime: "persistent" as const,
+    script_path: scriptName,
+    registered_by: "program-api",
+    ownership: "creator" as const,
+    added_at: new Date().toISOString(),
+  });
+
+  wfs(hooksJsonPath, JSON.stringify({ hooks: existingHooks }, null, 2));
 }
 
 /**

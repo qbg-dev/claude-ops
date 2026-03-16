@@ -26,9 +26,9 @@ export async function provisionWorkers(
 
   const now = new Date().toISOString();
 
-  // 1. Create per-worker fleet directories
+  // 1. Create per-worker fleet directories (session-hashed to avoid collisions)
   for (const worker of workers) {
-    const workerDir = join(projectDir, worker.name);
+    const workerDir = join(projectDir, `${worker.name}-${state.sessionHash}`);
     mkdirSync(workerDir, { recursive: true });
 
     const isPerpetual = typeof worker.sleepDuration === "number" && worker.sleepDuration > 0;
@@ -138,10 +138,10 @@ export async function provisionWorkers(
       if (result.status === "fulfilled" && result.value.token) {
         const { name, token } = result.value;
         tokens.set(name, token);
-        writeFileSync(join(projectDir, name, "token"), token);
+        writeFileSync(join(projectDir, `${name}-${state.sessionHash}`, "token"), token);
         provisioned++;
       } else if (result.status === "fulfilled") {
-        writeFileSync(join(projectDir, result.value.name, "token"), "");
+        writeFileSync(join(projectDir, `${result.value.name}-${state.sessionHash}`, "token"), "");
       }
     }
 
@@ -227,8 +227,10 @@ export async function cleanupPipelineWorkers(
 export function buildMailEnvExport(
   workerName: string,
   project: string,
+  sessionHash?: string,
 ): string {
-  const tokenPath = join(FLEET_DATA, project, workerName, "token");
+  const dirName = sessionHash ? `${workerName}-${sessionHash}` : workerName;
+  const tokenPath = join(FLEET_DATA, project, dirName, "token");
   let token = "";
   try {
     token = readFileSync(tokenPath, "utf-8").trim();
@@ -286,7 +288,7 @@ export function generateLaunchWrapper(
   worker: CompiledWorker,
   state: ProgramPipelineState,
 ): string {
-  const fleetEnv = buildMailEnvExport(worker.name, state.fleetProject);
+  const fleetEnv = buildMailEnvExport(worker.name, state.fleetProject, state.sessionHash);
   const hooksDir = join(FLEET_DATA, state.fleetProject, `${worker.name}-${state.sessionHash}`, "hooks");
   const fleetDir = process.env.CLAUDE_FLEET_DIR || join(process.env.HOME || "/tmp", ".claude-fleet");
 
