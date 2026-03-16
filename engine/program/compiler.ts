@@ -333,6 +333,13 @@ export function installGraphStopHook(
 set -euo pipefail
 SESSION_DIR="${sessionDir}"
 FLEET_DIR="\${CLAUDE_FLEET_DIR:-${FLEET_DIR_DEFAULT}}"
+
+# Auto-detect Xray proxy for China network
+if [ -z "\${HTTPS_PROXY:-}" ]; then
+  if ss -tln 2>/dev/null | grep -q ':10809' || nc -z localhost 10809 2>/dev/null; then
+    export HTTPS_PROXY="http://localhost:10809"
+  fi
+fi
 `;
 
   // Gate-all preamble

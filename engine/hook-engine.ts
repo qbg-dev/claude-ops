@@ -45,27 +45,45 @@ const WORKER = process.env.HOOKS_IDENTITY || process.env.WORKER_NAME || process.
 const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 const HOOKS_DIR_ENV = process.env.HOOKS_DIR;
 
-// ── Hooks file resolution ──────────────────────────────────────────
-function resolveHooksFile(): { file: string; dir: string } | null {
-  // Primary: HOOKS_DIR env (set by claude-hooks or fleet)
-  if (HOOKS_DIR_ENV) {
-    const f = join(HOOKS_DIR_ENV, "hooks.json");
-    if (existsSync(f)) return { file: f, dir: HOOKS_DIR_ENV };
+// ── Hooks file resolution (merges per-worker + global sources) ─────
+interface HooksSource { file: string; dir: string; }
+
+function resolveAllHooksSources(): HooksSource[] {
+  const sources: HooksSource[] = [];
+  const seen = new Set<string>();
+
+  function add(file: string, dir: string) {
+    if (existsSync(file) && !seen.has(file)) {
+      seen.add(file);
+      sources.push({ file, dir });
+    }
   }
-  // Fleet layout: ~/.claude/fleet/{project}/{worker}/hooks/hooks.json
+
+  // 1. HOOKS_DIR env (per-worker, set by launch wrapper for pipeline workers)
+  if (HOOKS_DIR_ENV) {
+    add(join(HOOKS_DIR_ENV, "hooks.json"), HOOKS_DIR_ENV);
+  }
+
+  // 2. Fleet layout: ~/.claude/fleet/{project}/{worker}/hooks/hooks.json
   const projectName = basename(PROJECT_ROOT).replace(/-w-.*$/, "");
   const fleetDir = join(HOME, ".claude/fleet", projectName, WORKER, "hooks");
-  const fleetFile = join(fleetDir, "hooks.json");
-  if (existsSync(fleetFile)) return { file: fleetFile, dir: fleetDir };
-  // Global standalone: ~/.claude/hooks/hooks.json (works for all Claude Code instances)
+  add(join(fleetDir, "hooks.json"), fleetDir);
+
+  // 3. Global: ~/.claude/hooks/hooks.json (always — global hooks like learnings append)
   const globalDir = join(HOME, ".claude/hooks");
-  const globalFile = join(globalDir, "hooks.json");
-  if (existsSync(globalFile)) return { file: globalFile, dir: globalDir };
-  // Legacy: ~/.claude/ops/hooks/dynamic/{worker}.json
+  add(join(globalDir, "hooks.json"), globalDir);
+
+  // 4. Legacy: ~/.claude/ops/hooks/dynamic/{worker}.json
   const legacyDir = process.env.CLAUDE_HOOKS_DIR || join(HOME, ".claude/ops/hooks/dynamic");
-  const legacyFile = join(legacyDir, `${WORKER}.json`);
-  if (existsSync(legacyFile)) return { file: legacyFile, dir: legacyDir };
-  return null;
+  add(join(legacyDir, `${WORKER}.json`), legacyDir);
+
+  return sources;
+}
+
+/** @deprecated — use resolveAllHooksSources() for multi-source merge */
+function resolveHooksFile(): HooksSource | null {
+  const sources = resolveAllHooksSources();
+  return sources.length > 0 ? sources[0] : null;
 }
 
 // ── Condition matching (PreToolUse/PostToolUse) ────────────────────
@@ -201,14 +219,32 @@ try {
     ? `worker:${process.env.WORKER_NAME}`
     : SESSION_ID ? `session:${SESSION_ID}` : "";
 
-  const resolved = resolveHooksFile();
-  if (!resolved) {
+  // Merge hooks from all sources (per-worker + global + legacy)
+  const allSources = resolveAllHooksSources();
+  if (allSources.length === 0) {
     console.log("{}");
     process.exit(0);
   }
 
-  const { file: hooksFile, dir: hooksDir } = resolved;
+  // Primary source (for writes like fire_count updates)
+  const { file: hooksFile, dir: hooksDir } = allSources[0];
   const hooksData: HooksFile = JSON.parse(readFileSync(hooksFile, "utf-8"));
+
+  // Merge hooks from additional sources (tagged with their dir for script resolution)
+  const hookDirMap = new Map<string, string>(); // hook.id → dir
+  for (const hook of hooksData.hooks) hookDirMap.set(hook.id, hooksDir);
+
+  for (const source of allSources.slice(1)) {
+    try {
+      const extra: HooksFile = JSON.parse(readFileSync(source.file, "utf-8"));
+      for (const hook of extra.hooks) {
+        if (!hooksData.hooks.some(h => h.id === hook.id)) {
+          hooksData.hooks.push(hook);
+          hookDirMap.set(hook.id, source.dir);
+        }
+      }
+    } catch {}
+  }
 
   const agentId = input.agent_id || "";
   const toolName = input.tool_name || "";
@@ -290,7 +326,8 @@ try {
 
     // ── Script execution ──
     if (hook.script_path) {
-      const { exitCode, stderr } = runHookScript(hook, hooksDir, event);
+      const hookDir = hookDirMap.get(hook.id) || hooksDir;
+      const { exitCode, stderr } = runHookScript(hook, hookDir, event);
       if (exitCode === 2) {
         // Script says block
         const reason = stderr || `Script ${hook.script_path} exited with code 2`;

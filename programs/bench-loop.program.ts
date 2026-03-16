@@ -342,7 +342,7 @@ If \`${benchDir}/pyproject.toml\` exists and contains \`[tool.slop-code]\` or a 
 - **Use the native runner** instead of manual case-by-case execution:
   \`\`\`bash
   cd ${benchDir}
-  uv run slop-code run --num-workers 8 --no-live-progress
+  uv run slop-code run --num-workers 4 --no-live-progress
   \`\`\`
 - The native runner handles all 21 problems in parallel — do NOT batch manually
 - Results are written to: \`outputs/{run_name}/checkpoint_results.jsonl\` and \`outputs/{run_name}/result.json\`
@@ -431,6 +431,8 @@ ${dockerCmd} ps -aq --filter name=${benchmark}-r | xargs -r ${dockerCmd} rm -f
 - Each case = fresh container + separate agent process with rotated token
 - **NEVER git push** — only the coordinator/merger pushes. Commit locally and stop.
 - Keep things simple — note errors and move on
+- **Per-task timeout**: If a task takes more than 60 minutes of your time, stop, record partial results (what tests passed/failed so far), and move to the next task.
+- **Write results incrementally**: After completing EACH case/task, update {{SESSION_DIR}}/round-results.json with results so far. Don't wait until all cases finish.
 - Print summary table at the end
 
 ## ⚠️ COMPACTION SURVIVAL NOTICE
