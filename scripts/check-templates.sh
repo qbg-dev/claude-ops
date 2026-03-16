@@ -17,18 +17,21 @@ pass() { echo "PASS:  $1"; }
 # ---------------------------------------------------------------------------
 echo "=== Template: MCP tool references ==="
 
-# Extract registered tool names from source
-REGISTERED_TOOLS=$(grep -rh 'server\.registerTool(' "$FLEET_DIR/mcp/worker-fleet/tools/" \
-  | grep -A1 'registerTool(' \
-  || true)
-# Better: extract the name string on the next line
-TOOL_NAMES=$(grep -rh -A1 'server\.registerTool(' "$FLEET_DIR/mcp/worker-fleet/tools/" \
-  | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u)
+# Extract registered tool names from source (may be empty if fleet MCP was removed)
+TOOL_NAMES=""
+if [ -d "$FLEET_DIR/mcp/worker-fleet/tools" ]; then
+  TOOL_NAMES=$(grep -rh -A1 'server\.registerTool(' "$FLEET_DIR/mcp/worker-fleet/tools/" 2>/dev/null \
+    | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u || true)
+fi
+
+if [ -z "$TOOL_NAMES" ]; then
+  pass "Fleet MCP server removed or has no tools — MCP reference check N/A"
+fi
 
 SEED_CONTEXT="$FLEET_DIR/templates/seed-context.md"
-if [ -f "$SEED_CONTEXT" ]; then
+if [ -n "$TOOL_NAMES" ] && [ -f "$SEED_CONTEXT" ]; then
   # Extract tool names referenced as `tool_name(` in the seed context
-  SEED_TOOLS=$(grep -oE '`[a-z_]+\(' "$SEED_CONTEXT" | tr -d '`(' | sort -u)
+  SEED_TOOLS=$(grep -oE '`[a-z_]+\(' "$SEED_CONTEXT" | tr -d '`(' | sort -u || true)
 
   for tool in $SEED_TOOLS; do
     # Skip non-MCP functions (common helpers, bash builtins, etc.)
@@ -49,6 +52,8 @@ if [ -f "$SEED_CONTEXT" ]; then
   done
 
   pass "MCP tool reference check complete"
+elif [ -z "$TOOL_NAMES" ]; then
+  : # already reported above
 else
   warn "seed-context.md not found at $SEED_CONTEXT"
 fi
@@ -102,23 +107,27 @@ if [ -d "$TYPES_DIR" ] && [ -f "$CLAUDE_MD" ]; then
 
   # Types documented in CLAUDE.md worker types table (format: "| type-name | ...")
   DOC_TYPES=$(sed -n '/^## Worker types/,/^## /p' "$CLAUDE_MD" \
-    | grep '^| [a-z]' | sed 's/| \([a-z][a-z-]*\) .*/\1/' | sort)
+    | grep '^| [a-z]' | sed 's/| \([a-z][a-z-]*\) .*/\1/' | sort || true)
 
-  for t in $ACTUAL_TYPES; do
-    if ! echo "$DOC_TYPES" | grep -qx "$t"; then
-      err "Worker type '$t' has template directory but is not in CLAUDE.md worker types table"
-    fi
-    # Check each type has a mission.md
-    if [ ! -f "$TYPES_DIR/$t/mission.md" ]; then
-      warn "Worker type '$t' missing mission.md template"
-    fi
-  done
+  if [ -z "$DOC_TYPES" ]; then
+    warn "No ## Worker types table found in CLAUDE.md — cannot cross-check"
+  else
+    for t in $ACTUAL_TYPES; do
+      if ! echo "$DOC_TYPES" | grep -qx "$t"; then
+        err "Worker type '$t' has template directory but is not in CLAUDE.md worker types table"
+      fi
+      # Check each type has a mission.md
+      if [ ! -f "$TYPES_DIR/$t/mission.md" ]; then
+        warn "Worker type '$t' missing mission.md template"
+      fi
+    done
 
-  for t in $DOC_TYPES; do
-    if [ ! -d "$TYPES_DIR/$t" ]; then
-      err "Worker type '$t' documented in CLAUDE.md but no template directory at types/$t/"
-    fi
-  done
+    for t in $DOC_TYPES; do
+      if [ ! -d "$TYPES_DIR/$t" ]; then
+        err "Worker type '$t' documented in CLAUDE.md but no template directory at types/$t/"
+      fi
+    done
+  fi
 
   pass "Worker type consistency check complete"
 else
@@ -134,18 +143,22 @@ echo "=== Template: Key files table ==="
 if [ -f "$CLAUDE_MD" ]; then
   # Extract file paths from the key files table (between | ` markers)
   KEY_FILES=$(sed -n '/^## Key files/,/^## /p' "$CLAUDE_MD" \
-    | grep '^| `' | sed 's/| `\([^`]*\)`.*/\1/' | sort)
+    | grep '^| `' | sed 's/| `\([^`]*\)`.*/\1/' | sort || true)
 
-  MISSING=0
-  for f in $KEY_FILES; do
-    if [ ! -e "$FLEET_DIR/$f" ]; then
-      err "Key files table references '$f' but it doesn't exist"
-      MISSING=$((MISSING + 1))
+  if [ -z "$KEY_FILES" ]; then
+    warn "No ## Key files table found in CLAUDE.md"
+  else
+    MISSING=0
+    for f in $KEY_FILES; do
+      if [ ! -e "$FLEET_DIR/$f" ]; then
+        err "Key files table references '$f' but it doesn't exist"
+        MISSING=$((MISSING + 1))
+      fi
+    done
+
+    if [ "$MISSING" -eq 0 ]; then
+      pass "All key files exist ($(echo "$KEY_FILES" | wc -l | tr -d ' ') paths)"
     fi
-  done
-
-  if [ "$MISSING" -eq 0 ]; then
-    pass "All key files exist ($(echo "$KEY_FILES" | wc -l | tr -d ' ') paths)"
   fi
 else
   warn "CLAUDE.md not found"
@@ -188,7 +201,7 @@ echo "=== Template: Deep review seed freshness ==="
 DR_WORKER="$FLEET_DIR/templates/deep-review/worker-seed.md"
 DR_COORD="$FLEET_DIR/templates/deep-review/coordinator-seed.md"
 
-if [ -f "$DR_WORKER" ]; then
+if [ -n "$TOOL_NAMES" ] && [ -f "$DR_WORKER" ]; then
   # Check worker seed references mail tools that exist
   for tool in mail_send mail_inbox mail_read; do
     if grep -q "$tool" "$DR_WORKER" && ! echo "$TOOL_NAMES" | grep -qx "$tool"; then
@@ -198,7 +211,7 @@ if [ -f "$DR_WORKER" ]; then
   pass "Deep review worker seed checked"
 fi
 
-if [ -f "$DR_COORD" ]; then
+if [ -n "$TOOL_NAMES" ] && [ -f "$DR_COORD" ]; then
   # Check coordinator seed references mail tools that exist
   for tool in mail_send mail_inbox mail_read; do
     if grep -q "$tool" "$DR_COORD" && ! echo "$TOOL_NAMES" | grep -qx "$tool"; then

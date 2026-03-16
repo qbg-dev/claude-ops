@@ -165,36 +165,40 @@ echo ""
 echo "=== 21. MCP tool count drift ==="
 
 # Documented count from CLAUDE.md header
-DOC_COUNT=$(sed -n 's/.*MCP tools (\([0-9]*\)).*/\1/p' "$FLEET_DIR/CLAUDE.md" | head -1)
+DOC_COUNT=$(sed -n 's/.*MCP tools (\([0-9]*\)).*/\1/p' "$FLEET_DIR/CLAUDE.md" | head -1 || true)
 
-# Actual count from index.ts header comment
-ACTUAL_COUNT=$(sed -n 's/^ \* \([0-9]*\) tools.*/\1/p' "$FLEET_DIR/mcp/worker-fleet/index.ts" | head -1)
-
-# Fallback: count tool registrations by scanning for tool function names in tools/*.ts
-if [ -z "$ACTUAL_COUNT" ]; then
-  # Count unique server.tool() calls or tool name strings
-  ACTUAL_COUNT=$(grep -rh 'server\.tool(' "$FLEET_DIR/mcp/worker-fleet/tools/" 2>/dev/null \
-    | wc -l | tr -d ' ')
-fi
-
-if [ -n "$DOC_COUNT" ] && [ -n "$ACTUAL_COUNT" ]; then
-  if [ "$DOC_COUNT" != "$ACTUAL_COUNT" ]; then
-    err "CLAUDE.md says MCP tools ($DOC_COUNT) but actual count is $ACTUAL_COUNT"
-  else
-    pass "MCP tool count matches: $DOC_COUNT"
-  fi
+# If no MCP tools section in CLAUDE.md and no MCP tools directory, fleet MCP was removed — skip
+if [ -z "$DOC_COUNT" ] && [ ! -d "$FLEET_DIR/mcp/worker-fleet/tools" ]; then
+  pass "Fleet MCP server removed — tool count check N/A"
 else
-  warn "Could not determine tool counts (doc=$DOC_COUNT, actual=$ACTUAL_COUNT)"
-fi
+  # Actual count from index.ts header comment
+  ACTUAL_COUNT=$(sed -n 's/^ \* \([0-9]*\) tools.*/\1/p' "$FLEET_DIR/mcp/worker-fleet/index.ts" 2>/dev/null | head -1 || true)
 
-# Also check the tool table row count in CLAUDE.md
-TABLE_ROWS=$(sed -n '/^## MCP tools/,/^## /p' "$FLEET_DIR/CLAUDE.md" \
-  | grep '^| `' | wc -l | tr -d ' ')
-if [ -n "$ACTUAL_COUNT" ] && [ "$TABLE_ROWS" -gt 0 ]; then
-  if [ "$TABLE_ROWS" != "$ACTUAL_COUNT" ]; then
-    warn "CLAUDE.md tool table has $TABLE_ROWS rows but $ACTUAL_COUNT tools registered"
+  # Fallback: count tool registrations by scanning for tool function names in tools/*.ts
+  if [ -z "$ACTUAL_COUNT" ]; then
+    ACTUAL_COUNT=$({ grep -rh 'server\.tool(' "$FLEET_DIR/mcp/worker-fleet/tools/" 2>/dev/null || true; } \
+      | wc -l | tr -d '[:space:]')
+  fi
+
+  if [ -n "$DOC_COUNT" ] && [ -n "$ACTUAL_COUNT" ]; then
+    if [ "$DOC_COUNT" != "$ACTUAL_COUNT" ]; then
+      err "CLAUDE.md says MCP tools ($DOC_COUNT) but actual count is $ACTUAL_COUNT"
+    else
+      pass "MCP tool count matches: $DOC_COUNT"
+    fi
   else
-    pass "Tool table row count matches: $TABLE_ROWS"
+    warn "Could not determine tool counts (doc=$DOC_COUNT, actual=$ACTUAL_COUNT)"
+  fi
+
+  # Also check the tool table row count in CLAUDE.md
+  TABLE_ROWS=$(sed -n '/^## MCP tools/,/^## /p' "$FLEET_DIR/CLAUDE.md" \
+    | { grep '^| `' || true; } | wc -l | tr -d ' ')
+  if [ -n "$ACTUAL_COUNT" ] && [ "$TABLE_ROWS" -gt 0 ]; then
+    if [ "$TABLE_ROWS" != "$ACTUAL_COUNT" ]; then
+      warn "CLAUDE.md tool table has $TABLE_ROWS rows but $ACTUAL_COUNT tools registered"
+    else
+      pass "Tool table row count matches: $TABLE_ROWS"
+    fi
   fi
 fi
 
