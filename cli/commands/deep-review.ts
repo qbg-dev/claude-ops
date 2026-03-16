@@ -133,8 +133,8 @@ async function runV1DeepReview(opts: Record<string, any>): Promise<void> {
     noImproveReview: true,
     sessionName: opts.sessionName || "",
     notifyTarget: opts.notify || "",
-    workerModel: process.env.DEEP_REVIEW_WORKER_MODEL || "sonnet",
-    coordModel: process.env.DEEP_REVIEW_COORD_MODEL || "sonnet",
+    workerModel: process.env.DEEP_REVIEW_WORKER_MODEL || "sonnet[1m]",
+    coordModel: process.env.DEEP_REVIEW_COORD_MODEL || "sonnet[1m]",
   };
 
   if (!config.scope && config.contentFiles.length === 0) {

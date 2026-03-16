@@ -169,8 +169,8 @@ export async function runPipeline(programName: string, opts: Record<string, any>
         noImproveReview: false,
         sessionName: "",
         notifyTarget: "",
-        workerModel: "sonnet",
-        coordModel: "sonnet",
+        workerModel: "sonnet[1m]",
+        coordModel: "sonnet[1m]",
       };
 
       const material = collectMaterial(materialConfig, sessionDir, projectRoot);

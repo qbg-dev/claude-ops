@@ -53,7 +53,7 @@ export async function runCreate(
 
   // Resolve config: CLI > type template > defaults > hardcoded
   const defaults = getDefaults();
-  const model = opts.model || String(defaults.model || "opus");
+  const model = opts.model || String(defaults.model || "opus[1m]");
   const runtime = (opts.runtime || String(defaults.runtime || "claude")) as "claude" | "codex";
   const effort = opts.effort || String(defaults.effort || "high");
   const perm = opts.permissionMode || String(defaults.permission_mode || "bypassPermissions");
