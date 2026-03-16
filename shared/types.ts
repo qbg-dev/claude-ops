@@ -209,6 +209,9 @@ export interface AgentSpecFile {
   branch?: string;
   dir?: string;
 
+  // Mission
+  mission?: string;
+
   // Lifecycle
   type?: string;
   sleep_duration?: number | null;

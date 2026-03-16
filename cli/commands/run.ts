@@ -239,8 +239,12 @@ async function runWithSpec(
   writeFileSync(join(workerDir, "token"), "");
 
   // Write mission.md
-  writeFileSync(join(workerDir, "mission.md"),
-    `# ${workerName}\n${spec.role || "fleet run agent"} (${isPerpetual ? "perpetual" : "ephemeral"})`);
+  let missionContent = spec.mission ||
+    `# ${workerName}\n${spec.role || "fleet run agent"} (${isPerpetual ? "perpetual" : "ephemeral"})`;
+  if (missionContent.startsWith("@")) {
+    missionContent = readFileSync(missionContent.slice(1), "utf-8").trim();
+  }
+  writeFileSync(join(workerDir, "mission.md"), missionContent + "\n");
 
   // Provision Fleet Mail
   const { FLEET_MAIL_URL, FLEET_MAIL_TOKEN } = await import("../lib/paths");
@@ -427,7 +431,8 @@ export function register(parent: Command): void {
     .option("--max-budget <usd>", "Cost cap in USD")
     .option("--type <type>", "Worker archetype template")
     .option("--report-to <name>", "Manager worker name")
-    .option("--json-schema <schema>", "JSON output schema");
+    .option("--json-schema <schema>", "JSON output schema")
+    .option("--mission <text>", "Mission statement (inline or @file)");
   addGlobalOpts(sub)
     .action(async (name: string | undefined, opts: Record<string, any>, cmd: Command) => {
       const globalOpts = cmd.optsWithGlobals();
@@ -453,6 +458,7 @@ export function register(parent: Command): void {
         if (opts.disallowedTools) spec.disallowed_tools = opts.disallowedTools.split(",");
         if (opts.addDir) spec.add_dir = [...(spec.add_dir || []), ...opts.addDir];
         if (opts.jsonSchema) spec.json_schema = opts.jsonSchema;
+        if (opts.mission) spec.mission = opts.mission;
 
         // Parse additional hooks from CLI
         if (opts.hook || opts.hookGate || opts.onStop) {
@@ -514,6 +520,7 @@ export function register(parent: Command): void {
           type: opts.type,
           report_to: opts.reportTo,
           json_schema: opts.jsonSchema,
+          mission: opts.mission,
           hooks: [],
           tools: [],
           env: {},
