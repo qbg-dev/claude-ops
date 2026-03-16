@@ -90,6 +90,10 @@ _fleet() {
     'launch:Launch fleet from manifest'
     'deploy:Deploy fleet to remote machine'
     'get:Show worker mission and info'
+    'register:Register session with Fleet Mail'
+    'state:Persistent key-value state'
+    'checkpoint:Save crash-recovery snapshot'
+    'session:Session lifecycle management'
   )
 
   _arguments -C \
@@ -338,6 +342,40 @@ _fleet() {
             '--model[Model]:model:_fleet_models' \
             '--effort[Effort]:effort:_fleet_efforts' \
             '--skip-setup[Skip fleet setup]'
+          ;;
+
+        # --- Session ---
+        register)
+          _arguments \
+            '(-n --name)'{-n,--name}'[Custom name]:name:' \
+            '--session-id[Session ID]:id:' \
+            '--quiet[Suppress output]'
+          ;;
+        state)
+          _arguments -C '1:subcommand:(get set)' '*::arg:->stateargs'
+          case $state in
+            stateargs)
+              case $words[1] in
+                get)  _arguments '1:key:' ;;
+                set)  _arguments '1:key:' '2:value:' ;;
+              esac
+              ;;
+          esac
+          ;;
+        checkpoint)
+          _arguments \
+            '--key-facts[Comma-separated facts]:facts:' \
+            '1:summary:'
+          ;;
+        session)
+          _arguments -C '1:subcommand:(ls info sync clean)' '*::arg:->sessargs'
+          case $state in
+            sessargs)
+              case $words[1] in
+                info|sync)  _arguments '--session-id[Session ID]:id:' ;;
+              esac
+              ;;
+          esac
           ;;
       esac
       ;;

@@ -18,10 +18,20 @@ const SESSIONS_DIR = join(HOME, ".claude/fleet/.sessions");
 
 // ── Session ID Resolution ───────────────────────────────────────────
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Validate that a session ID is a well-formed UUID. */
+export function isValidSessionId(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
 /** Resolve the Claude Code session ID.
- *  Priority: explicit arg > TMUX_PANE via pane-map > CLAUDE_SESSION_ID env */
+ *  Priority: explicit arg > TMUX_PANE via pane-map > CLAUDE_SESSION_ID env
+ *  All returned IDs are validated as UUIDs to prevent path traversal. */
 export function resolveSessionId(opts?: { sessionId?: string; tmuxPane?: string }): string | null {
-  if (opts?.sessionId) return opts.sessionId;
+  if (opts?.sessionId) {
+    return isValidSessionId(opts.sessionId) ? opts.sessionId : null;
+  }
 
   // Try TMUX_PANE → pane-map lookup
   const pane = opts?.tmuxPane || process.env.TMUX_PANE;
@@ -29,12 +39,14 @@ export function resolveSessionId(opts?: { sessionId?: string; tmuxPane?: string 
     const byPanePath = join(PANE_MAP_DIR, "by-pane", pane.replace("%", ""));
     try {
       const sid = readFileSync(byPanePath, "utf-8").trim();
-      if (sid) return sid;
+      if (sid && isValidSessionId(sid)) return sid;
     } catch {}
   }
 
   // Try CLAUDE_SESSION_ID env var (if Claude Code ever sets it)
-  if (process.env.CLAUDE_SESSION_ID) return process.env.CLAUDE_SESSION_ID;
+  if (process.env.CLAUDE_SESSION_ID && isValidSessionId(process.env.CLAUDE_SESSION_ID)) {
+    return process.env.CLAUDE_SESSION_ID;
+  }
 
   return null;
 }
@@ -149,6 +161,7 @@ export interface SessionIdentity {
 
 /** Load a saved session identity from disk. */
 export function loadSessionIdentity(sessionId: string): SessionIdentity | null {
+  if (!isValidSessionId(sessionId)) return null;
   const idPath = join(SESSIONS_DIR, sessionId, "identity.json");
   try {
     return JSON.parse(readFileSync(idPath, "utf-8"));
@@ -197,7 +210,10 @@ export function sessionsDir(): string {
   return SESSIONS_DIR;
 }
 
-/** Get a specific session's directory path. */
+/** Get a specific session's directory path. Validates UUID format. */
 export function sessionDir(sessionId: string): string {
+  if (!isValidSessionId(sessionId)) {
+    throw new Error(`Invalid session ID: ${sessionId}`);
+  }
   return join(SESSIONS_DIR, sessionId);
 }

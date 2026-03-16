@@ -17,6 +17,7 @@ import { FLEET_MAIL_URL, workerDir, resolveProject } from "../lib/paths";
 import { fail, ok, info } from "../lib/fmt";
 import { addGlobalOpts } from "../index";
 import { mailRequest, resolveRecipient, cleanDisplayName } from "../lib/mail-client";
+import { sanitizeName } from "../../shared/identity";
 
 export function register(parent: Command): void {
   const mail = parent
@@ -59,7 +60,7 @@ export function register(parent: Command): void {
     .action(async (opts: { label: string; max: string }) => {
       if (!FLEET_MAIL_URL) fail("Fleet Mail not configured — run: fleet mail-server connect <url>");
 
-      const data = await mailRequest("GET", `/api/messages?label=${opts.label}&maxResults=${opts.max}`) as {
+      const data = await mailRequest("GET", `/api/messages?label=${encodeURIComponent(opts.label)}&maxResults=${encodeURIComponent(opts.max)}`) as {
         messages?: Array<{ id: string; from: any; subject: string; date: string; snippet?: string }>;
       };
 
@@ -88,7 +89,7 @@ export function register(parent: Command): void {
     .action(async (id: string) => {
       if (!FLEET_MAIL_URL) fail("Fleet Mail not configured — run: fleet mail-server connect <url>");
 
-      const msg = await mailRequest("GET", `/api/messages/${id}`) as {
+      const msg = await mailRequest("GET", `/api/messages/${encodeURIComponent(id)}`) as {
         id: string; from: any; to: any[]; subject: string; body: string; date: string;
         labels?: string[]; thread_id?: string;
       };
@@ -149,7 +150,8 @@ curl examples:
 
       // Legacy path: read a worker's inbox by name
       const project = cmd.optsWithGlobals().project as string || resolveProject();
-      const tokenPath = join(workerDir(project, name), "token");
+      const safeName = sanitizeName(name);
+      const tokenPath = join(workerDir(project, safeName), "token");
 
       if (!existsSync(tokenPath)) fail(`No token for '${name}'`);
       const token = readFileSync(tokenPath, "utf-8").trim();
@@ -158,7 +160,7 @@ curl examples:
 
       try {
         const resp = await fetch(
-          `${FLEET_MAIL_URL}/api/messages?label=${opts.label}`,
+          `${FLEET_MAIL_URL}/api/messages?label=${encodeURIComponent(opts.label)}`,
           { headers: { Authorization: `Bearer ${token}` } },
         );
         if (!resp.ok) fail(`Fleet Mail error: ${resp.status}`);

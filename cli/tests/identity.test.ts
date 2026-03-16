@@ -4,6 +4,9 @@ import {
   buildMailName,
   parseMailName,
   sanitizeName,
+  isValidSessionId,
+  sessionDir,
+  resolveSessionId,
 } from "../../shared/identity";
 
 // ── resolveDirSlug ──────────────────────────────────────────────────
@@ -119,5 +122,67 @@ describe("sanitizeName", () => {
   test("trims leading/trailing dots and whitespace", () => {
     expect(sanitizeName("...merger...")).toBe("merger");
     expect(sanitizeName("  worker  ")).toBe("worker");
+  });
+});
+
+// ── isValidSessionId ────────────────────────────────────────────────
+
+describe("isValidSessionId", () => {
+  test("accepts valid UUIDs", () => {
+    expect(isValidSessionId("a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab")).toBe(true);
+    expect(isValidSessionId("00000000-0000-0000-0000-000000000000")).toBe(true);
+    expect(isValidSessionId("ABCDEF12-3456-7890-ABCD-EF1234567890")).toBe(true);
+  });
+
+  test("rejects path traversal attempts", () => {
+    expect(isValidSessionId("../../../etc/passwd")).toBe(false);
+    expect(isValidSessionId("foo/../bar")).toBe(false);
+  });
+
+  test("rejects non-UUID strings", () => {
+    expect(isValidSessionId("")).toBe(false);
+    expect(isValidSessionId("not-a-uuid")).toBe(false);
+    expect(isValidSessionId("abc-def-ghi-jkl-mno")).toBe(false);
+    expect(isValidSessionId("a3f1b2c8-9d4e-4b1a-8c2d")).toBe(false); // too short
+  });
+
+  test("rejects UUIDs with extra content", () => {
+    expect(isValidSessionId("a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab/../../etc")).toBe(false);
+    expect(isValidSessionId("prefix-a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab")).toBe(false);
+  });
+});
+
+// ── sessionDir ──────────────────────────────────────────────────────
+
+describe("sessionDir", () => {
+  test("returns path for valid UUID", () => {
+    const dir = sessionDir("a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab");
+    expect(dir).toContain("a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab");
+    expect(dir).toContain(".sessions");
+  });
+
+  test("throws on invalid session ID (path traversal)", () => {
+    expect(() => sessionDir("../../../etc/passwd")).toThrow("Invalid session ID");
+    expect(() => sessionDir("foo/bar")).toThrow("Invalid session ID");
+    expect(() => sessionDir("")).toThrow("Invalid session ID");
+  });
+});
+
+// ── resolveSessionId ────────────────────────────────────────────────
+
+describe("resolveSessionId", () => {
+  test("accepts explicit valid UUID", () => {
+    const sid = resolveSessionId({ sessionId: "a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab" });
+    expect(sid).toBe("a3f1b2c8-9d4e-4b1a-8c2d-1234567890ab");
+  });
+
+  test("rejects explicit invalid session ID", () => {
+    const sid = resolveSessionId({ sessionId: "../../../etc/passwd" });
+    expect(sid).toBeNull();
+  });
+
+  test("rejects non-UUID explicit session ID", () => {
+    const sid = resolveSessionId({ sessionId: "not-a-uuid" });
+    expect(sid).toBeNull();
   });
 });

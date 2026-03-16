@@ -160,10 +160,11 @@ function findSiblingSessions(dirSlug: string, excludeSessionId: string): Session
           // Check if pane is alive
           if (id.paneId) {
             try {
-              const { execSync } = require("child_process");
-              execSync(`tmux display-message -t '${id.paneId}' -p ''`, {
+              const { spawnSync } = require("child_process");
+              const r = spawnSync("tmux", ["display-message", "-t", id.paneId, "-p", ""], {
                 encoding: "utf-8", timeout: 2000, stdio: "pipe",
               });
+              if (r.status !== 0) return null;
             } catch {
               return null; // Pane dead — skip
             }

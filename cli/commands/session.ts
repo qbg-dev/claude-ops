@@ -159,11 +159,11 @@ export function register(parent: Command): void {
 function isSessionAlive(identity: SessionIdentity): boolean {
   if (!identity.paneId) return false;
   try {
-    const { execSync } = require("child_process");
-    execSync(`tmux display-message -t '${identity.paneId}' -p ''`, {
+    const { spawnSync } = require("child_process");
+    const r = spawnSync("tmux", ["display-message", "-t", identity.paneId, "-p", ""], {
       encoding: "utf-8", timeout: 3000, stdio: "pipe",
     });
-    return true;
+    return r.status === 0;
   } catch {
     return false;
   }
