@@ -99,9 +99,23 @@ export function addWindowsToSession(
 
 // ── Pane appending (back-edge cycles) ─────────────────────────────
 
+const DEFAULT_MAX_PANES = 9;
+
+/**
+ * Check if a tmux pane has active child processes (i.e. not just an idle shell).
+ */
+function paneHasChildren(paneId: string): boolean {
+  // Get the pane's shell PID, then check for children
+  const { stdout } = tmux("display-message", "-t", paneId, "-p", "#{pane_pid}");
+  const panePid = stdout.trim();
+  if (!panePid) return false;
+  const result = (Bun.spawnSync as any)(["pgrep", "-P", panePid], { stderr: "pipe" });
+  return result.exitCode === 0;
+}
+
 /**
  * Append new panes to an existing window for back-edge cycle agents.
- * Keeps all existing panes (with running Claude sessions) intact.
+ * Recycles old idle panes (no child processes) to stay within maxPanes limit.
  * Returns the starting pane index for the new panes.
  */
 export function appendPanesToWindow(
@@ -109,10 +123,34 @@ export function appendPanesToWindow(
   windowName: string,
   newPaneCount: number,
   projectRoot: string,
+  maxPanes: number = DEFAULT_MAX_PANES,
 ): number {
   const target = `${session}:${windowName}`;
   const { stdout } = tmux("list-panes", "-t", target, "-F", "#{pane_id}");
-  const existingCount = stdout.split("\n").filter(Boolean).length;
+  let paneIds = stdout.split("\n").filter(Boolean);
+
+  // Kill old idle panes (oldest first) to make room within maxPanes limit.
+  // Panes are listed oldest-first by tmux, so iterate forward.
+  const desiredTotal = Math.min(paneIds.length + newPaneCount, maxPanes);
+  const toKill = paneIds.length + newPaneCount - desiredTotal;
+  if (toKill > 0) {
+    let killed = 0;
+    for (const paneId of paneIds) {
+      if (killed >= toKill) break;
+      if (!paneHasChildren(paneId)) {
+        tmux("kill-pane", "-t", paneId);
+        killed++;
+      }
+    }
+    if (killed > 0) {
+      console.log(`  Recycled ${killed} idle panes in ${windowName}`);
+    }
+    // Re-read pane list after kills
+    const refreshed = tmux("list-panes", "-t", target, "-F", "#{pane_id}");
+    paneIds = refreshed.stdout.split("\n").filter(Boolean);
+  }
+
+  const existingCount = paneIds.length;
 
   for (let i = 0; i < newPaneCount; i++) {
     tmux("split-window", "-d", "-t", target, "-c", projectRoot);
@@ -123,7 +161,7 @@ export function appendPanesToWindow(
   }
 
   Bun.sleepSync(300);
-  console.log(`  Appended ${newPaneCount} panes to ${windowName} (${existingCount} existing → ${existingCount + newPaneCount} total)`);
+  console.log(`  Appended ${newPaneCount} panes to ${windowName} (${existingCount} existing → ${existingCount + newPaneCount} total, max ${maxPanes})`);
   return existingCount;
 }
 
