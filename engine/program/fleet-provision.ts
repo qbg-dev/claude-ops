@@ -334,6 +334,7 @@ ${customEnv ? customEnv + "\n" : ""}export PROJECT_ROOT="${state.workDir}"
 export HOOKS_DIR="${hooksDir}"
 export CLAUDE_FLEET_DIR="${fleetDir}"
 export CLAUDE_CODE_SKIP_PROJECT_LOCK=1
+unset CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS  # Prevent teammate pane spawning in pipelines
 export RESULTS_DIR="${resultsDir}"
 export CLAUDECODE=1
 # Proxy for China network (cn/Xray) — check parent env, then localhost
