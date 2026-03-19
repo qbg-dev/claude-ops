@@ -308,21 +308,27 @@ export function register(parent: Command): void {
         };
         const logger = h("engine/session-logger.sh");
 
+        const heartbeat = h("hooks/publishers/liveness-heartbeat.sh");
+
         const fleetHooks: Record<string, HookEntry[]> = {
           UserPromptSubmit: [
             h("hooks/publishers/worker-session-register.sh"),
             h("hooks/publishers/prompt-echo-deferred.sh"),
+            heartbeat,
             engine,
             logger,
           ],
           PreToolUse: [
             h("hooks/gates/tool-policy-gate.sh"),
             h("hooks/interceptors/pre-tool-context-injector.sh"),
+            heartbeat,
             engine,
             logger,
           ],
+          PostToolUse: [heartbeat, engine, logger],
           PreCompact: [
             h("scripts/pre-compact.sh", 5000),
+            heartbeat,
             engine,
             logger,
           ],
@@ -330,9 +336,11 @@ export function register(parent: Command): void {
             h("hooks/gates/stop-worker-dispatch.sh"),
             h("hooks/gates/stop-inbox-drain.sh"),
             h("hooks/publishers/stop-echo.sh"),
+            heartbeat,
             engine,
             logger,
           ],
+          SubagentStop: [heartbeat, engine, logger],
         };
 
         // Merge: preserved non-fleet hooks first, then fleet hooks
@@ -526,9 +534,29 @@ export function register(parent: Command): void {
         if (hasHighScrollback && hasPaneBorders) {
           ok("Tmux config: agent-friendly settings detected");
         } else if (tmuxConfContent.trim()) {
-          info("Existing tmux.conf found — may need agent-friendly settings (50k scrollback, pane labels)");
-          console.log(`    Reference:  ${fleetTmuxConf}`);
-          console.log("    Or run:     fleet onboard   (architect will help merge)");
+          // Existing config — supplement with missing essentials (never overwrite)
+          const additions: string[] = [];
+          if (!hasHighScrollback) {
+            additions.push("set -g history-limit 50000");
+          }
+          if (!hasPaneBorders) {
+            additions.push("set -g pane-border-status bottom");
+            additions.push(`set -g pane-border-format " #[fg=cyan]#{session_name}:#{window_index}.#{pane_index}#[default] #[fg=yellow,bold]#(cat /tmp/tmux_pane_status_#{pane_id} 2>/dev/null)#[default] #{pane_title} "`);
+          }
+          if (!/focus-events/.test(tmuxConfContent)) {
+            additions.push("set -g focus-events on");
+          }
+          if (!/aggressive-resize/.test(tmuxConfContent)) {
+            additions.push("set -g aggressive-resize on");
+          }
+          if (additions.length > 0) {
+            appendFileSync(tmuxConf, `\n# Fleet agent essentials (added by fleet setup — supplements existing config)\n${additions.join("\n")}\n`);
+            Bun.spawnSync(["tmux", "source-file", tmuxConf], { stderr: "pipe" });
+            ok(`Appended ${additions.length} agent-friendly settings to ~/.tmux.conf`);
+          } else {
+            ok("Tmux config: all agent essentials present");
+          }
+          info(`Full fleet tmux reference: ${fleetTmuxConf}`);
         } else {
           // Empty or missing — install fleet config
           copyFileSync(fleetTmuxConf, tmuxConf);

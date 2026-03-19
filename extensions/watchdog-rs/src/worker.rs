@@ -29,6 +29,7 @@ pub struct WorkerState {
     pub tmux_session: Option<String>,
     pub last_relaunch: Option<RelaunchInfo>,
     pub relaunch_count: Option<u32>,
+    pub grace_until: Option<String>,
     pub custom: Option<serde_json::Value>,
 }
 
@@ -60,6 +61,7 @@ pub struct WorkerSnapshot {
     pub pane_id: Option<String>,
     pub tmux_session: Option<String>,
     pub last_relaunch_epoch: i64,
+    pub grace_until_epoch: i64,
     pub relaunch_count: u32,
 
     // From token file
@@ -108,6 +110,14 @@ impl WorkerSnapshot {
             .map(|dt| dt.timestamp())
             .unwrap_or(0);
 
+        // Parse grace_until to epoch
+        let grace_until_epoch = state
+            .grace_until
+            .as_ref()
+            .and_then(|g| chrono::DateTime::parse_from_rfc3339(g).ok())
+            .map(|dt| dt.timestamp())
+            .unwrap_or(0);
+
         // Parse sleep_until from custom field
         let _sleep_until = state
             .custom
@@ -133,6 +143,7 @@ impl WorkerSnapshot {
             pane_id: state.pane_id,
             tmux_session: state.tmux_session,
             last_relaunch_epoch,
+            grace_until_epoch,
             relaunch_count: state.relaunch_count.unwrap_or(0),
             token,
         })
@@ -151,6 +162,8 @@ impl WorkerSnapshot {
             serde_json::json!({})
         };
 
+        let grace_until = (chrono::Utc::now() + chrono::Duration::seconds(180)).to_rfc3339();
+
         state["status"] = serde_json::json!("active");
         state["pane_id"] = serde_json::json!(new_pane_id);
         state["last_relaunch"] = serde_json::json!({
@@ -158,6 +171,7 @@ impl WorkerSnapshot {
             "reason": reason,
         });
         state["relaunch_count"] = serde_json::json!(self.relaunch_count + 1);
+        state["grace_until"] = serde_json::json!(grace_until);
 
         std::fs::write(&state_path, serde_json::to_string_pretty(&state)?)?;
         Ok(())

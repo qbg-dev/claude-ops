@@ -133,7 +133,8 @@ fn run_core_pass(cfg: &config::Config) {
     let workers = collect_perpetual_workers(cfg);
 
     for worker in &workers {
-        let action = checker::check(worker, now, cfg.cooldown_secs);
+        let liveness = read_liveness(&cfg.fleet_state_dir, &worker.name);
+        let action = checker::check(worker, now, cfg.cooldown_secs, liveness);
         match action {
             Action::Skip(reason) => {
                 tracing::trace!(worker = %worker.name, reason, "skip");
@@ -146,6 +147,15 @@ fn run_core_pass(cfg: &config::Config) {
             }
         }
     }
+}
+
+fn read_liveness(state_dir: &std::path::Path, worker_name: &str) -> Option<i64> {
+    let path = state_dir
+        .join("watchdog-runtime")
+        .join(worker_name)
+        .join("liveness");
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.split_whitespace().next()?.parse().ok()
 }
 
 fn do_relaunch(worker: &WorkerSnapshot) -> anyhow::Result<()> {
@@ -206,15 +216,17 @@ fn do_relaunch(worker: &WorkerSnapshot) -> anyhow::Result<()> {
 }
 
 fn create_or_fallback(worker: &WorkerSnapshot) -> anyhow::Result<String> {
-    // Try to create pane in the correct window
+    // Try to create pane in the correct window (create window if it doesn't exist)
     if let Some(ref window) = worker.window {
         let session = worker
             .tmux_session
             .as_deref()
             .unwrap_or("main");
-        if tmux::window_exists(session, window) {
-            return tmux::create_pane(session, window);
+        if !tmux::window_exists(session, window) {
+            info!(worker = %worker.name, session, window, "creating missing tmux window");
+            tmux::create_window(session, window)?;
         }
+        return tmux::create_pane(session, window);
     }
 
     // Fallback: use fleet start
@@ -230,8 +242,9 @@ fn create_or_fallback(worker: &WorkerSnapshot) -> anyhow::Result<String> {
 }
 
 fn run_status(cfg: &config::Config) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().timestamp();
     let mut table = Table::new();
-    table.set_header(vec!["Worker", "Project", "Status", "Pane", "Alive", "Claude", "Sleep", "Relaunches"]);
+    table.set_header(vec!["Worker", "Project", "Status", "Pane", "Alive", "Heartbeat", "Sleep", "Relaunches"]);
 
     for (project, project_dir) in cfg.project_dirs() {
         let workers = worker::load_all_workers(&project, &project_dir);
@@ -245,10 +258,16 @@ fn run_status(cfg: &config::Config) -> anyhow::Result<()> {
             } else {
                 if tmux::is_pane_alive(pane_id) { "yes" } else { "no" }.to_string()
             };
-            let claude = if pane_id == "-" || alive == "no" {
-                "-".to_string()
-            } else {
-                if tmux::is_claude_running(pane_id) { "yes" } else { "no" }.to_string()
+            let heartbeat = match read_liveness(&cfg.fleet_state_dir, &w.name) {
+                Some(epoch) => {
+                    let age = now - epoch;
+                    if age < 120 {
+                        format!("{}s ago", age)
+                    } else {
+                        format!("STALE ({}s)", age)
+                    }
+                }
+                None => "-".to_string(),
             };
 
             table.add_row(vec![
@@ -257,7 +276,7 @@ fn run_status(cfg: &config::Config) -> anyhow::Result<()> {
                 Cell::new(&w.status),
                 Cell::new(pane_id),
                 Cell::new(&alive),
-                Cell::new(&claude),
+                Cell::new(&heartbeat),
                 Cell::new(if w.sleep_duration > 0 {
                     format!("{}s", w.sleep_duration)
                 } else {

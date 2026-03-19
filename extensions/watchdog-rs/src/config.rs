@@ -50,7 +50,7 @@ impl Config {
             cooldown_secs: env::var("WATCHDOG_COOLDOWN")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(60),
+                .unwrap_or(180),
             fleet_dir,
             fleet_state_dir,
             fleet_mail_url,
