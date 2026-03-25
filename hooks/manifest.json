@@ -49,7 +49,7 @@
       "path": "~/.claude-fleet/hooks/publishers/prompt-echo-deferred.sh",
       "required": false,
       "category": "user",
-      "description": "[INJECT] Deferred echo chain — feeds queued follow-up prompts from stop-echo.sh back into the session"
+      "description": "[INJECT] Deferred echo chain \u2014 feeds queued follow-up prompts from stop-echo.sh back into the session"
     },
     {
       "id": "pii-firewall",
@@ -84,22 +84,6 @@
       "description": "[INJECT] Injects policy hints, inbox scan, phase context, and subagent agent_id before each tool call"
     },
     {
-      "id": "liveness-heartbeat-post",
-      "event": "PostToolUse",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp after each tool call — watchdog uses this for stuck detection (>10min = stuck)"
-    },
-    {
-      "id": "liveness-heartbeat-prompt",
-      "event": "UserPromptSubmit",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on prompt submit — watchdog uses this for stuck detection (>10min = stuck)"
-    },
-    {
       "id": "subagent-start",
       "event": "SubagentStart",
       "path": "~/.claude-fleet/hooks/publishers/subagent-lifecycle.sh",
@@ -113,7 +97,7 @@
       "path": "~/.claude-fleet/hooks/publishers/subagent-lifecycle.sh",
       "required": true,
       "category": "core",
-      "description": "[PUBLISH] Tracks subagent exit — auto-completes dynamic hooks scoped to this agent_id"
+      "description": "[PUBLISH] Tracks subagent exit \u2014 auto-completes dynamic hooks scoped to this agent_id"
     },
     {
       "id": "pre-compact",
@@ -130,7 +114,7 @@
       "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
       "required": true,
       "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on session stop — signals clean exit to watchdog"
+      "description": "[PUBLISH] Touches liveness timestamp on session stop \u2014 signals clean exit to watchdog"
     },
     {
       "id": "stop-worker-dispatch",
@@ -154,7 +138,7 @@
       "path": "~/.claude-fleet/hooks/publishers/stop-echo.sh",
       "required": false,
       "category": "user",
-      "description": "[GATE] Echo chain — pops queued follow-up commands and re-injects them as block reasons to continue the session"
+      "description": "[GATE] Echo chain \u2014 pops queued follow-up commands and re-injects them as block reasons to continue the session"
     },
     {
       "id": "stop-push-gate",
@@ -172,40 +156,16 @@
       "category": "core",
       "description": "[GATE] Blocks session exit if worker has cron_schedule configured but hasn't called CronCreate with expected parameters"
     },
-
-    {"_comment": "── Liveness heartbeat (ALL events) ──"},
-
+    {
+      "_comment": "\u2500\u2500 Liveness heartbeat (ALL events) \u2500\u2500"
+    },
     {
       "id": "liveness-heartbeat-pre-tool",
       "event": "PreToolUse",
       "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
       "required": true,
       "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on PreToolUse — ensures watchdog sees activity during tool selection"
-    },
-    {
-      "id": "liveness-heartbeat-subagent-start",
-      "event": "SubagentStart",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on SubagentStart — prevents stuck detection during subagent spawning"
-    },
-    {
-      "id": "liveness-heartbeat-subagent-stop",
-      "event": "SubagentStop",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on SubagentStop — signals subagent lifecycle activity"
-    },
-    {
-      "id": "liveness-heartbeat-pre-compact",
-      "event": "PreCompact",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on PreCompact — prevents stuck detection during context compaction"
+      "description": "[PUBLISH] Touches liveness timestamp on PreToolUse \u2014 ensures watchdog sees activity during tool selection"
     },
     {
       "id": "liveness-heartbeat-session-start",
@@ -213,91 +173,11 @@
       "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
       "required": true,
       "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on SessionStart — initializes liveness tracking"
+      "description": "[PUBLISH] Touches liveness timestamp on SessionStart \u2014 initializes liveness tracking"
     },
     {
-      "id": "liveness-heartbeat-session-end",
-      "event": "SessionEnd",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on SessionEnd — signals clean session teardown"
+      "_comment": "\u2500\u2500 Universal infrastructure (ALL events) \u2500\u2500"
     },
-    {
-      "id": "liveness-heartbeat-instructions",
-      "event": "InstructionsLoaded",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on InstructionsLoaded — confirms worker is parsing config"
-    },
-    {
-      "id": "liveness-heartbeat-permission",
-      "event": "PermissionRequest",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on PermissionRequest — prevents stuck detection while awaiting approval"
-    },
-    {
-      "id": "liveness-heartbeat-post-fail",
-      "event": "PostToolUseFailure",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on PostToolUseFailure — signals worker is handling errors"
-    },
-    {
-      "id": "liveness-heartbeat-notification",
-      "event": "Notification",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on Notification — signals worker is processing notifications"
-    },
-    {
-      "id": "liveness-heartbeat-teammate",
-      "event": "TeammateIdle",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on TeammateIdle — prevents stuck detection during team coordination"
-    },
-    {
-      "id": "liveness-heartbeat-task",
-      "event": "TaskCompleted",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on TaskCompleted — signals task completion activity"
-    },
-    {
-      "id": "liveness-heartbeat-config",
-      "event": "ConfigChange",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on ConfigChange — signals config update activity"
-    },
-    {
-      "id": "liveness-heartbeat-worktree-create",
-      "event": "WorktreeCreate",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on WorktreeCreate — prevents stuck detection during worktree operations"
-    },
-    {
-      "id": "liveness-heartbeat-worktree-remove",
-      "event": "WorktreeRemove",
-      "path": "~/.claude-fleet/hooks/publishers/liveness-heartbeat.sh",
-      "required": true,
-      "category": "core",
-      "description": "[PUBLISH] Touches liveness timestamp on WorktreeRemove — signals worktree cleanup activity"
-    },
-
-    {"_comment": "── Universal infrastructure (ALL events) ──"},
-
     {
       "id": "universal-logger-session-start",
       "event": "SessionStart",
@@ -320,7 +200,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs InstructionsLoaded event — confirms CLAUDE.md was parsed"
+      "description": "[LOG] Logs InstructionsLoaded event \u2014 confirms CLAUDE.md was parsed"
     },
     {
       "id": "universal-logger-permission-request",
@@ -328,7 +208,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs PermissionRequest event — records when user is prompted for tool approval"
+      "description": "[LOG] Logs PermissionRequest event \u2014 records when user is prompted for tool approval"
     },
     {
       "id": "universal-logger-post-tool-use-failure",
@@ -336,7 +216,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs PostToolUseFailure — records tool failures for debugging and pattern detection"
+      "description": "[LOG] Logs PostToolUseFailure \u2014 records tool failures for debugging and pattern detection"
     },
     {
       "id": "universal-logger-notification",
@@ -352,7 +232,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs TeammateIdle event — records when a team member goes idle for coordination"
+      "description": "[LOG] Logs TeammateIdle event \u2014 records when a team member goes idle for coordination"
     },
     {
       "id": "universal-logger-task-completed",
@@ -360,7 +240,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs TaskCompleted event — records task completions for downstream chaining"
+      "description": "[LOG] Logs TaskCompleted event \u2014 records task completions for downstream chaining"
     },
     {
       "id": "universal-logger-config-change",
@@ -368,7 +248,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs ConfigChange event — records settings modifications"
+      "description": "[LOG] Logs ConfigChange event \u2014 records settings modifications"
     },
     {
       "id": "universal-logger-worktree-create",
@@ -376,7 +256,7 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs WorktreeCreate event — records when isolated worktrees are created for subagents"
+      "description": "[LOG] Logs WorktreeCreate event \u2014 records when isolated worktrees are created for subagents"
     },
     {
       "id": "universal-logger-worktree-remove",
@@ -384,9 +264,8 @@
       "path": "~/.claude-fleet/hooks/publishers/universal-logger.sh",
       "required": true,
       "category": "core",
-      "description": "[LOG] Logs WorktreeRemove event — records when worktrees are cleaned up"
+      "description": "[LOG] Logs WorktreeRemove event \u2014 records when worktrees are cleaned up"
     },
-
     {
       "id": "git-hooks-installer",
       "event": "SessionStart",
